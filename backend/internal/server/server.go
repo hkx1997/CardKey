@@ -35,6 +35,17 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	r.Get("/readyz", h.Ready)
 	r.Get("/metrics", app.MetricsHandler(a))
 
+	// 公开上传静态资源
+	if a.DataDir != "" {
+		up := filepath.Join(a.DataDir, "uploads")
+		_ = os.MkdirAll(up, 0o755)
+		fs := http.StripPrefix("/uploads/", http.FileServer(http.Dir(up)))
+		r.Handle("/uploads/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			fs.ServeHTTP(w, req)
+		}))
+	}
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/public", func(r chi.Router) {
 			r.Get("/config", h.GetPublicConfig)
@@ -82,6 +93,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Post("/settings/public-redeem-key", h.SetPublicRedeemKey)
 					r.Get("/settings", h.GetSettings)
 					r.Put("/settings", h.UpdateSettings)
+					r.Post("/uploads", h.UploadImage)
 
 					r.Get("/audit-logs", h.ListAudit)
 

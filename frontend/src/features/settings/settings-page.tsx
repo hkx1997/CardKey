@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import type { Settings } from "@/entities/types";
 import { FormActions } from "@/shared/components/form-actions";
 import { FormField } from "@/shared/components/form-field";
+import { ImageUploadField } from "@/shared/components/image-upload-field";
 import { LoadingBlock } from "@/shared/components/loading-block";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
@@ -14,6 +15,7 @@ import {
   useSettingsQuery,
   useUpdateSettings,
 } from "@/shared/hooks/use-settings";
+import { resolveApiBase } from "@/features/docs/api-docs-content";
 
 export function SettingsPage() {
   const q = useSettingsQuery();
@@ -71,17 +73,18 @@ export function SettingsPage() {
               onChange={(e) => set("documentTitle", e.target.value)}
             />
           </FormField>
-          <FormField label="Logo URL / DataURL">
-            <Input
+          <FormField label="站点 Logo" className="sm:col-span-2">
+            <ImageUploadField
               value={form.siteLogo}
-              onChange={(e) => set("siteLogo", e.target.value)}
-              placeholder="https://… 或 data:image/…"
+              onChange={(v) => set("siteLogo", v)}
+              hint="支持 PNG/JPEG/WebP/SVG/ICO，最大 2MB；也可填外链 URL"
             />
           </FormField>
-          <FormField label="Favicon">
-            <Input
+          <FormField label="Favicon" className="sm:col-span-2">
+            <ImageUploadField
               value={form.siteFavicon}
-              onChange={(e) => set("siteFavicon", e.target.value)}
+              onChange={(v) => set("siteFavicon", v)}
+              hint="浏览器标签图标，建议正方形"
             />
           </FormField>
           <FormField label="页脚" className="sm:col-span-2">
@@ -207,13 +210,37 @@ export function SettingsPage() {
             checked={form.exposePublicRedeemKeyInDocs}
             onChange={(v) => set("exposePublicRedeemKeyInDocs", v)}
           />
-          <FormField label="API 前缀">
+          <FormField
+            label="API 路径前缀"
+            hint="相对路径，默认 /api/v1"
+          >
             <Input
               value={form.apiBasePath}
               onChange={(e) => set("apiBasePath", e.target.value)}
               className="font-mono"
+              placeholder="/api/v1"
             />
           </FormField>
+          <FormField
+            label="对外 API 地址（Base URL）"
+            hint="完整 origin，如 https://api.example.com；留空则文档使用当前站点域名"
+          >
+            <Input
+              value={form.apiPublicBaseUrl || ""}
+              onChange={(e) => set("apiPublicBaseUrl", e.target.value)}
+              className="font-mono"
+              placeholder="https://your-domain.com"
+            />
+          </FormField>
+          <div className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+            文档预览：{" "}
+            {
+              resolveApiBase({
+                apiBasePath: form.apiBasePath,
+                apiPublicBaseUrl: form.apiPublicBaseUrl,
+              }).redeemUrl
+            }
+          </div>
         </div>
       </SettingsSection>
 

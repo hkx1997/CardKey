@@ -55,6 +55,9 @@ services:
       UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
       MIGRATIONS_DIR: /app/migrations
       STATIC_DIR: /app/static
+      DATA_DIR: /app/data
+    volumes:
+      - cardkey_data:/app/data
     ports:
       - "${APP_PORT:-18080}:8080"
     depends_on:
@@ -77,3 +80,4 @@ services:
 
 volumes:
   postgres_data:
+  cardkey_data:

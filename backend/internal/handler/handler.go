@@ -502,6 +502,15 @@ func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, h.App.SystemInfo(r.Context()))
 }
 
+func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
+	url, err := h.App.UploadImage(r.Context(), r, middleware.Username(r.Context()), middleware.ClientIP(r))
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]string{"url": url})
+}
+
 func (h *Handler) CheckUpdates(w http.ResponseWriter, r *http.Request) {
 	res, err := h.App.CheckUpdates(r.Context())
 	if err != nil {

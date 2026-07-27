@@ -33,13 +33,15 @@ WORKDIR /app
 COPY --from=backend /out/cardkey /app/cardkey
 COPY --from=backend /src/migrations /app/migrations
 COPY --from=frontend /fe/dist /app/static
-RUN chown -R cardkey:cardkey /app
+RUN mkdir -p /app/data/uploads && chown -R cardkey:cardkey /app
 USER cardkey
 ENV HTTP_ADDR=:8080
 ENV MIGRATIONS_DIR=/app/migrations
 ENV STATIC_DIR=/app/static
+ENV DATA_DIR=/app/data
 ENV APP_ENV=production
 EXPOSE 8080
+VOLUME ["/app/data"]
 HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=5 \
   CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
 ENTRYPOINT ["/app/cardkey"]

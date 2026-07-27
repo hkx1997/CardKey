@@ -56,6 +56,8 @@ export interface PublicConfig {
   captchaEnabled: boolean;
   categories: PublicCategory[];
   apiBasePath: string;
+  /** 对外 API 根，如 https://api.example.com；空则用当前 origin */
+  apiPublicBaseUrl?: string;
   apiDocsEnabled: boolean;
   /** 兑换页是否显示「API 文档」入口 */
   showApiDocsEntry: boolean;
@@ -212,6 +214,8 @@ export interface Settings {
   exposePublicRedeemKeyInDocs: boolean;
   publicRedeemApiKey: string;
   apiBasePath: string;
+  /** 对外 API 根地址（文档/SDK 示例用） */
+  apiPublicBaseUrl: string;
 }
 
 export class ApiError extends Error {

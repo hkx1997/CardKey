@@ -76,6 +76,11 @@ const AuditPage = lazy(() =>
     default: m.AuditPage,
   })),
 );
+const AdminApiDocsPage = lazy(() =>
+  import("@/features/docs/admin-api-docs-page").then((m) => ({
+    default: m.AdminApiDocsPage,
+  })),
+);
 
 function LazyPage({ children }: { children: ReactNode }) {
   return (
@@ -183,6 +188,14 @@ export function AppRouter() {
             element={
               <LazyPage>
                 <ApiKeysPage />
+              </LazyPage>
+            }
+          />
+          <Route
+            path="api-docs"
+            element={
+              <LazyPage>
+                <AdminApiDocsPage />
               </LazyPage>
             }
           />

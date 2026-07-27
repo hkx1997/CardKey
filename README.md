@@ -1,5 +1,7 @@
 # CardKey
 
+**语言 / Language:** [中文](README.md) · [English](README_EN.md)
+
 自托管高并发卡密兑换平台：公开兑换端 + 管理端 + HTTP API。
 
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8)](https://go.dev/)
@@ -13,6 +15,8 @@
 - **卡密管理**：创建、批量导入、启用/禁用/删除、批次
 - **类别隔离**：独立编码前缀；无交易可删，有记录仅停用
 - **API 密钥**：固定兑换密钥 + 自定义 Key（吊销/删除/轮换）
+- **API 文档**：公开 `/docs` + 管理端「API 文档」；Base URL 可配置并动态展示
+- **品牌资源**：Logo / Favicon 支持上传
 - **首次安装向导**：对齐 sub2api，Web 端创建管理员
 - **运维**：健康检查、指标、可选在线更新（二进制模式）
 

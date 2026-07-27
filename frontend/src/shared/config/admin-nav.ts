@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  BookOpen,
   FolderTree,
   KeyRound,
   LayoutDashboard,
@@ -27,6 +28,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { to: "/admin/batches", label: "批次", icon: Layers },
   { to: "/admin/redeems", label: "兑换记录", icon: Activity },
   { to: "/admin/api-keys", label: "API 密钥", icon: KeyRound },
+  { to: "/admin/api-docs", label: "API 文档", icon: BookOpen },
   { to: "/admin/settings", label: "系统设置", icon: Settings },
   { to: "/admin/audit", label: "审计日志", icon: ScrollText },
 ];

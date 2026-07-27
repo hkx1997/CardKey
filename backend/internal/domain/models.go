@@ -152,6 +152,8 @@ type Settings struct {
 	ExposePublicRedeemKeyInDocs bool   `json:"exposePublicRedeemKeyInDocs"`
 	PublicRedeemApiKey          string `json:"publicRedeemApiKey"`
 	ApiBasePath                 string `json:"apiBasePath"`
+	// 对外 API 根地址，如 https://api.example.com ；空则文档用当前站点 origin
+	ApiPublicBaseUrl string `json:"apiPublicBaseUrl"`
 }
 
 type PublicConfig struct {
@@ -167,6 +169,7 @@ type PublicConfig struct {
 	CaptchaEnabled        bool             `json:"captchaEnabled"`
 	RedeemTabVisibleCount int              `json:"redeemTabVisibleCount"`
 	ApiBasePath           string           `json:"apiBasePath"`
+	ApiPublicBaseUrl      string           `json:"apiPublicBaseUrl"`
 	ApiDocsEnabled        bool             `json:"apiDocsEnabled"`
 	ShowApiDocsEntry      bool             `json:"showApiDocsEntry"`
 	PublicRedeemApiKey    *string          `json:"publicRedeemApiKey"`

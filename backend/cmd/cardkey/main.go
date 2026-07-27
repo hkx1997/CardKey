@@ -61,6 +61,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	dataDir := getenv("DATA_DIR", "")
+	if dataDir == "" {
+		for _, c := range []string{"/app/data", "./data"} {
+			if err := os.MkdirAll(c, 0o755); err == nil {
+				dataDir = c
+				break
+			}
+		}
+	} else {
+		_ = os.MkdirAll(dataDir, 0o755)
+	}
+
 	application := &app.App{
 		Pool:                pool,
 		RDB:                 rdb,
@@ -81,6 +93,7 @@ func main() {
 		UpdateReleasesDir:   cfg.UpdateReleasesDir,
 		UpdateBinaryPath:    cfg.UpdateBinaryPath,
 		UpdateKeepReleases:  cfg.UpdateKeepReleases,
+		DataDir:             dataDir,
 	}
 
 	if _, _, err := application.Bootstrap(ctx, cfg.BootstrapUser, cfg.BootstrapPass, cfg.PublicRedeemKey); err != nil {
@@ -155,4 +168,11 @@ func connectRedis(url string, log *slog.Logger) *redis.Client {
 		return nil
 	}
 	return rdb
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }

@@ -75,6 +75,7 @@ export const mockClient = {
       captchaEnabled: s.captchaEnabled,
       redeemTabVisibleCount: Math.max(1, s.redeemTabVisibleCount || 4),
       apiBasePath: s.apiBasePath || "/api/v1",
+      apiPublicBaseUrl: s.apiPublicBaseUrl || "",
       apiDocsEnabled: docsOn,
       showApiDocsEntry: docsOn && !!s.showApiDocsEntry,
       // 文档页固定密钥直接展示（管理端仍可用 expose 开关控制是否写入公开 config）
@@ -818,6 +819,19 @@ export const mockClient = {
       ip: "127.0.0.1",
     });
     return { ...db.settings };
+  },
+
+  async uploadImage(file: File): Promise<{ url: string }> {
+    await delay(200);
+    mockStore.requireSession();
+    // Mock：转 Data URL
+    const url = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+    return { url };
   },
 
   async listAuditLogs(params: {

@@ -39,6 +39,9 @@ type App struct {
 	UpdateBinaryPath   string
 	UpdateKeepReleases int
 
+	// DataDir 本地数据（上传图片等），默认 /app/data 或 ./data
+	DataDir string
+
 	settingsMu    sync.RWMutex
 	settingsCache *domain.Settings
 	settingsAt    time.Time
@@ -99,6 +102,7 @@ func (a *App) DefaultSettings() domain.Settings {
 		ExposePublicRedeemKeyInDocs: true,
 		PublicRedeemApiKey:          "ck_redeem_demo_fixed_key_change_me",
 		ApiBasePath:                 "/api/v1",
+		ApiPublicBaseUrl:            "",
 	}
 }
 

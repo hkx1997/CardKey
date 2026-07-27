@@ -246,6 +246,30 @@ export const httpClient = {
       body: JSON.stringify(patch),
     }),
 
+  uploadImage: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/v1/admin/uploads", {
+      method: "POST",
+      credentials: "include",
+      body: fd,
+    });
+    const body = (await res.json().catch(() => null)) as {
+      success?: boolean;
+      data?: { url: string };
+      error?: { code: string; message: string };
+    } | null;
+    if (!res.ok || !body?.success || !body.data?.url) {
+      const { ApiError } = await import("@/entities/types");
+      throw new ApiError(
+        res.status,
+        body?.error?.code ?? "INTERNAL_ERROR",
+        body?.error?.message ?? "上传失败",
+      );
+    }
+    return body.data;
+  },
+
   listAuditLogs: (params: { page?: number; pageSize?: number }) => {
     const sp = new URLSearchParams();
     if (params.page) sp.set("page", String(params.page));

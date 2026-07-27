@@ -315,6 +315,7 @@ func (a *App) UpdateSettings(ctx context.Context, patch domain.Settings, actor, 
 	if patch.ApiBasePath == "" {
 		patch.ApiBasePath = "/api/v1"
 	}
+	patch.ApiPublicBaseUrl = strings.TrimRight(strings.TrimSpace(patch.ApiPublicBaseUrl), "/")
 	// preserve public key if empty in patch
 	cur, _ := a.GetSettings(ctx)
 	if patch.PublicRedeemApiKey == "" {

@@ -1,0 +1,132 @@
+# CardKey
+
+**Language:** [中文](README.md) · [English](README_EN.md)
+
+Self-hosted high-concurrency card-key (gift code) redeem platform: public redeem page + admin console + HTTP API.
+
+[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8)](https://go.dev/)
+[![React](https://img.shields.io/badge/React-19-61DAFB)](https://react.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+## Features
+
+- **Public redeem**: category tabs, single/batch redeem, ZIP export
+- **Card inventory**: create, bulk import, enable/disable/delete, batches
+- **Category isolation**: unique code prefix; delete only when no redeems, otherwise disable
+- **API keys**: system redeem key + custom keys (revoke/delete/rotate)
+- **API docs**: public `/docs` + admin **API Docs** page; configurable Base URL shown dynamically
+- **Branding**: Logo / Favicon upload
+- **Setup wizard**: first-run admin creation (sub2api-style)
+- **Ops**: health checks, metrics, optional binary self-update
+
+## Stack
+
+| Layer | Tech |
+|-------|------|
+| Frontend | React 19 · Vite · Tailwind 4 · TanStack Query |
+| Backend | Go · chi · pgx · Redis |
+| Data | PostgreSQL 16 · Redis 7 |
+| Deploy | Docker Compose |
+
+## Quick deploy
+
+### Requirements
+
+- Docker 20+ / Compose v2
+- Linux / macOS / Windows (Docker Desktop)
+
+### Steps
+
+```bash
+git clone https://github.com/hkx1997/CardKey.git
+cd CardKey
+
+bash deploy/docker-deploy.sh
+
+# or manually
+cp .env.example .env
+# edit APP_PORT, POSTGRES_PASSWORD, JWT_SECRET, CONTENT_KEY
+docker compose up -d --build
+```
+
+### Access
+
+- Redeem: `http://SERVER:APP_PORT/` (default **18080**)
+- Admin: `http://SERVER:APP_PORT/admin`
+
+### First-time setup
+
+1. Open admin  
+2. If no admin exists → **Setup wizard** at `/admin/setup`  
+3. Set admin user/password, site name, optional demo data  
+4. Auto login after finish  
+
+Or set `BOOTSTRAP_ADMIN_PASS` in `.env` to create admin on boot (scripts only).
+
+### Key env vars
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_PORT` | 18080 | App port |
+| `POSTGRES_PORT` | 5432 | Postgres host port |
+| `REDIS_PORT` | 6379 | Redis host port |
+| `POSTGRES_PASSWORD` | — | **Use a strong password in production** |
+| `JWT_SECRET` | — | Random ≥32 chars |
+| `CONTENT_KEY` | — | 64 hex (`openssl rand -hex 32`) |
+| `BOOTSTRAP_ADMIN_PASS` | empty | Empty = web setup wizard |
+
+### Commands
+
+```bash
+docker compose ps
+docker compose logs -f cardkey
+docker compose down
+docker compose down -v   # wipe data — careful
+```
+
+### Production tips
+
+1. Rotate all secrets and DB password  
+2. Put HTTPS reverse proxy in front; set `SECURE_COOKIE=true`  
+3. Backup Postgres volume regularly  
+4. Expose only `APP_PORT` or 443  
+
+## Demo codes (if demo data enabled)
+
+| Category | Sample code |
+|----------|-------------|
+| VIP | `VIP-DEMO-7K3M-9P2X-W4QH` |
+| CDK | `CDK-DEMO-A2B3-C4D5-E6F7` |
+
+## Development
+
+```bash
+cd frontend && pnpm install && pnpm dev
+cd backend && go run ./cmd/cardkey
+cd frontend && pnpm test
+cd backend && go test ./...
+```
+
+## API snapshot
+
+```json
+{ "success": true, "data": {} }
+```
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/public/config` | Public config |
+| GET | `/api/v1/public/setup-status` | Setup needed? |
+| POST | `/api/v1/public/setup` | Complete setup |
+| POST | `/api/v1/public/redeem` | Redeem |
+| POST | `/api/v1/admin/auth/login` | Login |
+| POST | `/api/v1/admin/uploads` | Image upload (auth) |
+| GET | `/healthz` / `/readyz` | Health |
+| GET | `/metrics` | Prometheus text metrics |
+
+Configure **API public Base URL** in Admin → Settings → API (`apiPublicBaseUrl`). Docs use it for code samples.
+
+## License
+
+[MIT](LICENSE)

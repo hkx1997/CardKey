@@ -389,6 +389,7 @@ function createDb(): MockDb {
       exposePublicRedeemKeyInDocs: true,
       publicRedeemApiKey: "ck_redeem_demo_fixed_key_change_me",
       apiBasePath: "/api/v1",
+      apiPublicBaseUrl: "",
     },
     categories: [catVip, catCdk, catGift, catGame, catSpark, catAcc],
     batches: [batchVip, batchCdk],
