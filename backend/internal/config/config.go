@@ -120,7 +120,8 @@ func Load() Config {
 		UpdateGitHubRepo:    getenv("UPDATE_GITHUB_REPO", "CardKey"),
 		UpdateGitHubToken:   getenv("UPDATE_GITHUB_TOKEN", ""),
 		UpdateReleasesDir:   getenv("UPDATE_RELEASES_DIR", "/opt/cardkey/releases"),
-		UpdateBinaryPath:    getenv("UPDATE_BINARY_PATH", "/opt/cardkey/cardkey"),
+		// 空=自动用 os.Executable()（Docker 内为 /app/cardkey）；勿默认 /opt/...（容器内不存在）
+		UpdateBinaryPath: getenv("UPDATE_BINARY_PATH", ""),
 		UpdateKeepReleases:  EnvInt("UPDATE_KEEP_RELEASES", 5),
 	}
 }

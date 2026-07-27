@@ -547,8 +547,22 @@ func (a *App) canApplyUpdate() bool {
 }
 
 func (a *App) currentBinaryPath() (string, error) {
+	// 显式配置且路径可用时才用；否则走当前进程路径（Docker 一般为 /app/cardkey）
 	if p := strings.TrimSpace(a.UpdateBinaryPath); p != "" {
-		return p, nil
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, nil
+		}
+		// 配置了但文件不存在：若父目录可写则仍可用（首次安装路径）
+		if dir := filepath.Dir(p); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0o755); err == nil {
+				// 探测是否可写
+				probe := filepath.Join(dir, ".ck_write_probe")
+				if err := os.WriteFile(probe, []byte("1"), 0o600); err == nil {
+					_ = os.Remove(probe)
+					return p, nil
+				}
+			}
+		}
 	}
 	exe, err := os.Executable()
 	if err != nil {
