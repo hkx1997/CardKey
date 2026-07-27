@@ -1,0 +1,135 @@
+package server
+
+import (
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/cardkey/cardkey/internal/app"
+	"github.com/cardkey/cardkey/internal/handler"
+	"github.com/cardkey/cardkey/internal/middleware"
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+)
+
+func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
+	h := &handler.Handler{App: a}
+	r := chi.NewRouter()
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Recoverer)
+	r.Use(chimw.Timeout(60 * time.Second))
+	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.BodyLimit(4 << 20))
+	r.Use(middleware.ClientIPMiddleware(a.TrustProxy))
+	r.Use(middleware.CSRFOrigin(a.CSRFCheck))
+	if a.Log != nil {
+		r.Use(middleware.AccessLog(a.Log))
+	}
+	r.Use(middleware.CORS(corsOrigins))
+
+	r.Get("/healthz", h.Health)
+	r.Get("/readyz", h.Ready)
+	r.Get("/metrics", app.MetricsHandler(a))
+
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Route("/public", func(r chi.Router) {
+			r.Get("/config", h.GetPublicConfig)
+			r.Get("/setup-status", h.SetupStatus)
+			r.Post("/setup", h.CompleteSetup)
+			r.Post("/redeem", h.Redeem)
+		})
+
+		r.Route("/admin", func(r chi.Router) {
+			r.Post("/auth/login", h.Login)
+			r.Post("/auth/logout", h.Logout)
+
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RequireAdmin(a))
+				r.Get("/auth/me", h.Me)
+				r.Post("/auth/change-password", h.ChangePassword)
+				r.Get("/system/info", h.SystemInfo)
+
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequirePasswordChanged(a))
+
+					r.Get("/dashboard/stats", h.Dashboard)
+
+					r.Get("/categories", h.ListCategories)
+					r.Post("/categories", h.CreateCategory)
+					r.Patch("/categories/{id}", h.UpdateCategory)
+					r.Delete("/categories/{id}", h.DeleteCategory)
+
+					r.Get("/cards", h.ListCards)
+					r.Get("/cards/{id}", h.GetCard)
+					r.Post("/cards", h.CreateCard)
+					r.Post("/cards/import", h.ImportCards)
+					r.Post("/cards/batch-action", h.BatchAction)
+
+					r.Get("/batches", h.ListBatches)
+					r.Delete("/batches/{id}", h.DeleteBatch)
+					r.Get("/redeems", h.ListRedeems)
+
+					r.Get("/api-keys", h.ListAPIKeys)
+					r.Post("/api-keys", h.CreateAPIKey)
+					r.Post("/api-keys/{id}/revoke", h.RevokeAPIKey)
+					r.Delete("/api-keys/{id}", h.DeleteAPIKey)
+					r.Post("/api-keys/{id}/rotate", h.RotateAPIKey)
+
+					r.Post("/settings/public-redeem-key", h.SetPublicRedeemKey)
+					r.Get("/settings", h.GetSettings)
+					r.Put("/settings", h.UpdateSettings)
+
+					r.Get("/audit-logs", h.ListAudit)
+
+					r.Get("/updates/check", h.CheckUpdates)
+					r.Get("/updates/history", h.UpdateHistory)
+					r.Get("/updates/status", h.UpdateStatus)
+					r.Post("/updates/apply", h.ApplyUpdate)
+					r.Post("/updates/rollback", h.RollbackUpdate)
+				})
+			})
+		})
+	})
+
+	if staticDir != "" {
+		if st, err := os.Stat(staticDir); err == nil && st.IsDir() {
+			fileServer(r, staticDir)
+		}
+	}
+	return r
+}
+
+func fileServer(r chi.Router, dir string) {
+	r.Get("/*", func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/api/") {
+			http.NotFound(w, req)
+			return
+		}
+		path := filepath.Join(dir, filepath.Clean("/"+req.URL.Path))
+		if !strings.HasPrefix(path, filepath.Clean(dir)+string(os.PathSeparator)) && path != filepath.Clean(dir) {
+			http.NotFound(w, req)
+			return
+		}
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if strings.HasSuffix(path, ".html") {
+				w.Header().Set("Cache-Control", "no-cache")
+			} else if strings.Contains(path, string(os.PathSeparator)+"assets"+string(os.PathSeparator)) {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			http.ServeFile(w, req, path)
+			return
+		}
+		index := filepath.Join(dir, "index.html")
+		if _, err := os.Stat(index); err == nil {
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFile(w, req, index)
+			return
+		}
+		http.NotFound(w, req)
+	})
+	_ = fs.ValidPath
+}

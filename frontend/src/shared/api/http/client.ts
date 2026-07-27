@@ -1,0 +1,310 @@
+import type {
+  AdminUser,
+  ApiKeyMeta,
+  AuditLog,
+  Batch,
+  Card,
+  CardStatus,
+  CardType,
+  Category,
+  DashboardStats,
+  PageResult,
+  PublicConfig,
+  RedeemRecord,
+  RedeemResult,
+  Settings,
+} from "@/entities/types";
+import { ApiError, type ApiEnvelope } from "@/entities/types";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+
+  const body = (await res.json().catch(() => null)) as ApiEnvelope<T> | null;
+  if (!res.ok || !body?.success) {
+    throw new ApiError(
+      res.status,
+      body?.error?.code ?? "INTERNAL_ERROR",
+      body?.error?.message ?? (res.statusText || "请求失败"),
+    );
+  }
+  return body.data as T;
+}
+
+/** 真实 HTTP 适配器：契约与 mock 一致 */
+export const httpClient = {
+  getPublicConfig: () => request<PublicConfig>("/api/v1/public/config"),
+
+  setupStatus: () =>
+    request<{
+      needsSetup: boolean;
+      ready: boolean;
+      siteName?: string;
+      message?: string;
+    }>("/api/v1/public/setup-status"),
+
+  completeSetup: (input: {
+    username: string;
+    password: string;
+    confirmPassword?: string;
+    siteName?: string;
+    publicRedeemApiKey?: string;
+    seedDemoCategories?: boolean;
+  }) =>
+    request<AdminUser>("/api/v1/public/setup", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  redeem: (input: { category: string; code: string }) =>
+    request<RedeemResult>("/api/v1/public/redeem", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  login: (username: string, password: string) =>
+    request<AdminUser>("/api/v1/admin/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+
+  logout: () =>
+    request<void>("/api/v1/admin/auth/logout", { method: "POST" }),
+
+  me: () => request<AdminUser | null>("/api/v1/admin/auth/me"),
+
+  changePassword: (oldPassword: string, newPassword: string) =>
+    request<void>("/api/v1/admin/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+      }),
+    }),
+
+  dashboardStats: (categorySlug?: string) => {
+    const sp = new URLSearchParams();
+    if (categorySlug) sp.set("category", categorySlug);
+    const q = sp.toString();
+    return request<DashboardStats>(
+      `/api/v1/admin/dashboard/stats${q ? `?${q}` : ""}`,
+    );
+  },
+
+  listCategories: () => request<Category[]>("/api/v1/admin/categories"),
+
+  createCategory: (input: {
+    name: string;
+    slug: string;
+    codePrefix: string;
+    description?: string;
+    icon?: Category["icon"];
+  }) =>
+    request<Category>("/api/v1/admin/categories", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  updateCategory: (
+    id: string,
+    patch: Partial<
+      Pick<Category, "name" | "description" | "enabled" | "sortOrder" | "icon">
+    >,
+  ) =>
+    request<Category>(`/api/v1/admin/categories/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  deleteCategory: (id: string) =>
+    request<void>(`/api/v1/admin/categories/${id}`, { method: "DELETE" }),
+
+  listCards: (params: {
+    page?: number;
+    pageSize?: number;
+    status?: CardStatus | "all";
+    q?: string;
+    batchId?: string;
+    categorySlug?: string;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params.page) sp.set("page", String(params.page));
+    if (params.pageSize) sp.set("page_size", String(params.pageSize));
+    if (params.status && params.status !== "all") sp.set("status", params.status);
+    if (params.q) sp.set("q", params.q);
+    if (params.batchId) sp.set("batch_id", params.batchId);
+    if (params.categorySlug) sp.set("category", params.categorySlug);
+    return request<PageResult<Card>>(`/api/v1/admin/cards?${sp}`);
+  },
+
+  getCard: (id: string, reveal = false) =>
+    request<Card>(`/api/v1/admin/cards/${id}?reveal=${reveal ? 1 : 0}`),
+
+  createCard: (input: {
+    content: string;
+    type: CardType;
+    note?: string;
+    batchId?: string | null;
+    categoryId: string;
+  }) =>
+    request<Card>("/api/v1/admin/cards", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  importCards: (input: {
+    raw: string;
+    type: CardType;
+    categoryId: string;
+    batchName?: string;
+    note?: string;
+  }) =>
+    request<{
+      batch: Batch | null;
+      codes: string[];
+      total: number;
+      category: Category;
+    }>("/api/v1/admin/cards/import", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  batchAction: (ids: string[], action: "disable" | "enable" | "delete") =>
+    request<number>("/api/v1/admin/cards/batch-action", {
+      method: "POST",
+      body: JSON.stringify({ ids, action }),
+    }),
+
+  listBatches: (categorySlug?: string) => {
+    const sp = new URLSearchParams();
+    if (categorySlug) sp.set("category", categorySlug);
+    const q = sp.toString();
+    return request<Batch[]>(`/api/v1/admin/batches${q ? `?${q}` : ""}`);
+  },
+
+  deleteBatch: (id: string) =>
+    request<void>(`/api/v1/admin/batches/${id}`, { method: "DELETE" }),
+
+  listRedeems: (params: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    categorySlug?: string;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params.page) sp.set("page", String(params.page));
+    if (params.pageSize) sp.set("page_size", String(params.pageSize));
+    if (params.q) sp.set("q", params.q);
+    if (params.categorySlug) sp.set("category", params.categorySlug);
+    return request<PageResult<RedeemRecord>>(`/api/v1/admin/redeems?${sp}`);
+  },
+
+  listApiKeys: () => request<ApiKeyMeta[]>("/api/v1/admin/api-keys"),
+
+  createApiKey: (input: {
+    name: string;
+    scopes: Array<"redeem:api" | "admin:api">;
+    rateLimitRpm?: number | null;
+  }) =>
+    request<{ key: ApiKeyMeta; plaintext: string }>("/api/v1/admin/api-keys", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  revokeApiKey: (id: string) =>
+    request<void>(`/api/v1/admin/api-keys/${id}/revoke`, { method: "POST" }),
+
+  deleteApiKey: (id: string) =>
+    request<void>(`/api/v1/admin/api-keys/${id}`, { method: "DELETE" }),
+
+  rotateApiKey: (id: string) =>
+    request<{ key: ApiKeyMeta; plaintext: string }>(
+      `/api/v1/admin/api-keys/${id}/rotate`,
+      { method: "POST" },
+    ),
+
+  setPublicRedeemApiKey: (input: {
+    mode: "rotate" | "custom";
+    customKey?: string;
+  }) =>
+    request<{ plaintext: string }>(
+      "/api/v1/admin/settings/public-redeem-key",
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+
+  getSettings: () => request<Settings>("/api/v1/admin/settings"),
+
+  updateSettings: (patch: Partial<Settings>) =>
+    request<Settings>("/api/v1/admin/settings", {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+
+  listAuditLogs: (params: { page?: number; pageSize?: number }) => {
+    const sp = new URLSearchParams();
+    if (params.page) sp.set("page", String(params.page));
+    if (params.pageSize) sp.set("page_size", String(params.pageSize));
+    return request<PageResult<AuditLog>>(`/api/v1/admin/audit-logs?${sp}`);
+  },
+
+  systemInfo: () =>
+    request<{
+      version: string;
+      commit: string;
+      buildTime: string;
+      goVersion: string;
+      goos: string;
+      goarch: string;
+      updateMode: string;
+      startedAt: string;
+      uptimeSec: number;
+    }>("/api/v1/admin/system/info"),
+
+  checkUpdates: () =>
+    request<{
+      current: string;
+      latest?: string;
+      hasUpdate: boolean;
+      releaseUrl?: string;
+      body?: string;
+      publishedAt?: string;
+      mode: string;
+      message?: string;
+    }>("/api/v1/admin/updates/check"),
+
+  updateHistory: () =>
+    request<
+      Array<{
+        version: string;
+        path?: string;
+        modTime?: string;
+        isCurrent: boolean;
+      }>
+    >("/api/v1/admin/updates/history"),
+
+  updateStatus: () =>
+    request<{
+      state: string;
+      message?: string;
+      progress: number;
+      error?: string;
+    }>("/api/v1/admin/updates/status"),
+
+  applyUpdate: (version?: string) =>
+    request<{ status: string }>("/api/v1/admin/updates/apply", {
+      method: "POST",
+      body: JSON.stringify({ version: version ?? "" }),
+    }),
+
+  rollbackUpdate: (version?: string) =>
+    request<{ status: string }>("/api/v1/admin/updates/rollback", {
+      method: "POST",
+      body: JSON.stringify({ version: version ?? "previous" }),
+    }),
+};

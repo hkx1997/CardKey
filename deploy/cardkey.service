@@ -1,0 +1,21 @@
+[Unit]
+Description=CardKey card redemption platform
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=cardkey
+Group=cardkey
+EnvironmentFile=/etc/cardkey/env
+WorkingDirectory=/opt/cardkey
+ExecStart=/opt/cardkey/cardkey
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

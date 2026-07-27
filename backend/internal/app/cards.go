@@ -1,0 +1,382 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/cardkey/cardkey/internal/crypto"
+	"github.com/cardkey/cardkey/internal/domain"
+	"github.com/cardkey/cardkey/internal/pkg/apperr"
+	"github.com/cardkey/cardkey/internal/pkg/paging"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, categorySlug, batchID string) (domain.PageResult[domain.Card], error) {
+	page, pageSize = paging.Normalize(page, pageSize, 10, 100)
+	where := []string{"1=1"}
+	args := []any{}
+	i := 1
+	if status != "" && status != "all" {
+		where = append(where, fmt.Sprintf("cards.status=$%d", i))
+		args = append(args, status)
+		i++
+	}
+	if q != "" {
+		where = append(where, fmt.Sprintf("(cards.code ILIKE $%d OR cards.note ILIKE $%d)", i, i))
+		args = append(args, "%"+q+"%")
+		i++
+	}
+	if categorySlug != "" {
+		where = append(where, fmt.Sprintf("cat.slug=$%d", i))
+		args = append(args, categorySlug)
+		i++
+	}
+	if batchID != "" {
+		where = append(where, fmt.Sprintf("cards.batch_id=$%d", i))
+		args = append(args, batchID)
+		i++
+	}
+	wsql := strings.Join(where, " AND ")
+	var total int
+	countSQL := `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
+	if err := a.Pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return domain.PageResult[domain.Card]{}, err
+	}
+	args = append(args, pageSize, paging.Offset(page, pageSize))
+	sql := fmt.Sprintf(`
+		SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
+		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at
+		FROM cards
+		JOIN categories cat ON cat.id=cards.category_id
+		LEFT JOIN batches b ON b.id=cards.batch_id
+		WHERE %s
+		ORDER BY cards.created_at DESC
+		LIMIT $%d OFFSET $%d`, wsql, i, i+1)
+	rows, err := a.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return domain.PageResult[domain.Card]{}, err
+	}
+	defer rows.Close()
+	items := []domain.Card{}
+	for rows.Next() {
+		var c domain.Card
+		var created time.Time
+		var exp, used *time.Time
+		var usedIP *string
+		var batchID, batchName *string
+		if err := rows.Scan(&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
+			&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created); err != nil {
+			return domain.PageResult[domain.Card]{}, err
+		}
+		c.BatchID = batchID
+		c.BatchName = batchName
+		c.ExpiresAt = domain.PtrTime(exp)
+		c.UsedAt = domain.PtrTime(used)
+		c.UsedIP = usedIP
+		c.CreatedAt = formatTS(created)
+		items = append(items, c)
+	}
+	return domain.PageResult[domain.Card]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (a *App) GetCard(ctx context.Context, id string, reveal bool, actor, ip string) (domain.Card, error) {
+	var c domain.Card
+	var enc, nonce []byte
+	var created time.Time
+	var exp, used *time.Time
+	var usedIP *string
+	var batchID, batchName *string
+	err := a.Pool.QueryRow(ctx, `
+		SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
+		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
+		       cards.content_enc, cards.content_nonce
+		FROM cards
+		JOIN categories cat ON cat.id=cards.category_id
+		LEFT JOIN batches b ON b.id=cards.batch_id
+		WHERE cards.id=$1`, id).Scan(
+		&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
+		&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created, &enc, &nonce)
+	if err != nil {
+		return c, apperr.NotFound("卡密不存在")
+	}
+	c.BatchID = batchID
+	c.BatchName = batchName
+	c.ExpiresAt = domain.PtrTime(exp)
+	c.UsedAt = domain.PtrTime(used)
+	c.UsedIP = usedIP
+	c.CreatedAt = formatTS(created)
+	if reveal {
+		plain, err := a.DecryptContent(enc, nonce)
+		if err != nil {
+			return c, apperr.Internal("解密失败")
+		}
+		c.Content = &plain
+		a.Audit(ctx, "admin", actor, "reveal_content", "card:"+id, "查看卡密内容", ip)
+	}
+	return c, nil
+}
+
+func (a *App) CreateCard(ctx context.Context, categoryID, content string, typ domain.CardType, note string, batchID *string, actor, ip string) (domain.Card, error) {
+	var prefix string
+	if err := a.Pool.QueryRow(ctx, `SELECT code_prefix FROM categories WHERE id=$1`, categoryID).Scan(&prefix); err != nil {
+		return domain.Card{}, apperr.Validation("类别无效")
+	}
+	if strings.TrimSpace(content) == "" {
+		return domain.Card{}, apperr.Validation("请输入卡密内容")
+	}
+	if typ == "" {
+		typ = domain.TypeText
+	}
+	code, err := a.uniqueCode(ctx, categoryID, prefix)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	enc, nonce, err := a.EncryptContent(content)
+	if err != nil {
+		return domain.Card{}, apperr.Internal("加密失败")
+	}
+	id := uuid.NewString()
+	var created time.Time
+	err = a.Pool.QueryRow(ctx, `
+		INSERT INTO cards(id, category_id, code, content_enc, content_nonce, type, batch_id, status, note)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'unused',$8) RETURNING created_at`,
+		id, categoryID, code, enc, nonce, typ, batchID, note).Scan(&created)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	a.Audit(ctx, "admin", actor, "create_card", "card:"+id, "创建 "+code, ip)
+	return domain.Card{
+		ID: id, CategoryID: categoryID, Code: code, Type: typ, Status: domain.StatusUnused,
+		BatchID: batchID, Note: note, CreatedAt: formatTS(created),
+	}, nil
+}
+
+func (a *App) uniqueCode(ctx context.Context, categoryID, prefix string) (string, error) {
+	for i := 0; i < 8; i++ {
+		code, err := crypto.GenerateCode(prefix)
+		if err != nil {
+			return "", err
+		}
+		var exists bool
+		if err := a.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM cards WHERE category_id=$1 AND code=$2)`, categoryID, code).Scan(&exists); err != nil {
+			return "", err
+		}
+		if !exists {
+			return code, nil
+		}
+	}
+	return "", apperr.Internal("编码生成冲突")
+}
+
+func (a *App) ImportCards(ctx context.Context, categoryID, raw string, typ domain.CardType, batchName, note, actor, ip string) (map[string]any, error) {
+	var cat domain.Category
+	var created time.Time
+	err := a.Pool.QueryRow(ctx, `
+		SELECT id, name, slug, code_prefix, description, enabled, sort_order, icon_kind, icon_value, created_at
+		FROM categories WHERE id=$1`, categoryID).
+		Scan(&cat.ID, &cat.Name, &cat.Slug, &cat.CodePrefix, &cat.Description, &cat.Enabled, &cat.SortOrder,
+			&cat.Icon.Kind, &cat.Icon.Value, &created)
+	if err != nil {
+		return nil, apperr.Validation("类别无效")
+	}
+	cat.CreatedAt = formatTS(created)
+	lines := []string{}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return nil, apperr.Validation("请输入导入内容")
+	}
+	if typ == "" {
+		typ = domain.TypeText
+	}
+
+	var batch *domain.Batch
+	var batchID *string
+	if strings.TrimSpace(batchName) != "" {
+		bid := uuid.NewString()
+		var bcreated time.Time
+		err = a.Pool.QueryRow(ctx, `
+			INSERT INTO batches(id, category_id, name, note) VALUES($1,$2,$3,$4) RETURNING created_at`,
+			bid, categoryID, batchName, note).Scan(&bcreated)
+		if err != nil {
+			return nil, err
+		}
+		batch = &domain.Batch{
+			ID: bid, CategoryID: categoryID, CategoryName: cat.Name, Name: batchName, Note: note,
+			CardCount: len(lines), UnusedCount: len(lines), CreatedAt: formatTS(bcreated),
+		}
+		batchID = &batch.ID
+	}
+
+	// 分批提交，避免超长事务锁表
+	const chunk = 500
+	codes := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i += chunk {
+		end := i + chunk
+		if end > len(lines) {
+			end = len(lines)
+		}
+		tx, err := a.Pool.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, content := range lines[i:end] {
+			code, err := a.uniqueCodeTx(ctx, tx, categoryID, cat.CodePrefix)
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				return nil, err
+			}
+			enc, nonce, err := a.EncryptContent(content)
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				return nil, err
+			}
+			_, err = tx.Exec(ctx, `
+				INSERT INTO cards(category_id, code, content_enc, content_nonce, type, batch_id, status, note)
+				VALUES($1,$2,$3,$4,$5,$6,'unused',$7)`, categoryID, code, enc, nonce, typ, batchID, note)
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				return nil, err
+			}
+			codes = append(codes, code)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+	}
+	a.Audit(ctx, "admin", actor, "import", "category:"+categoryID, fmt.Sprintf("导入 %d 条 → %s", len(codes), cat.Name), ip)
+	return map[string]any{
+		"batch":    batch,
+		"codes":    codes,
+		"total":    len(codes),
+		"category": cat,
+	}, nil
+}
+
+func (a *App) uniqueCodeTx(ctx context.Context, tx pgx.Tx, categoryID, prefix string) (string, error) {
+	for i := 0; i < 8; i++ {
+		code, err := crypto.GenerateCode(prefix)
+		if err != nil {
+			return "", err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM cards WHERE category_id=$1 AND code=$2)`, categoryID, code).Scan(&exists); err != nil {
+			return "", err
+		}
+		if !exists {
+			return code, nil
+		}
+	}
+	return "", apperr.Internal("编码生成冲突")
+}
+
+func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip string) (int, error) {
+	if len(ids) == 0 {
+		return 0, apperr.Validation("未选择卡密")
+	}
+	switch action {
+	case "disable", "enable":
+		status := domain.StatusDisabled
+		if action == "enable" {
+			status = domain.StatusUnused
+		}
+		tag, err := a.Pool.Exec(ctx, `
+			UPDATE cards SET status=$1, updated_at=now()
+			WHERE id = ANY($2) AND status <> 'used' AND status <> 'expired'`, status, ids)
+		if err != nil {
+			return 0, err
+		}
+		n := int(tag.RowsAffected())
+		a.Audit(ctx, "admin", actor, "batch_"+action, "cards", fmt.Sprintf("%s %d 条", action, n), ip)
+		return n, nil
+	case "delete":
+		// 仅允许删除未使用/已禁用；已兑换与过期保留审计与历史
+		tag, err := a.Pool.Exec(ctx, `
+			DELETE FROM cards
+			WHERE id = ANY($1) AND status IN ('unused', 'disabled')`, ids)
+		if err != nil {
+			return 0, err
+		}
+		n := int(tag.RowsAffected())
+		a.Audit(ctx, "admin", actor, "batch_delete", "cards", fmt.Sprintf("删除 %d 条", n), ip)
+		return n, nil
+	default:
+		return 0, apperr.Validation("无效操作：支持 enable / disable / delete")
+	}
+}
+
+// DeleteBatch 删除空批次（无卡密）或仅含可删卡密的批次。
+// 若批次内存在已兑换/过期卡密则拒绝。
+func (a *App) DeleteBatch(ctx context.Context, id, actor, ip string) error {
+	var name string
+	var blocked int
+	err := a.Pool.QueryRow(ctx, `
+		SELECT b.name,
+		       (SELECT COUNT(*) FROM cards c WHERE c.batch_id=b.id AND c.status IN ('used','expired'))
+		FROM batches b WHERE b.id=$1`, id).Scan(&name, &blocked)
+	if err != nil {
+		return apperr.NotFound("批次不存在")
+	}
+	if blocked > 0 {
+		return apperr.Conflict("批次内存在已兑换/过期卡密，无法删除")
+	}
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM cards WHERE batch_id=$1 AND status IN ('unused','disabled')`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM batches WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("批次不存在")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	a.Audit(ctx, "admin", actor, "delete_batch", "batch:"+id, name, ip)
+	return nil
+}
+
+func (a *App) ListBatches(ctx context.Context, categorySlug string) ([]domain.Batch, error) {
+	sql := `
+		SELECT b.id, b.category_id, cat.name, b.name, b.note, b.created_at,
+		       COUNT(c.id), COUNT(c.id) FILTER (WHERE c.status='unused')
+		FROM batches b
+		JOIN categories cat ON cat.id=b.category_id
+		LEFT JOIN cards c ON c.batch_id=b.id
+	`
+	args := []any{}
+	if categorySlug != "" {
+		sql += ` WHERE cat.slug=$1`
+		args = append(args, categorySlug)
+	}
+	sql += ` GROUP BY b.id, cat.name ORDER BY b.created_at DESC`
+	rows, err := a.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Batch{}
+	for rows.Next() {
+		var b domain.Batch
+		var created time.Time
+		if err := rows.Scan(&b.ID, &b.CategoryID, &b.CategoryName, &b.Name, &b.Note, &created, &b.CardCount, &b.UnusedCount); err != nil {
+			return nil, err
+		}
+		b.CreatedAt = formatTS(created)
+		out = append(out, b)
+	}
+	return out, nil
+}
