@@ -186,6 +186,29 @@ type Settings struct {
 	ApiBasePath                 string `json:"apiBasePath"`
 	// 对外 API 根地址，如 https://api.example.com ；空则文档用当前站点 origin
 	ApiPublicBaseUrl string `json:"apiPublicBaseUrl"`
+
+	// —— 邮件（SMTP，对齐 sub2api 配置形态）——
+	// SmtpPassword 仅写入；读取时始终清空，用 SmtpPasswordSet 表示是否已配置
+	SmtpHost           string `json:"smtpHost"`
+	SmtpPort           int    `json:"smtpPort"`
+	SmtpUsername       string `json:"smtpUsername"`
+	SmtpPassword       string `json:"smtpPassword"`
+	SmtpPasswordSet    bool   `json:"smtpPasswordSet"` // 只读投影
+	SmtpFromEmail      string `json:"smtpFromEmail"`
+	SmtpFromName       string `json:"smtpFromName"`
+	SmtpUseTLS         bool   `json:"smtpUseTLS"`
+	SmtpSkipTLSVerify  bool   `json:"smtpSkipTlsVerify"`
+	// 收件人，多个用逗号/分号/空白分隔
+	MailNotifyTo string `json:"mailNotifyTo"`
+	// 两类提醒独立开关
+	MailHealthAlertEnabled bool `json:"mailHealthAlertEnabled"`
+	MailCardAlertEnabled   bool `json:"mailCardAlertEnabled"`
+	// 健康：近窗 5xx 比例超过该百分比（0-100）触发；0=仅检测 DB/Redis 连通
+	MailHealthErrorRatePct float64 `json:"mailHealthErrorRatePct"`
+	// 卡密：任一类别未使用库存 ≤ 阈值触发；0 表示仅在库存为 0 时
+	MailCardUnusedThreshold int `json:"mailCardUnusedThreshold"`
+	// 同类预警冷却（分钟），防刷信
+	MailAlertCooldownMinutes int `json:"mailAlertCooldownMinutes"`
 }
 
 type PublicConfig struct {

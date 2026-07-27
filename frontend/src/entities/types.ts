@@ -237,6 +237,30 @@ export interface Settings {
   apiBasePath: string;
   /** 对外 API 根地址（文档/SDK 示例用） */
   apiPublicBaseUrl: string;
+
+  /* 邮件 SMTP（对齐 sub2api 形态） */
+  smtpHost: string;
+  smtpPort: number;
+  smtpUsername: string;
+  /** 仅写入；读取恒为空 */
+  smtpPassword: string;
+  smtpPasswordSet: boolean;
+  smtpFromEmail: string;
+  smtpFromName: string;
+  smtpUseTLS: boolean;
+  smtpSkipTlsVerify: boolean;
+  /** 预警收件人，逗号分隔 */
+  mailNotifyTo: string;
+  /** 平台健康预警 */
+  mailHealthAlertEnabled: boolean;
+  /** 卡密库存预警 */
+  mailCardAlertEnabled: boolean;
+  /** 5xx 比例阈值 %；0=只检连通 */
+  mailHealthErrorRatePct: number;
+  /** 未使用库存 ≤ 该值告警 */
+  mailCardUnusedThreshold: number;
+  /** 同类预警冷却分钟 */
+  mailAlertCooldownMinutes: number;
 }
 
 export class ApiError extends Error {

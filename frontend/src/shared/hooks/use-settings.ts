@@ -51,3 +51,13 @@ export function useSetPublicRedeemKey() {
     onError: (e) => toastApiError(e, "更新失败"),
   });
 }
+
+export function useTestMail() {
+  return useMutation({
+    mutationFn: (to?: string) => api.testMail(to),
+    onSuccess: (data) => {
+      toast.success(data.message || "测试成功");
+    },
+    onError: (e) => toastApiError(e, "邮件测试失败"),
+  });
+}

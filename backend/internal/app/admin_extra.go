@@ -316,16 +316,35 @@ func (a *App) UpdateSettings(ctx context.Context, patch domain.Settings, actor, 
 		patch.ApiBasePath = "/api/v1"
 	}
 	patch.ApiPublicBaseUrl = strings.TrimRight(strings.TrimSpace(patch.ApiPublicBaseUrl), "/")
-	// preserve public key if empty in patch
-	cur, _ := a.GetSettings(ctx)
-	if patch.PublicRedeemApiKey == "" {
-		patch.PublicRedeemApiKey = cur.PublicRedeemApiKey
+	if patch.SmtpPort <= 0 {
+		patch.SmtpPort = 587
 	}
+	if patch.MailAlertCooldownMinutes < 5 {
+		patch.MailAlertCooldownMinutes = 60
+	}
+	if patch.MailHealthErrorRatePct < 0 {
+		patch.MailHealthErrorRatePct = 0
+	}
+	if patch.MailCardUnusedThreshold < 0 {
+		patch.MailCardUnusedThreshold = 0
+	}
+	// preserve secrets if empty in patch
+	cur, _ := a.loadSettings(ctx) // 含密码明文（load 后再 mask 的是 GetSettings）
+	// loadSettings already masks - need raw password from DB
+	rawCur, _ := a.loadSettingsRaw(ctx)
+	if patch.PublicRedeemApiKey == "" {
+		patch.PublicRedeemApiKey = rawCur.PublicRedeemApiKey
+	}
+	if strings.TrimSpace(patch.SmtpPassword) == "" {
+		patch.SmtpPassword = rawCur.SmtpPassword
+	}
+	_ = cur
 	if err := a.SaveSettings(ctx, patch); err != nil {
-		return patch, err
+		return domain.Settings{}, err
 	}
 	a.Audit(ctx, "admin", actor, "update_settings", "settings", "更新系统设置", ip)
-	return patch, nil
+	out, _ := a.GetSettings(ctx)
+	return out, nil
 }
 
 func (a *App) ListAudit(ctx context.Context, page, pageSize int) (domain.PageResult[domain.AuditLog], error) {

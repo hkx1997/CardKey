@@ -820,7 +820,13 @@ export const mockClient = {
     await delay();
     const session = mockStore.requireSession();
     const db = mockStore.getDb();
-    db.settings = { ...db.settings, ...patch };
+    const next = { ...db.settings, ...patch };
+    if (!patch.smtpPassword) {
+      next.smtpPassword = db.settings.smtpPassword;
+    }
+    if (next.smtpPassword) next.smtpPasswordSet = true;
+    next.smtpPassword = "";
+    db.settings = { ...next, smtpPassword: patch.smtpPassword || db.settings.smtpPassword };
     pushAudit({
       actorType: "admin",
       actorLabel: session.username,
@@ -829,7 +835,24 @@ export const mockClient = {
       detail: "更新系统设置",
       ip: "127.0.0.1",
     });
-    return { ...db.settings };
+    return {
+      ...db.settings,
+      smtpPassword: "",
+      smtpPasswordSet: !!db.settings.smtpPassword,
+    };
+  },
+
+  async testMail(to?: string): Promise<{ message: string }> {
+    await delay(200);
+    mockStore.requireSession();
+    const s = mockStore.getDb().settings;
+    if (!s.smtpHost) {
+      const { ApiError } = await import("@/entities/types");
+      throw new ApiError(400, "VALIDATION", "请先配置 SMTP 主机与发件人邮箱");
+    }
+    return {
+      message: to ? "测试邮件已发送（mock）" : "SMTP 连通正常（mock）",
+    };
   },
 
   async uploadImage(file: File): Promise<{ url: string }> {

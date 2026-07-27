@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,6 +109,21 @@ func (a *App) DefaultSettings() domain.Settings {
 		PublicRedeemApiKey:          "",
 		ApiBasePath:                 "/api/v1",
 		ApiPublicBaseUrl:            "",
+		SmtpHost:                    "",
+		SmtpPort:                    587,
+		SmtpUsername:                "",
+		SmtpPassword:                "",
+		SmtpPasswordSet:             false,
+		SmtpFromEmail:               "",
+		SmtpFromName:                "CardKey",
+		SmtpUseTLS:                  true,
+		SmtpSkipTLSVerify:           false,
+		MailNotifyTo:                "",
+		MailHealthAlertEnabled:      false,
+		MailCardAlertEnabled:        false,
+		MailHealthErrorRatePct:      10,
+		MailCardUnusedThreshold:     10,
+		MailAlertCooldownMinutes:    60,
 	}
 }
 
@@ -131,7 +147,7 @@ func (a *App) GetSettings(ctx context.Context) (domain.Settings, error) {
 	return s, nil
 }
 
-func (a *App) loadSettings(ctx context.Context) (domain.Settings, error) {
+func (a *App) loadSettingsRaw(ctx context.Context) (domain.Settings, error) {
 	s := a.DefaultSettings()
 	var raw json.RawMessage
 	err := a.Pool.QueryRow(ctx, `SELECT value FROM settings WHERE key='all'`).Scan(&raw)
@@ -144,6 +160,17 @@ func (a *App) loadSettings(ctx context.Context) (domain.Settings, error) {
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &s)
 	}
+	return s, nil
+}
+
+func (a *App) loadSettings(ctx context.Context) (domain.Settings, error) {
+	s, err := a.loadSettingsRaw(ctx)
+	if err != nil {
+		return s, err
+	}
+	// 对外永不回传 SMTP 明文密码
+	s.SmtpPasswordSet = strings.TrimSpace(s.SmtpPassword) != ""
+	s.SmtpPassword = ""
 	return s, nil
 }
 
@@ -165,9 +192,12 @@ func (a *App) SaveSettings(ctx context.Context, s domain.Settings) error {
 	if err != nil {
 		return err
 	}
+	// 缓存仅存脱敏副本
+	masked := s
+	masked.SmtpPasswordSet = strings.TrimSpace(s.SmtpPassword) != ""
+	masked.SmtpPassword = ""
 	a.settingsMu.Lock()
-	cp := s
-	a.settingsCache = &cp
+	a.settingsCache = &masked
 	a.settingsAt = time.Now()
 	a.settingsMu.Unlock()
 	return nil

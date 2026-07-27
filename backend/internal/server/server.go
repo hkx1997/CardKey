@@ -136,6 +136,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Post("/settings/public-redeem-key", h.SetPublicRedeemKey)
 					r.Get("/settings", h.GetSettings)
 					r.Put("/settings", h.UpdateSettings)
+					r.Post("/settings/mail/test", h.TestMail)
 					r.Post("/uploads", h.UploadImage)
 
 					r.Get("/audit-logs", h.ListAudit)

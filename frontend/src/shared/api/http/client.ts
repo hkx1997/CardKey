@@ -276,6 +276,12 @@ export const httpClient = {
       body: JSON.stringify(patch),
     }),
 
+  testMail: (to?: string) =>
+    request<{ message: string }>("/api/v1/admin/settings/mail/test", {
+      method: "POST",
+      body: JSON.stringify({ to: to || "" }),
+    }),
+
   uploadImage: async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);

@@ -16,7 +16,7 @@ func (a *App) MarkExpiredCards(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
-// StartBackgroundJobs 启动周期任务（过期清理等）。
+// StartBackgroundJobs 启动周期任务（过期清理、邮件预警等）。
 func (a *App) StartBackgroundJobs(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
@@ -27,6 +27,13 @@ func (a *App) StartBackgroundJobs(ctx context.Context) {
 		} else if n > 0 {
 			a.Log.Info("expired cards marked", "count", n)
 		}
+		// 邮件预警稍后一点再跑，避免启动风暴
+		go func() {
+			time.Sleep(45 * time.Second)
+			cctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			a.EvaluateMailAlerts(cctx)
+			cancel()
+		}()
 		for {
 			select {
 			case <-ctx.Done():
@@ -40,6 +47,10 @@ func (a *App) StartBackgroundJobs(ctx context.Context) {
 				} else if n > 0 {
 					a.Log.Info("expired cards marked", "count", n)
 				}
+				// 邮件预警与过期清理同周期
+				mctx, mcancel := context.WithTimeout(context.Background(), 45*time.Second)
+				a.EvaluateMailAlerts(mctx)
+				mcancel()
 			}
 		}
 	}()

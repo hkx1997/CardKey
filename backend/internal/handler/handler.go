@@ -582,6 +582,23 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, out)
 }
 
+// TestMail POST { "to"?: "a@b.com" }  — 空 to 仅测连通
+func (h *Handler) TestMail(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		To string `json:"to"`
+	}
+	_ = h.decode(r, &in)
+	if err := h.App.TestSMTP(r.Context(), in.To, middleware.Username(r.Context()), middleware.ClientIP(r)); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	msg := "SMTP 连通正常"
+	if strings.TrimSpace(in.To) != "" {
+		msg = "测试邮件已发送"
+	}
+	response.OK(w, map[string]string{"message": msg})
+}
+
 func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
