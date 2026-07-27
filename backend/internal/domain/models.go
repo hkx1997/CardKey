@@ -15,9 +15,32 @@ type CardType string
 
 const (
 	TypeText    CardType = "text"
+	TypeTXT     CardType = "txt"
 	TypeJSON    CardType = "json"
 	TypeAccount CardType = "account"
+	TypeImage   CardType = "image"
+	TypeZip     CardType = "zip"
+	TypePDF     CardType = "pdf"
+	TypeFile    CardType = "file" // 任意二进制
 )
+
+// IsBinaryCardType 内容按原始字节存储/下载（非纯展示文本）
+func IsBinaryCardType(t CardType) bool {
+	switch t {
+	case TypeImage, TypeZip, TypePDF, TypeFile:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsTextCardType 可按 UTF-8 文本导入/展示
+func IsTextCardType(t CardType) bool {
+	return !IsBinaryCardType(t)
+}
+
+// MaxCardContentBytes 单卡密内容上限（加密前）
+const MaxCardContentBytes = 5 << 20 // 5 MiB
 
 type CategoryIcon struct {
 	Kind  string `json:"kind"`
@@ -60,15 +83,20 @@ type Card struct {
 	CategoryName string     `json:"categoryName,omitempty"`
 	Code         string     `json:"code"`
 	Type         CardType   `json:"type"`
-	Content      *string    `json:"content,omitempty"`
-	Status       CardStatus `json:"status"`
-	BatchID      *string    `json:"batchId"`
-	BatchName    *string    `json:"batchName,omitempty"`
-	Note         string     `json:"note"`
-	ExpiresAt    *string    `json:"expiresAt"`
-	UsedAt       *string    `json:"usedAt"`
-	UsedIP       *string    `json:"usedIp"`
-	CreatedAt    string     `json:"createdAt"`
+	// Content 仅在 reveal 时返回：文本为 UTF-8；二进制为 base64（见 ContentEncoding）
+	Content         *string `json:"content,omitempty"`
+	ContentEncoding string  `json:"contentEncoding,omitempty"` // utf8 | base64
+	Filename        string  `json:"filename,omitempty"`
+	Mime            string  `json:"mime,omitempty"`
+	Size            int64   `json:"size,omitempty"`
+	Status          CardStatus `json:"status"`
+	BatchID         *string    `json:"batchId"`
+	BatchName       *string    `json:"batchName,omitempty"`
+	Note            string     `json:"note"`
+	ExpiresAt       *string    `json:"expiresAt"`
+	UsedAt          *string    `json:"usedAt"`
+	UsedIP          *string    `json:"usedIp"`
+	CreatedAt       string     `json:"createdAt"`
 }
 
 type Batch struct {
@@ -95,13 +123,17 @@ type RedeemRecord struct {
 }
 
 type RedeemResult struct {
-	Status       string   `json:"status"`
-	Category     string   `json:"category"`
-	CategoryName string   `json:"categoryName"`
-	Code         string   `json:"code"`
-	Type         CardType `json:"type"`
-	Content      string   `json:"content"`
-	RedeemedAt   string   `json:"redeemedAt"`
+	Status          string   `json:"status"`
+	Category        string   `json:"category"`
+	CategoryName    string   `json:"categoryName"`
+	Code            string   `json:"code"`
+	Type            CardType `json:"type"`
+	Content         string   `json:"content"`
+	ContentEncoding string   `json:"contentEncoding,omitempty"` // utf8 | base64
+	Filename        string   `json:"filename,omitempty"`
+	Mime            string   `json:"mime,omitempty"`
+	Size            int64    `json:"size,omitempty"`
+	RedeemedAt      string   `json:"redeemedAt"`
 }
 
 type ApiKeyMeta struct {

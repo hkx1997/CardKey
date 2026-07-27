@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { FileUp } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +24,13 @@ import { FormActions } from "@/shared/components/form-actions";
 import { FormField } from "@/shared/components/form-field";
 import { SecretField } from "@/shared/components/secret-field";
 import { useCreateCard } from "@/shared/hooks/use-cards";
+import {
+  CARD_TYPE_OPTIONS,
+  MAX_CARD_FILE_BYTES,
+  fileToBase64,
+  formatBytes,
+  isBinaryCardType,
+} from "@/shared/lib/card-content";
 import { cardCreateSchema, fieldErrors } from "@/shared/lib/schemas";
 
 export function CreateCardDialog({
@@ -37,10 +46,20 @@ export function CreateCardDialog({
   const [content, setContent] = useState("");
   const [type, setType] = useState<CardType>("text");
   const [note, setNote] = useState("");
+  const [filename, setFilename] = useState("");
+  const [mime, setMime] = useState("");
+  const [encoding, setEncoding] = useState<"utf8" | "base64">("utf8");
+  const [fileLabel, setFileLabel] = useState("");
   const [createdCode, setCreatedCode] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const selectedCat = categories.find((c) => c.id === categoryId);
+  const typeMeta = useMemo(
+    () => CARD_TYPE_OPTIONS.find((o) => o.id === type),
+    [type],
+  );
+  const binary = isBinaryCardType(type);
   const m = useCreateCard();
 
   function reset() {
@@ -48,8 +67,60 @@ export function CreateCardDialog({
     setContent("");
     setType("text");
     setNote("");
+    setFilename("");
+    setMime("");
+    setEncoding("utf8");
+    setFileLabel("");
     setCreatedCode(null);
     setErrors({});
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  async function onPickFile(file: File | null) {
+    if (!file) return;
+    if (file.size > MAX_CARD_FILE_BYTES) {
+      toast.error("文件不能超过 5MB");
+      return;
+    }
+    try {
+      const b64 = await fileToBase64(file);
+      setContent(b64);
+      setEncoding("base64");
+      setFilename(file.name);
+      setMime(file.type || "application/octet-stream");
+      setFileLabel(`${file.name}（${formatBytes(file.size)}）`);
+      // 按扩展名微调类型
+      const ext = file.name.toLowerCase();
+      if (file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/.test(ext)) {
+        setType("image");
+      } else if (file.type === "application/pdf" || ext.endsWith(".pdf")) {
+        setType("pdf");
+      } else if (
+        file.type.includes("zip") ||
+        /\.(zip|rar|7z|tar|gz|tgz)$/.test(ext)
+      ) {
+        setType("zip");
+      } else if (!isBinaryCardType(type)) {
+        setType("file");
+      }
+    } catch {
+      toast.error("读取文件失败");
+    }
+  }
+
+  function onTypeChange(v: CardType) {
+    setType(v);
+    if (!isBinaryCardType(v)) {
+      setEncoding("utf8");
+      if (fileLabel) {
+        setContent("");
+        setFileLabel("");
+        setFilename("");
+        setMime("");
+      }
+    } else {
+      setEncoding("base64");
+    }
   }
 
   function submit() {
@@ -58,15 +129,29 @@ export function CreateCardDialog({
       content,
       type,
       note,
+      contentEncoding: binary ? "base64" : encoding,
+      filename: filename || undefined,
+      mime: mime || undefined,
     });
     if (!parsed.ok) {
       setErrors(parsed.errors);
       return;
     }
     setErrors({});
-    m.mutate(parsed.data, {
-      onSuccess: (card) => setCreatedCode(card.code),
-    });
+    m.mutate(
+      {
+        categoryId: parsed.data.categoryId,
+        content: parsed.data.content,
+        type: parsed.data.type,
+        note: parsed.data.note,
+        contentEncoding: binary ? "base64" : parsed.data.contentEncoding,
+        filename: parsed.data.filename,
+        mime: parsed.data.mime,
+      },
+      {
+        onSuccess: (card) => setCreatedCode(card.code),
+      },
+    );
   }
 
   return (
@@ -77,11 +162,11 @@ export function CreateCardDialog({
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-md">
         <DialogHeader>
           <DialogTitle>新建卡密</DialogTitle>
           <DialogDescription>
-            必须选择类别；编码按该类别前缀自动生成
+            支持文本 / JSON / 图片 / 压缩包 / PDF / 任意文件（≤5MB），兑换端可下载
           </DialogDescription>
         </DialogHeader>
         {createdCode ? (
@@ -101,7 +186,7 @@ export function CreateCardDialog({
             </FormActions>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
             <FormField label="类别" required error={errors.categoryId}>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger>
@@ -124,28 +209,66 @@ export function CreateCardDialog({
                 </p>
               ) : null}
             </FormField>
-            <FormField label="类型">
+            <FormField label="内容类型">
               <Select
                 value={type}
-                onValueChange={(v) => setType(v as CardType)}
+                onValueChange={(v) => onTypeChange(v as CardType)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="text">text</SelectItem>
-                  <SelectItem value="account">account</SelectItem>
-                  <SelectItem value="json">json</SelectItem>
+                  {CARD_TYPE_OPTIONS.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              {typeMeta ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {typeMeta.hint}
+                </p>
+              ) : null}
             </FormField>
-            <FormField label="卡密内容" required error={errors.content}>
-              <Textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="兑换成功后展示给用户的内容"
-              />
-            </FormField>
+
+            {binary ? (
+              <FormField label="上传文件" required error={errors.content}>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept={typeMeta?.accept || "*/*"}
+                  className="hidden"
+                  onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <FileUp className="size-3.5" />
+                  {fileLabel || "选择文件"}
+                </Button>
+              </FormField>
+            ) : (
+              <FormField label="卡密内容" required error={errors.content}>
+                <Textarea
+                  value={content}
+                  onChange={(e) => {
+                    setContent(e.target.value);
+                    setEncoding("utf8");
+                  }}
+                  placeholder={
+                    type === "json"
+                      ? '{"user":"...","pass":"..."}'
+                      : "兑换成功后展示给用户的内容"
+                  }
+                  className="min-h-[100px] font-mono text-xs"
+                />
+              </FormField>
+            )}
+
             <FormField label="内部备注">
               <Input value={note} onChange={(e) => setNote(e.target.value)} />
             </FormField>

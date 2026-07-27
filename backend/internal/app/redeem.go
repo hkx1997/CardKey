@@ -108,10 +108,13 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	var usedAt *time.Time
 	var expiresAt *time.Time
 	var cardCode string
+	var filename, mime string
+	var size int64
 	err = tx.QueryRow(ctx, `
-		SELECT id, code, type, status, content_enc, content_nonce, used_at, expires_at
+		SELECT id, code, type, status, content_enc, content_nonce, used_at, expires_at,
+		       COALESCE(content_filename,''), COALESCE(content_mime,''), COALESCE(content_size,0)
 		FROM cards WHERE category_id=$1 AND code=$2 FOR UPDATE`, cat.ID, code).
-		Scan(&cardID, &cardCode, &typ, &status, &enc, &nonce, &usedAt, &expiresAt)
+		Scan(&cardID, &cardCode, &typ, &status, &enc, &nonce, &usedAt, &expiresAt, &filename, &mime, &size)
 	if err != nil {
 		msg := "卡密不存在"
 		if s.MaskCardErrors {
@@ -130,10 +133,16 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	if status == domain.StatusExpired {
 		return domain.RedeemResult{}, apperr.New(410, "CARD_EXPIRED", "该卡密已过期")
 	}
-	plain, err := a.DecryptContent(enc, nonce)
+	raw, err := a.DecryptBytes(enc, nonce)
 	if err != nil {
 		return domain.RedeemResult{}, apperr.Internal("解密失败")
 	}
+	filename, mime, size = fillContentMeta(typ, filename, mime, size)
+	if size == 0 {
+		size = int64(len(raw))
+	}
+	content, encoding := packPayloadForAPI(typ, raw, filename, mime, size)
+
 	if status == domain.StatusUsed {
 		if !s.AllowRequery {
 			return domain.RedeemResult{}, apperr.New(409, "CARD_USED", "该卡密已兑换")
@@ -144,7 +153,8 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 		}
 		return domain.RedeemResult{
 			Status: "already_redeemed", Category: cat.Slug, CategoryName: cat.Name,
-			Code: cardCode, Type: typ, Content: plain, RedeemedAt: formatTS(ra),
+			Code: cardCode, Type: typ, Content: content, ContentEncoding: encoding,
+			Filename: filename, Mime: mime, Size: size, RedeemedAt: formatTS(ra),
 		}, nil
 	}
 
@@ -169,7 +179,8 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	}
 	return domain.RedeemResult{
 		Status: "success", Category: cat.Slug, CategoryName: cat.Name,
-		Code: cardCode, Type: typ, Content: plain, RedeemedAt: formatTS(now),
+		Code: cardCode, Type: typ, Content: content, ContentEncoding: encoding,
+		Filename: filename, Mime: mime, Size: size, RedeemedAt: formatTS(now),
 	}, nil
 }
 

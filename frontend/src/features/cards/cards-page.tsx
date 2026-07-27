@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select";
 import type { Card as CardEntity, CardStatus } from "@/entities/types";
 import { CreateCardDialog } from "@/features/cards/create-card-dialog";
+import { CardContentView } from "@/shared/components/card-content-view";
 import { CategorySelect } from "@/shared/components/category-select";
 import { useConfirm } from "@/shared/components/confirm-dialog";
 import {
@@ -465,7 +466,7 @@ export function CardsPage() {
                 <div>创建：{formatDateTime(detailQ.data.createdAt)}</div>
                 <div>兑换：{formatDateTime(detailQ.data.usedAt)}</div>
               </div>
-              <div>
+              <div className="min-w-0 space-y-1">
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <Label>内容</Label>
                   {!reveal ? (
@@ -478,11 +479,29 @@ export function CardsPage() {
                     </Button>
                   ) : null}
                 </div>
-                <pre className="max-h-40 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap">
-                  {reveal
-                    ? (detailQ.data.content ?? "（空）")
-                    : "•••••••• 点击显示内容（将记入审计）"}
-                </pre>
+                {detailQ.data.filename || detailQ.data.size ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {detailQ.data.filename || "—"}
+                    {detailQ.data.mime ? ` · ${detailQ.data.mime}` : ""}
+                    {detailQ.data.size
+                      ? ` · ${(detailQ.data.size / 1024).toFixed(1)} KB`
+                      : ""}
+                  </p>
+                ) : null}
+                {reveal && detailQ.data.content != null ? (
+                  <CardContentView
+                    type={detailQ.data.type}
+                    content={detailQ.data.content}
+                    contentEncoding={detailQ.data.contentEncoding}
+                    filename={detailQ.data.filename}
+                    mime={detailQ.data.mime}
+                    size={detailQ.data.size}
+                  />
+                ) : (
+                  <pre className="max-h-40 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap">
+                    •••••••• 点击显示内容（将记入审计）
+                  </pre>
+                )}
               </div>
               {isSelectable(detailQ.data) ? (
                 <div className="flex flex-wrap gap-2 pt-1">

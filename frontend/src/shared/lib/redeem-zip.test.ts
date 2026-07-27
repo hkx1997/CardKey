@@ -17,7 +17,8 @@ describe("parseRedeemCodes", () => {
 
 describe("safeFileName", () => {
   it("prefixes index and strips illegal chars", () => {
-    expect(safeFileName('VIP:A/B', 0)).toBe("001_VIP_A_B.txt");
+    expect(safeFileName("VIP:A/B", 0)).toBe("001_VIP_A_B.txt");
+    expect(safeFileName("VIP-1", 1, ".zip")).toBe("002_VIP-1.zip");
   });
 });
 

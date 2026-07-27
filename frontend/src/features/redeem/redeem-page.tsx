@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import type { PublicCategory, RedeemResult } from "@/entities/types";
-import { CopyIconButton } from "@/shared/components/copy-button";
+import { CardContentView } from "@/shared/components/card-content-view";
 import { RichTextView } from "@/shared/components/rich-text-view";
 import { SiteBrand } from "@/shared/components/site-brand";
 import { ThemeToggleButton } from "@/shared/components/theme-toggle-button";
@@ -345,14 +345,15 @@ export function RedeemPage() {
                   ? cfg?.redeemSuccessHint || "兑换成功"
                   : "已兑换"}
               </div>
-              <div className="flex items-stretch gap-0.5 rounded-xl border border-border/60 bg-secondary/30 pl-3 pr-1">
-                <pre className="max-h-52 min-w-0 flex-1 overflow-auto py-3 pr-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap sm:text-[13px]">
-                  {singleResult.content}
-                </pre>
-                <div className="flex shrink-0 items-start pt-1">
-                  <CopyIconButton value={singleResult.content} />
-                </div>
-              </div>
+              <CardContentView
+                compact
+                type={singleResult.type}
+                content={singleResult.content}
+                contentEncoding={singleResult.contentEncoding}
+                filename={singleResult.filename}
+                mime={singleResult.mime}
+                size={singleResult.size}
+              />
               <button
                 type="button"
                 className="w-full text-center text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"

@@ -21,6 +21,7 @@
 - **运维**：健康检查、受保护指标、**默认启用在线更新**（Docker 检测 / 可选 Token 防 GitHub 限流）
 - **安全**：生产密钥校验、CSRF 同源、安装 advisory lock、默认不暴露兑换密钥、禁止 SVG 上传
 - **发版**：改 `VERSION` → `bash scripts/release.sh`（tag + Release + **Linux amd64/arm64** 供一键更新；不含 Win/mac）
+- **在线更新含 DB 迁移**：`backend/migrations/*.sql` 嵌入二进制，一键更新重启后自动执行未应用 SQL（不删库）
 
 ## 技术栈
 

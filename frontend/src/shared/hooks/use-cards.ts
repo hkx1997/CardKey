@@ -61,6 +61,9 @@ export function useCreateCard() {
       type: CardType;
       note: string;
       categoryId: string;
+      contentEncoding?: string;
+      filename?: string;
+      mime?: string;
     }) => api.createCard(input),
     onSuccess: () => {
       toast.success("创建成功");

@@ -23,7 +23,8 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(60 * time.Second))
 	r.Use(middleware.SecurityHeaders)
-	r.Use(middleware.BodyLimit(4 << 20))
+	// 卡密文件创建可走 base64 JSON / multipart，上限约 5MB 原文 ≈ 7MB base64
+	r.Use(middleware.BodyLimit(12 << 20))
 	r.Use(middleware.ClientIPMiddleware(a.TrustProxy))
 	r.Use(middleware.HTTPMetrics)
 	r.Use(middleware.CSRFOrigin(a.CSRFCheck))

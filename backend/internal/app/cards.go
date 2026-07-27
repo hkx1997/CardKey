@@ -48,7 +48,8 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 	args = append(args, pageSize, paging.Offset(page, pageSize))
 	sql := fmt.Sprintf(`
 		SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
-		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at
+		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
+		       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
 		FROM cards
 		JOIN categories cat ON cat.id=cards.category_id
 		LEFT JOIN batches b ON b.id=cards.batch_id
@@ -68,7 +69,8 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 		var usedIP *string
 		var batchID, batchName *string
 		if err := rows.Scan(&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
-			&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created); err != nil {
+			&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created,
+			&c.Filename, &c.Mime, &c.Size); err != nil {
 			return domain.PageResult[domain.Card]{}, err
 		}
 		c.BatchID = batchID
@@ -77,6 +79,7 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 		c.UsedAt = domain.PtrTime(used)
 		c.UsedIP = usedIP
 		c.CreatedAt = formatTS(created)
+		c.Filename, c.Mime, c.Size = fillContentMeta(c.Type, c.Filename, c.Mime, c.Size)
 		items = append(items, c)
 	}
 	return domain.PageResult[domain.Card]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
@@ -92,13 +95,15 @@ func (a *App) GetCard(ctx context.Context, id string, reveal bool, actor, ip str
 	err := a.Pool.QueryRow(ctx, `
 		SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
 		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
-		       cards.content_enc, cards.content_nonce
+		       cards.content_enc, cards.content_nonce,
+		       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
 		FROM cards
 		JOIN categories cat ON cat.id=cards.category_id
 		LEFT JOIN batches b ON b.id=cards.batch_id
 		WHERE cards.id=$1`, id).Scan(
 		&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
-		&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created, &enc, &nonce)
+		&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created, &enc, &nonce,
+		&c.Filename, &c.Mime, &c.Size)
 	if err != nil {
 		return c, apperr.NotFound("卡密不存在")
 	}
@@ -108,49 +113,70 @@ func (a *App) GetCard(ctx context.Context, id string, reveal bool, actor, ip str
 	c.UsedAt = domain.PtrTime(used)
 	c.UsedIP = usedIP
 	c.CreatedAt = formatTS(created)
+	c.Filename, c.Mime, c.Size = fillContentMeta(c.Type, c.Filename, c.Mime, c.Size)
 	if reveal {
-		plain, err := a.DecryptContent(enc, nonce)
+		raw, err := a.DecryptBytes(enc, nonce)
 		if err != nil {
 			return c, apperr.Internal("解密失败")
 		}
-		c.Content = &plain
+		if c.Size == 0 {
+			c.Size = int64(len(raw))
+		}
+		content, encName := packPayloadForAPI(c.Type, raw, c.Filename, c.Mime, c.Size)
+		c.Content = &content
+		c.ContentEncoding = encName
 		a.Audit(ctx, "admin", actor, "reveal_content", "card:"+id, "查看卡密内容", ip)
 	}
 	return c, nil
 }
 
 func (a *App) CreateCard(ctx context.Context, categoryID, content string, typ domain.CardType, note string, batchID *string, actor, ip string) (domain.Card, error) {
+	return a.CreateCardWithPayload(ctx, CreateCardPayload{
+		CategoryID: categoryID,
+		Type:       typ,
+		Content:    content,
+		Note:       note,
+		BatchID:    batchID,
+	}, actor, ip)
+}
+
+func (a *App) CreateCardWithPayload(ctx context.Context, in CreateCardPayload, actor, ip string) (domain.Card, error) {
 	var prefix string
-	if err := a.Pool.QueryRow(ctx, `SELECT code_prefix FROM categories WHERE id=$1`, categoryID).Scan(&prefix); err != nil {
+	if err := a.Pool.QueryRow(ctx, `SELECT code_prefix FROM categories WHERE id=$1`, in.CategoryID).Scan(&prefix); err != nil {
 		return domain.Card{}, apperr.Validation("类别无效")
 	}
-	if strings.TrimSpace(content) == "" {
-		return domain.Card{}, apperr.Validation("请输入卡密内容")
-	}
-	if typ == "" {
-		typ = domain.TypeText
-	}
-	code, err := a.uniqueCode(ctx, categoryID, prefix)
+	raw, typ, filename, mime, err := resolveCreateBytes(in)
 	if err != nil {
 		return domain.Card{}, err
 	}
-	enc, nonce, err := a.EncryptContent(content)
+	code, err := a.uniqueCode(ctx, in.CategoryID, prefix)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	// 文本默认文件名带编码
+	if domain.IsTextCardType(typ) && (in.Filename == "" || filename == "content.txt" || filename == "content.json") {
+		filename = defaultFilename(typ, code)
+	}
+	enc, nonce, err := a.EncryptBytes(raw)
 	if err != nil {
 		return domain.Card{}, apperr.Internal("加密失败")
 	}
+	size := int64(len(raw))
 	id := uuid.NewString()
 	var created time.Time
 	err = a.Pool.QueryRow(ctx, `
-		INSERT INTO cards(id, category_id, code, content_enc, content_nonce, type, batch_id, status, note)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'unused',$8) RETURNING created_at`,
-		id, categoryID, code, enc, nonce, typ, batchID, note).Scan(&created)
+		INSERT INTO cards(id, category_id, code, content_enc, content_nonce, type, batch_id, status, note,
+		                  content_filename, content_mime, content_size)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'unused',$8,$9,$10,$11) RETURNING created_at`,
+		id, in.CategoryID, code, enc, nonce, typ, in.BatchID, in.Note, filename, mime, size).Scan(&created)
 	if err != nil {
 		return domain.Card{}, err
 	}
-	a.Audit(ctx, "admin", actor, "create_card", "card:"+id, "创建 "+code, ip)
+	a.Audit(ctx, "admin", actor, "create_card", "card:"+id, fmt.Sprintf("创建 %s type=%s size=%d", code, typ, size), ip)
 	return domain.Card{
-		ID: id, CategoryID: categoryID, Code: code, Type: typ, Status: domain.StatusUnused,
-		BatchID: batchID, Note: note, CreatedAt: formatTS(created),
+		ID: id, CategoryID: in.CategoryID, Code: code, Type: typ, Status: domain.StatusUnused,
+		BatchID: in.BatchID, Note: in.Note, CreatedAt: formatTS(created),
+		Filename: filename, Mime: mime, Size: size,
 	}, nil
 }
 
@@ -172,6 +198,10 @@ func (a *App) uniqueCode(ctx context.Context, categoryID, prefix string) (string
 }
 
 func (a *App) ImportCards(ctx context.Context, categoryID, raw string, typ domain.CardType, batchName, note, actor, ip string) (map[string]any, error) {
+	typ = normalizeCardType(typ)
+	if domain.IsBinaryCardType(typ) {
+		return nil, apperr.Validation("批量导入仅支持文本类（text/txt/json/account）；文件请单条上传")
+	}
 	var cat domain.Category
 	var created time.Time
 	err := a.Pool.QueryRow(ctx, `
@@ -238,9 +268,14 @@ func (a *App) ImportCards(ctx context.Context, categoryID, raw string, typ domai
 				_ = tx.Rollback(ctx)
 				return nil, err
 			}
+			fn := defaultFilename(typ, code)
+			mime := defaultMimeForType(typ)
+			sz := int64(len(content))
 			_, err = tx.Exec(ctx, `
-				INSERT INTO cards(category_id, code, content_enc, content_nonce, type, batch_id, status, note)
-				VALUES($1,$2,$3,$4,$5,$6,'unused',$7)`, categoryID, code, enc, nonce, typ, batchID, note)
+				INSERT INTO cards(category_id, code, content_enc, content_nonce, type, batch_id, status, note,
+				                  content_filename, content_mime, content_size)
+				VALUES($1,$2,$3,$4,$5,$6,'unused',$7,$8,$9,$10)`,
+				categoryID, code, enc, nonce, typ, batchID, note, fn, mime, sz)
 			if err != nil {
 				_ = tx.Rollback(ctx)
 				return nil, err

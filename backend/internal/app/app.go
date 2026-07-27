@@ -174,15 +174,23 @@ func (a *App) SaveSettings(ctx context.Context, s domain.Settings) error {
 }
 
 func (a *App) EncryptContent(plain string) (enc, nonce []byte, err error) {
-	return crypto.Encrypt(a.AESKey, []byte(plain))
+	return a.EncryptBytes([]byte(plain))
+}
+
+func (a *App) EncryptBytes(plain []byte) (enc, nonce []byte, err error) {
+	return crypto.Encrypt(a.AESKey, plain)
 }
 
 func (a *App) DecryptContent(enc, nonce []byte) (string, error) {
-	b, err := crypto.Decrypt(a.AESKey, enc, nonce)
+	b, err := a.DecryptBytes(enc, nonce)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
+}
+
+func (a *App) DecryptBytes(enc, nonce []byte) ([]byte, error) {
+	return crypto.Decrypt(a.AESKey, enc, nonce)
 }
 
 func strPtr(s string) *string {

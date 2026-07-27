@@ -27,17 +27,31 @@ export const categoryUpdateSchema = z.object({
   description: z.string().optional().default(""),
 });
 
+const cardTypeEnum = z.enum([
+  "text",
+  "txt",
+  "json",
+  "account",
+  "image",
+  "zip",
+  "pdf",
+  "file",
+]);
+
 export const cardCreateSchema = z.object({
   categoryId: z.string().min(1, "请选择类别"),
-  content: z.string().trim().min(1, "请输入卡密内容"),
-  type: z.enum(["text", "json", "account"]),
+  content: z.string().min(1, "请输入或上传卡密内容"),
+  type: cardTypeEnum,
   note: z.string().optional().default(""),
+  contentEncoding: z.enum(["utf8", "base64"]).optional(),
+  filename: z.string().optional(),
+  mime: z.string().optional(),
 });
 
 export const importCardsSchema = z.object({
   categoryId: z.string().min(1, "请选择类别"),
   raw: z.string().trim().min(1, "请输入导入内容"),
-  type: z.enum(["text", "json", "account"]),
+  type: z.enum(["text", "txt", "json", "account"]),
   batchName: z.string().trim().min(1, "请输入批次名称").max(64),
   note: z.string().optional().default(""),
 });

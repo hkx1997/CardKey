@@ -1,6 +1,10 @@
 import JSZip from "jszip";
 
 import type { RedeemResult } from "@/entities/types";
+import {
+  base64ToUint8Array,
+  isBinaryCardType,
+} from "@/shared/lib/card-content";
 
 export type BatchRedeemItem = {
   /** 输入编码 */
@@ -11,17 +15,44 @@ export type BatchRedeemItem = {
 };
 
 /** 文件名安全：去掉路径与非法字符 */
-export function safeFileName(code: string, index: number): string {
+export function safeFileName(code: string, index: number, ext = ".txt"): string {
   const base = code
     .trim()
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
     .replace(/\s+/g, "_")
     .slice(0, 80);
   const name = base || `code_${index + 1}`;
-  return `${String(index + 1).padStart(3, "0")}_${name}.txt`;
+  const e = ext.startsWith(".") ? ext : `.${ext}`;
+  return `${String(index + 1).padStart(3, "0")}_${name}${e}`;
 }
 
-/** 单条兑换结果 → 文件正文 */
+function extFromResult(r: RedeemResult): string {
+  if (r.filename && r.filename.includes(".")) {
+    return r.filename.slice(r.filename.lastIndexOf("."));
+  }
+  switch (r.type) {
+    case "json":
+      return ".json";
+    case "pdf":
+      return ".pdf";
+    case "zip":
+      return ".zip";
+    case "image":
+      if (r.mime?.includes("png")) return ".png";
+      if (r.mime?.includes("jpeg") || r.mime?.includes("jpg")) return ".jpg";
+      if (r.mime?.includes("gif")) return ".gif";
+      if (r.mime?.includes("webp")) return ".webp";
+      return ".img";
+    case "txt":
+    case "text":
+    case "account":
+      return ".txt";
+    default:
+      return isBinaryCardType(r.type) ? ".bin" : ".txt";
+  }
+}
+
+/** 单条兑换结果 → 文本说明（非二进制） */
 export function formatRedeemFile(item: BatchRedeemItem): string {
   const lines: string[] = [
     "CardKey 兑换结果",
@@ -37,7 +68,9 @@ export function formatRedeemFile(item: BatchRedeemItem): string {
       `redeemed_at: ${item.result.redeemedAt}`,
       "",
       "--- content ---",
-      item.result.content || "(空)",
+      item.result.contentEncoding === "base64"
+        ? `(binary base64, ${item.result.size ?? "?"} bytes — see companion file if present)`
+        : item.result.content || "(空)",
     );
   } else {
     lines.push(
@@ -51,7 +84,7 @@ export function formatRedeemFile(item: BatchRedeemItem): string {
   return lines.join("\n");
 }
 
-/** 将批量结果打包为 ZIP Blob */
+/** 将批量结果打包为 ZIP Blob（二进制类型写入真实文件） */
 export async function buildRedeemZip(
   items: BatchRedeemItem[],
   opts?: { folderName?: string },
@@ -61,7 +94,6 @@ export async function buildRedeemZip(
     ? zip.folder(opts.folderName) ?? zip
     : zip;
 
-  // 汇总索引
   const summary = [
     "CardKey 批量兑换汇总",
     "====================",
@@ -72,7 +104,7 @@ export async function buildRedeemZip(
     ...items.map((i, idx) => {
       const flag = i.ok ? "OK" : "FAIL";
       const detail = i.ok
-        ? i.result?.status ?? "ok"
+        ? `${i.result?.status ?? "ok"} type=${i.result?.type ?? "-"}`
         : i.error ?? "error";
       return `${String(idx + 1).padStart(3, "0")}  [${flag}]  ${i.code}  ${detail}`;
     }),
@@ -80,7 +112,28 @@ export async function buildRedeemZip(
   folder.file("_summary.txt", summary);
 
   items.forEach((item, i) => {
-    folder.file(safeFileName(item.code, i), formatRedeemFile(item));
+    if (item.ok && item.result && (
+      item.result.contentEncoding === "base64" ||
+      isBinaryCardType(item.result.type)
+    )) {
+      try {
+        const bytes = base64ToUint8Array(item.result.content);
+        const name =
+          item.result.filename
+            ? `${String(i + 1).padStart(3, "0")}_${item.result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")}`
+            : safeFileName(item.code, i, extFromResult(item.result));
+        folder.file(name, bytes);
+        // 元数据旁路
+        folder.file(
+          safeFileName(item.code, i, ".meta.txt"),
+          formatRedeemFile(item),
+        );
+        return;
+      } catch {
+        // fallthrough 文本
+      }
+    }
+    folder.file(safeFileName(item.code, i, ".txt"), formatRedeemFile(item));
   });
 
   return zip.generateAsync({

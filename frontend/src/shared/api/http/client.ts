@@ -179,6 +179,9 @@ export const httpClient = {
     note?: string;
     batchId?: string | null;
     categoryId: string;
+    contentEncoding?: "utf8" | "base64" | string;
+    filename?: string;
+    mime?: string;
   }) =>
     request<Card>("/api/v1/admin/cards", {
       method: "POST",

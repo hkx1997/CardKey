@@ -572,6 +572,9 @@ export const mockStore = {
     batchId?: string | null;
     categoryId: string;
     expiresAt?: string | null;
+    contentEncoding?: string;
+    filename?: string;
+    mime?: string;
   }) {
     const db = getDb();
     const cat = this.findCategoryById(input.categoryId);
@@ -589,6 +592,7 @@ export const mockStore = {
         status: 400,
       });
     }
+    const binary = ["image", "zip", "pdf", "file"].includes(input.type);
     const card: Card = {
       id: randId(),
       categoryId: cat.id,
@@ -597,6 +601,13 @@ export const mockStore = {
       code: generateCode(cat.codePrefix),
       type: input.type,
       content: input.content,
+      contentEncoding:
+        input.contentEncoding || (binary ? "base64" : "utf8"),
+      filename: input.filename,
+      mime: input.mime,
+      size: binary
+        ? Math.floor((input.content.length * 3) / 4)
+        : input.content.length,
       status: "unused",
       batchId: batch?.id ?? null,
       batchName: batch?.name ?? null,

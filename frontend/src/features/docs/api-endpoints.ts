@@ -52,7 +52,7 @@ export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
     method: "POST",
     path: "{prefix}/public/redeem",
     auth: "Bearer（若开启强制 Key）",
-    desc: "兑换卡密",
+    desc: "兑换卡密（返回 content；二进制另含 contentEncoding=base64、filename、mime、size，前端可下载）",
     body: '{ "category": "slug", "code": "XXX-..." }',
   },
   {
@@ -157,14 +157,14 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "POST",
     path: "{prefix}/admin/cards",
     auth: "管理员",
-    desc: "创建单条卡密",
-    body: '{ "categoryId", "content", "type?", "note?", "batchId?" }',
+    desc: "创建卡密（JSON 或 multipart 文件）",
+    body: '{ "categoryId", "content", "type?", "contentEncoding?", "filename?", "mime?", "note?" } · type: text|txt|json|account|image|zip|pdf|file · 二进制 contentEncoding=base64 · multipart: file+categoryId',
   },
   {
     method: "POST",
     path: "{prefix}/admin/cards/import",
     auth: "管理员",
-    desc: "批量导入卡密",
+    desc: "批量导入（仅文本类 text/txt/json/account）",
     body: '{ "categoryId", "raw", "type?", "batchName?", "note?" }',
   },
   {

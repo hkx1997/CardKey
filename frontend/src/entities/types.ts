@@ -1,7 +1,16 @@
 /** 领域类型 — 前后端契约单一真源（前端侧） */
 
 export type CardStatus = "unused" | "used" | "disabled" | "expired";
-export type CardType = "text" | "json" | "account";
+/** text/txt/json/account 为文本；image/zip/pdf/file 为二进制（兑换可下载） */
+export type CardType =
+  | "text"
+  | "txt"
+  | "json"
+  | "account"
+  | "image"
+  | "zip"
+  | "pdf"
+  | "file";
 export type CategoryIconKind = "lucide" | "image";
 export type ApiScope = "redeem:api" | "admin:api";
 
@@ -75,7 +84,12 @@ export interface Card {
   categoryName?: string;
   code: string;
   type: CardType;
+  /** reveal 时返回；二进制为 base64 */
   content?: string;
+  contentEncoding?: "utf8" | "base64" | string;
+  filename?: string;
+  mime?: string;
+  size?: number;
   status: CardStatus;
   batchId: string | null;
   batchName?: string | null;
@@ -180,6 +194,11 @@ export interface RedeemResult {
   code: string;
   type: CardType;
   content: string;
+  /** utf8 | base64；二进制内容为 base64 */
+  contentEncoding?: "utf8" | "base64" | string;
+  filename?: string;
+  mime?: string;
+  size?: number;
   redeemedAt: string;
 }
 

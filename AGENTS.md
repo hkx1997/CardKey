@@ -120,7 +120,7 @@ features/*-page  →  shared/hooks  →  shared/api (mock | http)
 
 ### 敏感数据
 
-- 卡密内容：AES-GCM，密钥来自 `CONTENT_KEY`（64 hex）。
+- 卡密内容：AES-GCM，密钥来自 `CONTENT_KEY`（64 hex）；类型 text/txt/json/account 与 image/zip/pdf/file（≤5MB，二进制以 base64 下发并可下载）。
 - API Key：仅存 hash；创建/轮换时返回一次明文。
 - 演示数据：**仅**安装向导显式勾选时写入；启动 Bootstrap **不会**自动灌 VIP/CDK。
 

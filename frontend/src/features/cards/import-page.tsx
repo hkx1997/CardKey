@@ -130,9 +130,10 @@ export function ImportPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="text">text</SelectItem>
-                    <SelectItem value="account">account</SelectItem>
-                    <SelectItem value="json">json</SelectItem>
+                    <SelectItem value="text">纯文本</SelectItem>
+                    <SelectItem value="txt">TXT</SelectItem>
+                    <SelectItem value="account">账号信息</SelectItem>
+                    <SelectItem value="json">JSON</SelectItem>
                   </SelectContent>
                 </Select>
               </FormField>

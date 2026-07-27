@@ -162,6 +162,10 @@ export const mockClient = {
         code: card.code,
         type: card.type,
         content: card.content ?? "",
+        contentEncoding: card.contentEncoding,
+        filename: card.filename,
+        mime: card.mime,
+        size: card.size,
         redeemedAt: card.usedAt ?? new Date().toISOString(),
       };
     }
@@ -189,6 +193,10 @@ export const mockClient = {
       code: card.code,
       type: card.type,
       content: card.content ?? "",
+      contentEncoding: card.contentEncoding,
+      filename: card.filename,
+      mime: card.mime,
+      size: card.size,
       redeemedAt: card.usedAt,
     };
   },
@@ -471,6 +479,9 @@ export const mockClient = {
     note?: string;
     batchId?: string | null;
     categoryId: string;
+    contentEncoding?: string;
+    filename?: string;
+    mime?: string;
   }): Promise<Card> {
     await delay();
     const session = mockStore.requireSession();

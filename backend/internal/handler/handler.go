@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"encoding/base64"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/cardkey/cardkey/internal/app"
 	"github.com/cardkey/cardkey/internal/domain"
 	"github.com/cardkey/cardkey/internal/middleware"
+	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/cardkey/cardkey/internal/pkg/httpx"
 	"github.com/cardkey/cardkey/internal/pkg/response"
 	"github.com/go-chi/chi/v5"
@@ -310,19 +313,107 @@ func (h *Handler) GetCard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateCard(w http.ResponseWriter, r *http.Request) {
+	// multipart：文件卡密（image/zip/pdf/file）
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		h.createCardMultipart(w, r)
+		return
+	}
 	var in struct {
-		Content    string          `json:"content"`
-		Type       domain.CardType `json:"type"`
-		Note       string          `json:"note"`
-		BatchID    *string         `json:"batchId"`
-		CategoryID string          `json:"categoryId"`
+		Content         string          `json:"content"`
+		ContentEncoding string          `json:"contentEncoding"`
+		Filename        string          `json:"filename"`
+		Mime            string          `json:"mime"`
+		Type            domain.CardType `json:"type"`
+		Note            string          `json:"note"`
+		BatchID         *string         `json:"batchId"`
+		CategoryID      string          `json:"categoryId"`
 	}
 	if err := h.decode(r, &in); err != nil {
 		response.Fail(w, err)
 		return
 	}
-	card, err := h.App.CreateCard(r.Context(), in.CategoryID, in.Content, in.Type, in.Note, in.BatchID,
-		middleware.Username(r.Context()), middleware.ClientIP(r))
+	card, err := h.App.CreateCardWithPayload(r.Context(), app.CreateCardPayload{
+		CategoryID:      in.CategoryID,
+		Type:            in.Type,
+		Content:         in.Content,
+		ContentEncoding: in.ContentEncoding,
+		Filename:        in.Filename,
+		Mime:            in.Mime,
+		Note:            in.Note,
+		BatchID:         in.BatchID,
+	}, middleware.Username(r.Context()), middleware.ClientIP(r))
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, card)
+}
+
+func (h *Handler) createCardMultipart(w http.ResponseWriter, r *http.Request) {
+	const maxMem = 6 << 20
+	if err := r.ParseMultipartForm(maxMem); err != nil {
+		response.Fail(w, apperr.Validation("无法解析上传（单文件最大 5MB）"))
+		return
+	}
+	categoryID := strings.TrimSpace(r.FormValue("categoryId"))
+	typ := domain.CardType(strings.TrimSpace(r.FormValue("type")))
+	note := r.FormValue("note")
+	var batchID *string
+	if b := strings.TrimSpace(r.FormValue("batchId")); b != "" {
+		batchID = &b
+	}
+
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		// 允许纯文本字段 content（兼容）
+		content := r.FormValue("content")
+		card, err2 := h.App.CreateCardWithPayload(r.Context(), app.CreateCardPayload{
+			CategoryID: categoryID,
+			Type:       typ,
+			Content:    content,
+			Note:       note,
+			BatchID:    batchID,
+		}, middleware.Username(r.Context()), middleware.ClientIP(r))
+		if err2 != nil {
+			response.Fail(w, err2)
+			return
+		}
+		response.OK(w, card)
+		return
+	}
+	defer file.Close()
+	if hdr.Size > domain.MaxCardContentBytes {
+		response.Fail(w, apperr.Validation("文件不能超过 5MB"))
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(file, domain.MaxCardContentBytes+1))
+	if err != nil {
+		response.Fail(w, apperr.Validation("读取文件失败"))
+		return
+	}
+	if len(data) > domain.MaxCardContentBytes {
+		response.Fail(w, apperr.Validation("文件不能超过 5MB"))
+		return
+	}
+	mime := hdr.Header.Get("Content-Type")
+	if mime == "" {
+		mime = http.DetectContentType(data)
+	}
+	if typ == "" {
+		typ = domain.TypeFile
+	}
+	b64 := base64.StdEncoding.EncodeToString(data)
+	card, err := h.App.CreateCardWithPayload(r.Context(), app.CreateCardPayload{
+		CategoryID:      categoryID,
+		Type:            typ,
+		Content:         b64,
+		ContentEncoding: "base64",
+		Filename:        hdr.Filename,
+		Mime:            mime,
+		Note:            note,
+		BatchID:         batchID,
+	}, middleware.Username(r.Context()), middleware.ClientIP(r))
 	if err != nil {
 		response.Fail(w, err)
 		return

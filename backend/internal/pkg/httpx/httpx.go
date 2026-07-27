@@ -10,7 +10,7 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 )
 
-const DefaultMaxBody = 4 << 20 // 4 MiB（导入可容纳批量文本）
+const DefaultMaxBody = 12 << 20 // 12 MiB（卡密文件 base64 / 批量导入）
 
 // DecodeJSON 限制 body 大小并解析 JSON（禁止未知字段）。
 func DecodeJSON(r *http.Request, dst any, maxBytes int64) error {
