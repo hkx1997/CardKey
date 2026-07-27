@@ -533,7 +533,8 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CheckUpdates(w http.ResponseWriter, r *http.Request) {
-	res, err := h.App.CheckUpdates(r.Context())
+	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
+	res, err := h.App.CheckUpdatesOpt(r.Context(), force)
 	if err != nil {
 		response.Fail(w, err)
 		return

@@ -317,7 +317,7 @@ export const httpClient = {
       uptimeSec: number;
     }>("/api/v1/admin/system/info"),
 
-  checkUpdates: () =>
+  checkUpdates: (force?: boolean) =>
     request<{
       current: string;
       latest?: string;
@@ -330,7 +330,9 @@ export const httpClient = {
       fromCache?: boolean;
       authenticated?: boolean;
       tokenRecommended?: boolean;
-    }>("/api/v1/admin/updates/check"),
+    }>(
+      `/api/v1/admin/updates/check${force ? "?force=1" : ""}`,
+    ),
 
   updateHistory: () =>
     request<

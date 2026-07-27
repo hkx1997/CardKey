@@ -105,7 +105,7 @@ export function SystemVersion({ className }: { className?: string }) {
                 ) : null}
                 {check.hasUpdate ? (
                   <p className="text-amber-600 dark:text-amber-400">
-                    发现新版本
+                    发现新版本 v{check.latest}
                     {check.releaseUrl ? (
                       <>
                         {" · "}
@@ -125,12 +125,14 @@ export function SystemVersion({ className }: { className?: string }) {
                     {check.message || "已是最新版本"}
                   </p>
                 )}
-                {check.message && check.hasUpdate ? (
-                  <p className="text-muted-foreground">{check.message}</p>
+                {check.hasUpdate && check.message ? (
+                  <p className="text-muted-foreground whitespace-pre-wrap">
+                    {check.message}
+                  </p>
                 ) : null}
                 {check.fromCache ? (
                   <p className="text-[10px] text-muted-foreground/80">
-                    结果来自缓存（约 15 分钟内有效）
+                    含缓存数据；点击「检测更新」会强制刷新
                   </p>
                 ) : null}
                 {check.tokenRecommended && !check.latest ? (

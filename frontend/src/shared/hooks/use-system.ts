@@ -14,7 +14,8 @@ export function useSystemInfoQuery() {
 
 export function useCheckUpdates() {
   return useMutation({
-    mutationFn: () => api.checkUpdates(),
+    // 手动点击始终 force，避免陈旧缓存把更旧版本标成「可更新」
+    mutationFn: () => api.checkUpdates(true),
     onError: (e) => toastApiError(e, "检测失败"),
   });
 }

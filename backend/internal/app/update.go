@@ -84,7 +84,12 @@ func (a *App) setUpdateStatus(s UpdateStatus) {
 }
 
 func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
-	// 对齐 sub2api：检测接口永不因 GitHub 限流返回 5xx；缓存优先 + 多源探测 + 软失败
+	return a.CheckUpdatesOpt(ctx, false)
+}
+
+// CheckUpdatesOpt force=true 时跳过缓存并清空 Redis 检测缓存。
+func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResult, error) {
+	// 对齐 sub2api：检测接口永不因 GitHub 限流返回 5xx；多源取最高版本 + 缓存结果校正
 	mode := a.UpdateMode
 	if mode == "" {
 		mode = "disabled"
@@ -105,106 +110,134 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 		return out, nil
 	}
 
-	if cached, ok := a.getUpdateCheckCache(cur, mode); ok {
-		return cached, nil
+	if force {
+		a.clearUpdateCheckCache()
+	} else if cached, ok := a.getUpdateCheckCache(cur, mode); ok {
+		return finalizeUpdateResult(cached, cur, mode, true), nil
 	}
 
-	// 多源探测（全部避开匿名 api.github.com 限流）：
-	// 1) raw VERSION 文件（最稳，不走 API）
-	// 2) releases.atom
-	// 3) github.com/releases/latest 302
-	// 4) 仅当有 Token 时才调 api.github.com（有额度）
-	var latest string
-	var htmlURL string
-	var src string
+	// 多源探测后取 semver 最高者（避免 raw/atom/旧缓存指到比当前更旧的版本却仍提示更新）
+	type cand struct {
+		ver, url, src string
+	}
+	var cands []cand
 	var lastErr error
 
 	if ver, err := a.fetchVersionFromRaw(ctx); err == nil && ver != "" {
-		latest, src = ver, "raw"
-		htmlURL = fmt.Sprintf("https://github.com/%s/%s", a.UpdateGitHubOwner, a.UpdateGitHubRepo)
-	} else {
-		if err != nil {
+		cands = append(cands, cand{
+			ver: normalizeVer(ver),
+			url: fmt.Sprintf("https://github.com/%s/%s/releases", a.UpdateGitHubOwner, a.UpdateGitHubRepo),
+			src: "raw",
+		})
+	} else if err != nil {
+		lastErr = err
+	}
+	if tag, url, err := a.fetchLatestTagFromAtom(ctx); err == nil && tag != "" {
+		cands = append(cands, cand{ver: normalizeVer(tag), url: url, src: "atom"})
+	} else if err != nil {
+		lastErr = err
+	}
+	if tag, url, err := a.fetchLatestTagViaRedirect(ctx); err == nil && tag != "" {
+		cands = append(cands, cand{ver: normalizeVer(tag), url: url, src: "redirect"})
+	} else if err != nil {
+		lastErr = err
+	}
+	if out.Authenticated {
+		if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
+			c := cand{ver: normalizeVer(rel.TagName), url: rel.HTMLURL, src: "api"}
+			cands = append(cands, c)
+			out.Body = rel.Body
+			if !rel.PublishedAt.IsZero() {
+				out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+			}
+		} else if err != nil {
 			lastErr = err
 		}
-		if tag, url, err := a.fetchLatestTagFromAtom(ctx); err == nil && tag != "" {
-			latest, htmlURL, src = tag, url, "atom"
-		} else {
-			if err != nil {
-				lastErr = err
-			}
-			if tag, url, err := a.fetchLatestTagViaRedirect(ctx); err == nil && tag != "" {
-				latest, htmlURL, src = tag, url, "redirect"
-			} else {
-				if err != nil {
-					lastErr = err
-				}
-				// 有 Token 才走 API；无 Token 绝不匿名打 api.github.com（必限流）
-				if out.Authenticated {
-					if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
-						latest = normalizeVer(rel.TagName)
-						htmlURL = rel.HTMLURL
-						out.Body = rel.Body
-						if !rel.PublishedAt.IsZero() {
-							out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
-						}
-						src = "api"
-					} else if err != nil {
-						lastErr = err
-					}
-				}
+	}
+
+	var latest, htmlURL, src string
+	for _, c := range cands {
+		if c.ver == "" {
+			continue
+		}
+		if latest == "" || semverGreater(c.ver, latest) || (!semverGreater(latest, c.ver) && c.ver == latest && htmlURL == "") {
+			if latest == "" || semverGreater(c.ver, latest) {
+				latest, htmlURL, src = c.ver, c.url, c.src
+			} else if c.url != "" && htmlURL == "" {
+				htmlURL = c.url
 			}
 		}
 	}
 
 	if latest == "" {
-		// 软失败：有旧缓存用旧缓存；否则返回当前版本 + 友好提示（绝不把 403 JSON 抛给前端）
 		if cached, ok := a.getUpdateCheckCacheStale(cur, mode); ok {
-			cached.Message = "远端暂不可达，显示缓存结果"
+			cached = finalizeUpdateResult(cached, cur, mode, true)
+			cached.Message = "远端暂不可达，已用缓存并按当前版本校正"
 			if lastErr != nil {
 				cached.Message += "（" + shortErr(lastErr) + "）"
 			}
 			return cached, nil
 		}
-		out.Message = "暂时无法连接 GitHub 获取版本（已跳过易限流的 API）。可稍后重试，或配置 UPDATE_GITHUB_TOKEN 提高成功率。"
+		out.Message = "暂时无法获取远端版本。Docker 部署请在服务器执行：bash scripts/upgrade.sh"
 		if lastErr != nil {
 			out.Message += " 详情：" + shortErr(lastErr)
 		}
-		// 无 Token 且全部失败时才轻提示
 		out.TokenRecommended = !out.Authenticated
 		return out, nil
 	}
 
-	latest = normalizeVer(latest)
 	out.Latest = latest
 	out.ReleaseURL = htmlURL
-	out.HasUpdate = semverGreater(latest, cur)
-	switch {
-	case out.HasUpdate && (mode == "docker" || mode == "binary"):
-		out.Message = "发现新版本，可在界面一键更新（下载二进制并自动重启）"
-	case out.HasUpdate:
-		out.Message = "发现新版本"
-	case !out.HasUpdate:
-		out.Message = "已是最新版本"
-	}
+	out = finalizeUpdateResult(out, cur, mode, false)
 	if src != "" && a.Log != nil {
-		a.Log.Info("update check ok", "source", src, "latest", latest, "current", cur)
-	}
-
-	// 有 Token 时可选补充 Release 说明（失败忽略）
-	if out.Authenticated && out.Body == "" {
-		if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
-			out.Body = rel.Body
-			if !rel.PublishedAt.IsZero() {
-				out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
-			}
-			if rel.HTMLURL != "" {
-				out.ReleaseURL = rel.HTMLURL
-			}
-		}
+		a.Log.Info("update check ok", "source", src, "latest", latest, "current", cur, "hasUpdate", out.HasUpdate)
 	}
 
 	a.setUpdateCheckCache(out)
 	return out, nil
+}
+
+// finalizeUpdateResult 按当前版本重算 HasUpdate / Message，避免缓存文案与真实比较不一致。
+func finalizeUpdateResult(in UpdateCheckResult, cur, mode string, fromCache bool) UpdateCheckResult {
+	out := in
+	out.Current = normalizeVer(cur)
+	out.Latest = normalizeVer(out.Latest)
+	if out.Latest == "" {
+		out.Latest = out.Current
+	}
+	out.Mode = mode
+	out.HasUpdate = semverGreater(out.Latest, out.Current)
+	out.FromCache = fromCache
+	// 远端更旧：不当作更新
+	if out.Latest != "" && semverGreater(out.Current, out.Latest) {
+		out.HasUpdate = false
+		out.Message = "当前版本已新于远端记录（v" + out.Latest + "），无需更新"
+	} else if out.HasUpdate {
+		out.Message = "发现新版本 v" + out.Latest + "。Docker 请执行：bash scripts/upgrade.sh（或 git fetch --tags && git checkout v" + out.Latest + " && docker compose up -d --build）"
+		out.ReleaseURL = strings.TrimSpace(out.ReleaseURL)
+		if out.ReleaseURL == "" {
+			// 占位，前端可拼
+		}
+	} else {
+		out.Message = "已是最新版本"
+	}
+	if fromCache {
+		if !strings.Contains(out.Message, "缓存") {
+			out.Message += " · 缓存"
+		}
+	}
+	return out
+}
+
+func (a *App) clearUpdateCheckCache() {
+	a.updateCheckCacheMu.Lock()
+	a.updateCheckCache = nil
+	a.updateCheckCacheMu.Unlock()
+	if a.RDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = a.RDB.Del(ctx, updateRedisCacheKey).Err()
+		cancel()
+	}
 }
 
 func shortErr(err error) string {
@@ -223,41 +256,25 @@ func shortErr(err error) string {
 }
 
 func (a *App) getUpdateCheckCache(cur, mode string) (UpdateCheckResult, bool) {
-	// 内存
+	// 内存：只关心 latest 是否仍有效，current/hasUpdate 返回前校正
 	a.updateCheckCacheMu.Lock()
 	c := a.updateCheckCache
-	if c != nil && time.Since(c.at) <= updateCheckCacheTTL && c.result.Current == cur && c.result.Mode == mode && c.result.Latest != "" {
+	if c != nil && time.Since(c.at) <= updateCheckCacheTTL && c.result.Mode == mode && c.result.Latest != "" {
 		out := c.result
 		a.updateCheckCacheMu.Unlock()
-		out.FromCache = true
-		if out.Message == "" {
-			out.Message = "已是最新版本"
-		}
-		if !strings.Contains(out.Message, "缓存") {
-			out.Message = out.Message + " · 缓存"
-		}
-		return out, true
+		return finalizeUpdateResult(out, cur, mode, true), true
 	}
 	a.updateCheckCacheMu.Unlock()
 
-	// Redis（对齐 sub2api）
 	if a.RDB != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		raw, err := a.RDB.Get(ctx, updateRedisCacheKey).Result()
 		if err == nil && raw != "" {
 			var out UpdateCheckResult
-			if json.Unmarshal([]byte(raw), &out) == nil && out.Latest != "" && out.Mode == mode {
-				out.Current = cur
-				out.HasUpdate = semverGreater(out.Latest, cur)
-				out.FromCache = true
-				if out.Message == "" {
-					out.Message = "已是最新版本"
-				}
-				if !strings.Contains(out.Message, "缓存") {
-					out.Message += " · 缓存"
-				}
-				// 回填内存
+			if json.Unmarshal([]byte(raw), &out) == nil && out.Latest != "" {
+				// mode 不一致也可用 latest 数字
+				out = finalizeUpdateResult(out, cur, mode, true)
 				a.setUpdateCheckCacheMem(out)
 				return out, true
 			}
@@ -271,17 +288,13 @@ func (a *App) getUpdateCheckCacheStale(cur, mode string) (UpdateCheckResult, boo
 	a.updateCheckCacheMu.Lock()
 	defer a.updateCheckCacheMu.Unlock()
 	c := a.updateCheckCache
-	if c == nil || c.result.Latest == "" || c.result.Mode != mode {
+	if c == nil || c.result.Latest == "" {
 		return UpdateCheckResult{}, false
 	}
 	if time.Since(c.at) > 24*time.Hour {
 		return UpdateCheckResult{}, false
 	}
-	out := c.result
-	out.Current = cur
-	out.HasUpdate = semverGreater(out.Latest, cur)
-	out.FromCache = true
-	return out, true
+	return finalizeUpdateResult(c.result, cur, mode, true), true
 }
 
 func (a *App) setUpdateCheckCacheMem(r UpdateCheckResult) {
