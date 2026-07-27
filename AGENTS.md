@@ -51,8 +51,9 @@ CardKey/
 │   │   ├── db/               # 连接与 migrate
 │   │   ├── config/           # 环境变量
 │   │   ├── crypto/           # 密码、API Key、卡密 AES-GCM
+│   │   ├── webstatic/        # 前端 dist 的 go:embed（SPA 打进二进制）
 │   │   └── ...
-│   └── migrations/           # 按文件名排序的 SQL（001_, 002_…）
+│   └── migrations/           # 按文件名排序的 SQL（001_, 002_…）+ embed.go
 ├── frontend/
 │   └── src/
 │       ├── app/              # 路由、布局、Providers
@@ -80,7 +81,20 @@ HTTP → handler → app（业务）→ pgx / redis
 - 业务逻辑写在 `internal/app`，不要堆在 handler。
 - 错误用 `internal/pkg/apperr`，响应用 `internal/pkg/response`（`success` + `data` / `error`）。
 - 新表/改列：新增 `backend/migrations/00N_xxx.sql`，**禁止**改写已发布的旧迁移文件内容（新装环境靠 001 的现行定义即可同步）。
-- **在线更新契约（强制）**：迁移 SQL 经 `backend/migrations/embed.go` 的 `//go:embed *.sql` 打进二进制；一键更新只换 exe 后，进程重启会 `MigrateFS(migrations.FS)` 自动应用。发版检查清单必须包含新迁移文件；勿依赖容器内磁盘 `/app/migrations` 是否最新。
+
+### 发版一体包（强制 · 自 v0.1.21）
+
+**一键更新 / Release 二进制必须同时带上：后端 + 前端 SPA + 数据库迁移。**  
+禁止「只发业务 Go、不管 UI / SQL」——线上已多次因此表现为：弹窗溢出未修、`/assets/*.js` 变成 `text/html`、新功能页面不出现。
+
+| 产物 | 如何进入二进制 | 运行时 |
+|------|----------------|--------|
+| 后端逻辑 | `go build ./cmd/cardkey` | 进程本体 |
+| DB 迁移 | `backend/migrations` → `//go:embed *.sql`（`migrations.FS`） | 启动 `MigrateFS` |
+| 前端 SPA | `pnpm build` → 拷入 `internal/webstatic/dist` → `//go:embed all:dist` | 优先嵌入服务；`/assets/*` **禁止**回退成 `index.html` |
+| 磁盘 `/app/static` | Docker 仍可拷贝一份 | **仅作 embed 缺文件回退**，不可当作「一键更新会刷新 UI」的唯一来源 |
+
+发版入口：**只走 `bash scripts/release.sh`**（会先 `pnpm build` 再交叉编译 Linux）。Docker 构建：`Dockerfile` 在 `go build` 前 `COPY` 前端 dist 进 `webstatic/dist`。
 
 **分层约定（前端）**
 
@@ -92,6 +106,7 @@ features/*-page  →  shared/hooks  →  shared/api (mock | http)
 - 生产/联调：`http` 客户端，Cookie 会话；路径前缀 `/api/v1`。
 - 类型以 `entities/types.ts` 为准；表单校验用 Zod（`shared/lib/schemas.ts`）。
 - 管理端导航：`shared/config/admin-nav.ts`。
+- **改 UI 后必须发版重打二进制**（或 `upgrade.sh` 重建镜像）；不要假设磁盘 static 会随 exe 自动更新。
 
 ---
 
@@ -99,10 +114,10 @@ features/*-page  →  shared/hooks  →  shared/api (mock | http)
 
 ```
 浏览器
-  ├─ SPA（Go 静态托管 frontend/dist）
+  ├─ SPA（优先 go:embed webstatic；缺文件才磁盘 STATIC_DIR）
   └─ API /api/v1
          │
-    cardkey 容器/进程
+    cardkey 容器/进程  ← 单文件 = 后端 + 嵌入迁移 + 嵌入前端
          ├─ PostgreSQL（卡密、类别、管理员、审计…）
          └─ Redis（限流、JWT 吊销等）
 ```
@@ -257,12 +272,12 @@ git push origin main
 
 ## 7. 发版（维护者推送到远程 Release）
 
-正式发版会：写入/读取 `VERSION` → 提交（若有）→ 构建 **linux-amd64 / linux-arm64** → 打 tag → `gh release create` 上传二进制。
+正式发版会：`VERSION` → **pnpm 构建前端** → 拷入 `webstatic/dist` → 交叉编译 **linux-amd64/arm64**（内嵌 SPA+SQL）→ tag → `gh release create`。
 
 ### 7.1 前置
 
 - 工作区干净（或仅允许改 `VERSION`，由脚本处理）
-- 已安装：`go`、`git`、`gh`（已登录有 repo 权限）
+- 已安装：`go`、`git`、`gh`、`pnpm`、Node（发版要编前端）
 - Git Bash / Linux / macOS
 
 ### 7.2 一键发版
@@ -272,7 +287,7 @@ git push origin main
 bash scripts/release.sh
 
 # 或指定版本（会写回 VERSION）
-bash scripts/release.sh 0.1.15
+bash scripts/release.sh 0.1.22
 
 # 只看将要构建的内容
 bash scripts/release.sh --dry-run
@@ -281,17 +296,19 @@ bash scripts/release.sh --dry-run
 脚本要点：
 
 1. 校验 tag 不重复  
-2. `CGO_ENABLED=0` 交叉编译 `cardkey-linux-amd64` / `cardkey-linux-arm64`  
-3. `git push origin main` + `git push origin vX.Y.Z`  
-4. 创建 GitHub Release，附带上述二进制与校验信息  
+2. **`pnpm build` 前端**并写入 `backend/internal/webstatic/dist`  
+3. `CGO_ENABLED=0` 交叉编译 Linux amd64/arm64（**含嵌入 SPA + migrations**）  
+4. `git push origin main` + `git push origin vX.Y.Z`  
+5. 创建 GitHub Release，附带上述二进制  
 
-**不要**再发 Windows/macOS 包作为 Docker 一键更新依赖；在线更新只认 Linux 资产。
+**不要**再发 Windows/macOS 包；在线更新只认 Linux 资产。  
+**不要**手工只 `go build` 打 Release——会漏前端。
 
 ### 7.3 发版后验证
 
-- Release 页：`https://github.com/hkx1997/CardKey/releases/tag/vX.Y.Z`
-- 资产齐全：`cardkey-linux-amd64`、`cardkey-linux-arm64`
-- 管理端「检测更新」能看到新版本（可配置 `UPDATE_GITHUB_TOKEN` 降低 API 限流）
+- Release 页有 `cardkey-linux-amd64` / `arm64`  
+- 管理端检测更新可见新版本  
+- 升级后浏览器资源应变为新 hash（如 `index-XXXX.js`），且 DevTools 中 `.js`/`.css` 的 `Content-Type` 分别为 `text/javascript` / `text/css`（**不是** `text/html`）
 
 ---
 
@@ -318,12 +335,13 @@ docker compose up -d --no-deps cardkey
 
 后台 → 版本信息 → **检测更新** → **一键更新**：
 
-- 下载当前架构的 `cardkey-linux-*` Release 资产（**内嵌全部 `*.sql` 迁移**）  
+- 下载当前架构的 `cardkey-linux-*`（**内嵌：Go 后端 + 全部 `*.sql` + 前端 SPA**）  
 - 替换进程二进制并退出，由 `restart: unless-stopped` 拉起  
-- **启动时自动跑未应用迁移**（幂等；失败则进程起不来，便于从日志排查）  
-- **不**执行 `compose down -v`，不删 Postgres 卷  
+- 启动时：执行未应用迁移 + 用嵌入 SPA 提供 UI  
+- **不** `compose down -v`，不删 Postgres 卷  
+- 升级后 **Ctrl+F5**；若 `.js`/`.css` 报 MIME=`text/html`，说明 assets 未正确嵌入或命中了 SPA 回退——应升级到含修复的版本并确认日志 `staticEmbeddedFiles` > 1  
 
-`.env` 中 `UPDATE_BINARY_PATH` / `UPDATE_RELEASES_DIR` **请留空**（自动用 `os.Executable()`）。
+`.env` 中 `UPDATE_BINARY_PATH` / `UPDATE_RELEASES_DIR` **请留空**。
 
 ### 8.3 像「数据被重置」时
 
@@ -378,10 +396,11 @@ docker compose exec -T postgres \
 1. **数据安全优先**：不写/不建议会删卷的命令；升级只用 `upgrade.sh` 或 `up -d --no-deps cardkey`。  
 2. **演示数据**：禁止在 `Bootstrap` 里自动 `seedDemo`；仅 setup 显式开关。  
 3. **鉴权**：管理 API 变更须同时考虑 Cookie JWT 与 `admin:api` Bearer。  
-4. **发版**：改功能后若需用户可升级，应走 `scripts/release.sh` 产出 Linux 资产，勿只打无资产的 tag。  
-4b. **迁移随更新**：任何 schema 变更必须新增 `backend/migrations/00N_*.sql` 并随 `release.sh` 编进二进制；在线更新不单独下发 SQL 文件。  
-5. **范围**：不擅自改无关模块；不主动扩大需求；密钥永不写死进仓库。  
-6. **文档**：架构/升级行为变更时同步 `AGENTS.md`、`README.md`、`deploy/DATA_SAFETY.md` 中相关段落。  
+4. **发版一体包（强制）**：用户可升级的改动必须走 `scripts/release.sh`，保证 **后端 + 前端 dist + 迁移 SQL** 同进 Linux 二进制；禁止只改 Go 发版、只改前端不发版、只加 SQL 不发版。  
+5. **迁移**：schema 变更只追加 `backend/migrations/00N_*.sql`，由 embed 在启动时执行。  
+6. **静态资源**：`/assets/*` 不得回退 `index.html`；改 UI 后必须发版/重建。  
+7. **范围**：不擅自改无关模块；密钥不写进仓库。  
+8. **文档**：行为变更同步 `AGENTS.md` / `README.md` / `deploy/DATA_SAFETY.md`。  
 
 ---
 
