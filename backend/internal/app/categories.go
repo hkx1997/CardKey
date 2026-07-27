@@ -60,13 +60,24 @@ func (a *App) CreateCategory(ctx context.Context, name, slug, prefix, desc strin
 	_ = a.Pool.QueryRow(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM categories`).Scan(&sort)
 	id := uuid.NewString()
 	var created time.Time
+	if icon.Value == "" {
+		icon.Value = "ticket"
+	}
+	// 旧库 icon_value 若仍是 VARCHAR(128)，长 data URL 会炸；给出可操作提示（热修复应已扩成 TEXT）
+	if icon.Kind == "image" && len(icon.Value) > 512*1024 {
+		return domain.Category{}, apperr.Validation("图标图片过大，请压缩到 200KB 以内")
+	}
 	err := a.Pool.QueryRow(ctx, `
 		INSERT INTO categories(id, name, slug, code_prefix, description, enabled, sort_order, icon_kind, icon_value)
 		VALUES($1,$2,$3,$4,$5,true,$6,$7,$8)
 		RETURNING created_at`, id, name, slug, prefix, desc, sort, icon.Kind, icon.Value).Scan(&created)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
 			return domain.Category{}, apperr.Conflict("Slug 或前缀已存在")
+		}
+		if strings.Contains(msg, "value too long") || strings.Contains(msg, "character varying") {
+			return domain.Category{}, apperr.Validation("图标数据过长：请升级到最新版或选择图标库（勿用超大 data URL）。若已升级仍失败请重启容器以应用数据库迁移。")
 		}
 		return domain.Category{}, err
 	}
@@ -114,6 +125,10 @@ func (a *App) UpdateCategory(ctx context.Context, id string, name, desc *string,
 		icon_kind=$5, icon_value=$6, updated_at=now() WHERE id=$7`,
 		cur.Name, cur.Description, cur.Enabled, cur.SortOrder, cur.Icon.Kind, cur.Icon.Value, id)
 	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "value too long") || strings.Contains(msg, "character varying") {
+			return domain.Category{}, apperr.Validation("图标数据过长：请重启/升级应用以应用 icon_value TEXT 迁移，或改用图标库")
+		}
 		return domain.Category{}, err
 	}
 	a.Audit(ctx, "admin", actor, "update_category", "category:"+id, cur.Name, ip)

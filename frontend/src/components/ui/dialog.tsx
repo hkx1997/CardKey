@@ -34,7 +34,9 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid max-h-[min(90dvh,900px)] w-[calc(100%-1.5rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border border-border bg-card p-4 shadow-xl sm:w-full sm:p-6",
+        // min-w-0 + overflow-x-hidden：防止 contentEditable/长串把弹窗撑出横向滚动
+        "fixed left-1/2 top-1/2 z-50 grid max-h-[min(90dvh,900px)] w-[min(32rem,calc(100vw-1.5rem))] max-w-[calc(100vw-1.5rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-card p-4 shadow-xl sm:p-6",
+        "min-w-0 [grid-template-columns:minmax(0,1fr)] [&>*]:min-w-0 [&>*]:max-w-full",
         "data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out",
         className,
       )}

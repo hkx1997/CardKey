@@ -600,21 +600,58 @@ input[type="checkbox"]:disabled {
   opacity: 0.5;
 }
 
-/* contentEditable 空态占位 + 防撑破布局 */
+/* contentEditable 空态占位 + 强制断行（防弹窗横向滚动） */
+.rich-text-editor-shell {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
 .rich-text-editor:empty:before {
   color: var(--muted-foreground);
   content: attr(data-placeholder);
   pointer-events: none;
 }
 .rich-text-editor {
+  display: block;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box;
+  overflow-x: hidden !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  word-break: break-all !important;
+  white-space: pre-wrap !important;
+}
+.rich-text-editor *,
+.rich-text-editor *::before,
+.rich-text-editor *::after {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  word-break: break-all !important;
+  box-sizing: border-box;
+}
+.rich-text-editor img {
+  height: auto !important;
+  display: block;
+}
+.rich-text-editor pre,
+.rich-text-editor code {
+  white-space: pre-wrap !important;
+}
+
+/* 展示侧同样断行 */
+.rich-text-view {
+  min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
   word-break: break-word;
-  white-space: pre-wrap;
+  word-break: break-all;
 }
-.rich-text-editor img,
-.rich-text-editor pre,
-.rich-text-editor code,
-.rich-text-editor a {
+.rich-text-view * {
   max-width: 100%;
   overflow-wrap: anywhere;
   word-break: break-word;

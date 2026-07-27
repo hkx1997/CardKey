@@ -17,6 +17,7 @@ import (
 	"github.com/cardkey/cardkey/internal/ratelimit"
 	"github.com/cardkey/cardkey/internal/server"
 	"github.com/cardkey/cardkey/internal/version"
+	"github.com/cardkey/cardkey/migrations"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -40,13 +41,18 @@ func main() {
 	}
 	defer pool.Close()
 
-	migDir := findMigrations()
-	if migDir == "" {
-		log.Error("migrations dir not found")
+	// 优先嵌入式迁移（在线只换二进制也能执行新 SQL）；磁盘目录仅作开发覆盖
+	if err := db.MigrateFS(ctx, pool, migrations.FS); err != nil {
+		log.Error("migrate (embedded) failed", "err", err)
 		os.Exit(1)
 	}
-	if err := db.Migrate(ctx, pool, migDir); err != nil {
-		log.Error("migrate failed", "err", err)
+	if migDir := findMigrations(); migDir != "" {
+		if err := db.Migrate(ctx, pool, migDir); err != nil {
+			log.Warn("migrate (disk) skipped/failed", "dir", migDir, "err", err)
+		}
+	}
+	if err := db.EnsureSchemaHotfixes(ctx, pool); err != nil {
+		log.Error("schema hotfix failed", "err", err)
 		os.Exit(1)
 	}
 

@@ -14,7 +14,7 @@ import { sanitizeHtml } from "@/shared/lib/sanitize-html";
 
 /**
  * 轻量富文本编辑器（contentEditable + document.execCommand）
- * 未引入 Tiptap/Quill，减少依赖；标签与展示侧消毒一致。
+ * 未引入 Tiptap/Quill；强制断行，避免长串撑破弹窗。
  */
 export function RichTextEditor({
   value,
@@ -62,11 +62,11 @@ export function RichTextEditor({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border border-border/70 bg-background",
+        "rich-text-editor-shell min-w-0 max-w-full overflow-hidden rounded-lg border border-border/70 bg-background",
         className,
       )}
     >
-      <div className="flex flex-wrap gap-0.5 border-b border-border/60 bg-secondary/40 p-1">
+      <div className="flex min-w-0 flex-wrap gap-0.5 border-b border-border/60 bg-secondary/40 p-1">
         <ToolBtn title="粗体" onClick={() => cmd("bold")}>
           <Bold className="size-3.5" />
         </ToolBtn>
@@ -93,9 +93,8 @@ export function RichTextEditor({
         aria-multiline
         data-placeholder={placeholder}
         className={cn(
-          "rich-text-editor min-h-[120px] max-h-[240px] max-w-full overflow-x-hidden overflow-y-auto break-words px-3 py-2 text-sm outline-none",
-          "[&_*]:max-w-full [&_*]:break-words",
-          "empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)]",
+          "rich-text-editor box-border min-h-[120px] max-h-[240px] min-w-0 w-full max-w-full",
+          "overflow-x-hidden overflow-y-auto px-3 py-2 text-sm outline-none",
         )}
         onInput={emit}
         onBlur={emit}
@@ -119,7 +118,7 @@ function ToolBtn({
       type="button"
       variant="ghost"
       size="icon"
-      className="size-7"
+      className="size-7 shrink-0"
       title={title}
       onMouseDown={(e) => {
         e.preventDefault();
