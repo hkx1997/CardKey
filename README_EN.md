@@ -29,24 +29,44 @@ Self-hosted high-concurrency card-key (gift code) redeem platform: public redeem
 | Data | PostgreSQL 16 · Redis 7 |
 | Deploy | Docker Compose |
 
-## Quick deploy
+## One-click deploy
 
 ### Requirements
 
 - Docker 20+ / Compose v2
 - Linux / macOS / Windows (Docker Desktop)
+- `git`, `bash` (Git Bash on Windows)
 
-### Steps
+### A) Clone + interactive install (recommended)
 
 ```bash
 git clone https://github.com/hkx1997/CardKey.git
 cd CardKey
-
 bash deploy/docker-deploy.sh
+```
 
-# or manually
+The installer **prompts for ports / DB password** and **checks port conflicts**.
+
+```bash
+# Non-interactive
+APP_PORT=19000 bash deploy/docker-deploy.sh --yes
+
+# Reconfigure .env
+bash deploy/docker-deploy.sh --reconfig
+```
+
+### B) Online one-liner (Linux/macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hkx1997/CardKey/main/deploy/install-online.sh | bash
+```
+
+Installs to `~/cardkey` by default. Piped installs are non-interactive (auto free ports on conflict).
+
+### C) Manual
+
+```bash
 cp .env.example .env
-# edit APP_PORT, POSTGRES_PASSWORD, JWT_SECRET, CONTENT_KEY
 docker compose up -d --build
 ```
 

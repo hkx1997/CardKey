@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# CardKey Docker 一键部署（端口 / 数据库密码可配，首次 Web 向导建管理员）
+# CardKey Docker 一键安装
+# - 交互设置端口 / 数据库密码等
+# - 检测端口冲突并提示更换
+# - 支持非交互：NONINTERACTIVE=1 或 --yes
+#
+# 用法:
+#   bash deploy/docker-deploy.sh
+#   bash deploy/docker-deploy.sh --yes
+#   APP_PORT=19000 bash deploy/docker-deploy.sh --yes
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd 2>/dev/null || pwd)"
@@ -8,88 +16,391 @@ if [[ ! -f "$ROOT/docker-compose.yml" ]]; then
 fi
 cd "$ROOT"
 
-info() { printf '==> %s\n' "$*"; }
-green() { printf '\033[32m%s\033[0m\n' "$*"; }
-red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+NONINTERACTIVE="${NONINTERACTIVE:-0}"
+FORCE_RECONFIG=0
+for arg in "$@"; do
+  case "$arg" in
+    -y|--yes|--non-interactive) NONINTERACTIVE=1 ;;
+    --reconfig) FORCE_RECONFIG=1 ;;
+    -h|--help)
+      cat <<'HELP'
+CardKey Docker 一键安装
 
-if ! command -v docker >/dev/null 2>&1; then
-  red "需要 Docker"
-  exit 1
+  bash deploy/docker-deploy.sh           交互安装（推荐）
+  bash deploy/docker-deploy.sh --yes     非交互，使用默认/环境变量
+  bash deploy/docker-deploy.sh --reconfig  强制重新配置 .env
+
+环境变量可覆盖默认值：APP_PORT POSTGRES_PORT REDIS_PORT POSTGRES_PASSWORD 等
+HELP
+      exit 0
+      ;;
+  esac
+done
+
+# 无 TTY 时自动非交互
+if [[ ! -t 0 ]]; then
+  NONINTERACTIVE=1
 fi
 
-mkdir -p data postgres_data redis_data 2>/dev/null || true
+info()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
+red()   { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 
-rand_hex() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex "$1"
+# ---------- 依赖 ----------
+if ! command -v docker >/dev/null 2>&1; then
+  red "未检测到 Docker，请先安装 Docker / Docker Desktop"
+  exit 1
+fi
+if ! docker compose version >/dev/null 2>&1 && ! docker-compose version >/dev/null 2>&1; then
+  red "未检测到 Docker Compose（docker compose）"
+  exit 1
+fi
+compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
   else
-    head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c "$(($1 * 2))"
+    docker-compose "$@"
   fi
 }
 
-if [[ ! -f .env ]]; then
-  info "生成 .env …"
-  APP_PORT="${APP_PORT:-18080}"
-  POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-  REDIS_PORT="${REDIS_PORT:-6379}"
-  PG_PASS="$(rand_hex 16)"
-  JWT="$(rand_hex 32)"
-  CK="$(rand_hex 32)"
+# ---------- 工具 ----------
+rand_hex() {
+  local n="${1:-16}"
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$n"
+  else
+    head -c "$n" /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n' | head -c "$((n * 2))"
+  fi
+}
+
+# 检测宿主机端口是否被占用。0=占用 1=空闲
+port_in_use() {
+  local port="$1"
+  [[ -z "$port" || ! "$port" =~ ^[0-9]+$ ]] && return 1
+  if (( port < 1 || port > 65535 )); then
+    return 0
+  fi
+
+  # ss
+  if command -v ss >/dev/null 2>&1; then
+    if ss -lntu 2>/dev/null | awk '{print $5}' | grep -E "[:.]${port}$" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  # lsof
+  if command -v lsof >/dev/null 2>&1; then
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  # netstat
+  if command -v netstat >/dev/null 2>&1; then
+    if netstat -lntu 2>/dev/null | grep -E "[:.]${port}[[:space:]]" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  # PowerShell (Windows Git Bash / 本机)
+  if command -v powershell.exe >/dev/null 2>&1; then
+    if powershell.exe -NoProfile -Command "Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1" 2>/dev/null | grep -q .; then
+      return 0
+    fi
+  fi
+  # bash /dev/tcp：能连上通常表示有进程在听
+  if (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+# 找下一个空闲端口
+find_free_port() {
+  local start="$1"
+  local p="$start"
+  local i=0
+  while (( i < 200 )); do
+    if ! port_in_use "$p"; then
+      echo "$p"
+      return 0
+    fi
+    p=$((p + 1))
+    i=$((i + 1))
+  done
+  echo "$start"
+  return 1
+}
+
+ask() {
+  # ask "提示" "默认值" -> 写入 REPLY
+  local prompt="$1"
+  local def="${2-}"
+  if [[ "$NONINTERACTIVE" == "1" ]]; then
+    REPLY="$def"
+    return 0
+  fi
+  if [[ -n "$def" ]]; then
+    read -r -p "$prompt [$def]: " REPLY || true
+    REPLY="${REPLY:-$def}"
+  else
+    read -r -p "$prompt: " REPLY || true
+  fi
+}
+
+ask_port() {
+  # ask_port "标签" 默认端口 -> 保证可用，结果到 REPLY
+  local label="$1"
+  local def="$2"
+  local p="$def"
+  while true; do
+    ask "  $label 端口" "$p"
+    p="$REPLY"
+    if [[ ! "$p" =~ ^[0-9]+$ ]] || (( p < 1 || p > 65535 )); then
+      red "  无效端口，请输入 1-65535"
+      p="$def"
+      [[ "$NONINTERACTIVE" == "1" ]] && exit 1
+      continue
+    fi
+    if port_in_use "$p"; then
+      local alt
+      alt="$(find_free_port $((p + 1)))"
+      yellow "  端口 $p 已被占用"
+      if [[ "$NONINTERACTIVE" == "1" ]]; then
+        yellow "  非交互模式：自动改用 $alt"
+        REPLY="$alt"
+        return 0
+      fi
+      ask "  请换一个端口（建议 $alt）" "$alt"
+      p="$REPLY"
+      continue
+    fi
+    REPLY="$p"
+    green "  ✓ $label 端口 $p 可用"
+    return 0
+  done
+}
+
+check_ports_batch() {
+  # 检查多个端口，互相也不能重复
+  local -a ports=("$@")
+  local i j
+  for ((i = 0; i < ${#ports[@]}; i++)); do
+    for ((j = i + 1; j < ${#ports[@]}; j++)); do
+      if [[ "${ports[i]}" == "${ports[j]}" ]]; then
+        red "端口冲突：${ports[i]} 被重复使用"
+        return 1
+      fi
+    done
+  done
+  for p in "${ports[@]}"; do
+    if port_in_use "$p"; then
+      red "端口 $p 已被占用"
+      return 1
+    fi
+  done
+  return 0
+}
+
+write_env() {
+  local app_port="$1" pg_port="$2" redis_port="$3" pg_user="$4" pg_pass="$5" pg_db="$6"
+  local jwt ck
+  jwt="$(rand_hex 32)"
+  ck="$(rand_hex 32)"
   cat >.env <<EOF
-# 端口
-APP_PORT=${APP_PORT}
-POSTGRES_PORT=${POSTGRES_PORT}
-REDIS_PORT=${REDIS_PORT}
+# Generated by deploy/docker-deploy.sh — $(date -u +%Y-%m-%dT%H:%MZ 2>/dev/null || date)
+# 端口（宿主机）
+APP_PORT=${app_port}
+POSTGRES_PORT=${pg_port}
+REDIS_PORT=${redis_port}
 FRONTEND_PORT=5173
 
 # 数据库
-POSTGRES_USER=cardkey
-POSTGRES_PASSWORD=${PG_PASS}
-POSTGRES_DB=cardkey
+POSTGRES_USER=${pg_user}
+POSTGRES_PASSWORD=${pg_pass}
+POSTGRES_DB=${pg_db}
 
-# 应用
-JWT_SECRET=${JWT}
-CONTENT_KEY=${CK}
+# 应用密钥（请勿提交到 Git）
+JWT_SECRET=${jwt}
+CONTENT_KEY=${ck}
 BOOTSTRAP_ADMIN_USER=
 BOOTSTRAP_ADMIN_PASS=
 PUBLIC_REDEEM_API_KEY=
 APP_ENV=production
-CORS_ORIGINS=http://localhost:${APP_PORT},http://127.0.0.1:${APP_PORT}
+CORS_ORIGINS=http://localhost:${app_port},http://127.0.0.1:${app_port}
 SECURE_COOKIE=false
 TRUST_PROXY=true
 CSRF_CHECK=false
+REQUIRE_REDEEM_API_KEY=false
 UPDATE_MODE=disabled
 EOF
-  chmod 600 .env || true
+  chmod 600 .env 2>/dev/null || true
+}
+
+# ---------- 主流程 ----------
+echo ""
+green "========================================"
+green "  CardKey Docker 一键安装"
+green "========================================"
+echo ""
+
+NEED_CONFIG=0
+if [[ ! -f .env ]]; then
+  NEED_CONFIG=1
+elif [[ "$FORCE_RECONFIG" == "1" ]]; then
+  NEED_CONFIG=1
+  yellow "将重新生成 .env（旧文件会备份为 .env.bak）"
+elif [[ "$NONINTERACTIVE" != "1" ]]; then
+  ask "检测到已有 .env，是否重新配置？(y/N)" "N"
+  if [[ "${REPLY,,}" == "y" || "${REPLY,,}" == "yes" ]]; then
+    NEED_CONFIG=1
+    FORCE_RECONFIG=1
+  fi
+fi
+
+if [[ "$NEED_CONFIG" == "1" ]]; then
+  info "配置端口与数据库（直接回车使用默认值）"
+  echo ""
+
+  # 默认值可用环境变量覆盖
+  DEF_APP="${APP_PORT:-18080}"
+  DEF_PG="${POSTGRES_PORT:-5432}"
+  DEF_REDIS="${REDIS_PORT:-6379}"
+  DEF_USER="${POSTGRES_USER:-cardkey}"
+  DEF_DB="${POSTGRES_DB:-cardkey}"
+
+  # 若默认端口占用，提示用空闲端口作为默认
+  if port_in_use "$DEF_APP"; then
+    DEF_APP="$(find_free_port "$DEF_APP")"
+    yellow "默认应用端口被占用，建议使用 $DEF_APP"
+  fi
+  if port_in_use "$DEF_PG"; then
+    DEF_PG="$(find_free_port "$DEF_PG")"
+    yellow "默认 Postgres 端口被占用，建议使用 $DEF_PG"
+  fi
+  if port_in_use "$DEF_REDIS"; then
+    DEF_REDIS="$(find_free_port "$DEF_REDIS")"
+    yellow "默认 Redis 端口被占用，建议使用 $DEF_REDIS"
+  fi
+
+  ask_port "应用 APP_PORT（管理端/兑换页）" "$DEF_APP"
+  APP_PORT="$REPLY"
+  ask_port "PostgreSQL POSTGRES_PORT" "$DEF_PG"
+  POSTGRES_PORT="$REPLY"
+  ask_port "Redis REDIS_PORT" "$DEF_REDIS"
+  REDIS_PORT="$REPLY"
+
+  # 三端口互斥
+  while ! check_ports_batch "$APP_PORT" "$POSTGRES_PORT" "$REDIS_PORT"; do
+    if [[ "$NONINTERACTIVE" == "1" ]]; then
+      red "端口冲突且无法在非交互模式自动解决"
+      exit 1
+    fi
+    yellow "请重新设置互不冲突的端口"
+    ask_port "应用 APP_PORT" "$APP_PORT"
+    APP_PORT="$REPLY"
+    ask_port "PostgreSQL" "$POSTGRES_PORT"
+    POSTGRES_PORT="$REPLY"
+    ask_port "Redis" "$REDIS_PORT"
+    REDIS_PORT="$REPLY"
+  done
+
+  echo ""
+  ask "  数据库用户 POSTGRES_USER" "$DEF_USER"
+  POSTGRES_USER="$REPLY"
+  ask "  数据库名 POSTGRES_DB" "$DEF_DB"
+  POSTGRES_DB="$REPLY"
+
+  if [[ -n "${POSTGRES_PASSWORD:-}" && "$NONINTERACTIVE" == "1" ]]; then
+    PG_PASS="$POSTGRES_PASSWORD"
+  elif [[ "$NONINTERACTIVE" == "1" ]]; then
+    PG_PASS="$(rand_hex 16)"
+  else
+    ask "  数据库密码（回车=随机生成）" ""
+    if [[ -z "$REPLY" ]]; then
+      PG_PASS="$(rand_hex 16)"
+      green "  ✓ 已随机生成数据库密码"
+    else
+      PG_PASS="$REPLY"
+    fi
+  fi
+
+  if [[ -f .env ]]; then
+    cp -f .env .env.bak 2>/dev/null || true
+    info "已备份旧配置 → .env.bak"
+  fi
+  write_env "$APP_PORT" "$POSTGRES_PORT" "$REDIS_PORT" "$POSTGRES_USER" "$PG_PASS" "$POSTGRES_DB"
   green "已写入 .env（权限 600）"
   echo "  APP_PORT=${APP_PORT}"
   echo "  POSTGRES_PORT=${POSTGRES_PORT}"
   echo "  REDIS_PORT=${REDIS_PORT}"
-  echo "  POSTGRES_PASSWORD 已随机生成（见 .env）"
+  echo "  POSTGRES_USER=${POSTGRES_USER}"
+  echo "  POSTGRES_DB=${POSTGRES_DB}"
+  echo "  POSTGRES_PASSWORD=********（见 .env）"
 else
-  info ".env 已存在，跳过生成"
+  info "使用现有 .env"
+  get_env() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
+  APP_PORT="$(get_env APP_PORT)"; APP_PORT="${APP_PORT:-18080}"
+  POSTGRES_PORT="$(get_env POSTGRES_PORT)"; POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+  REDIS_PORT="$(get_env REDIS_PORT)"; REDIS_PORT="${REDIS_PORT:-6379}"
+
+  info "检查端口占用…"
+  FAIL=0
+  for pair in "应用:$APP_PORT" "PostgreSQL:$POSTGRES_PORT" "Redis:$REDIS_PORT"; do
+    name="${pair%%:*}"
+    p="${pair##*:}"
+    if port_in_use "$p"; then
+      # 若已是本 compose 在跑，允许
+      if compose ps --status running 2>/dev/null | grep -q .; then
+        yellow "  $name 端口 $p 已有监听（可能是本项目正在运行）"
+      else
+        red "  $name 端口 $p 已被占用"
+        FAIL=1
+      fi
+    else
+      green "  ✓ $name 端口 $p 可用"
+    fi
+  done
+  if [[ "$FAIL" == "1" ]]; then
+    red "请修改 .env 中的端口，或执行: bash deploy/docker-deploy.sh --reconfig"
+    exit 1
+  fi
 fi
 
-# 从 .env 读端口展示
-get_env() {
-  grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true
-}
-APP_PORT="$(get_env APP_PORT)"
-APP_PORT="${APP_PORT:-18080}"
+# 最终再读一次
+get_env() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
+APP_PORT="$(get_env APP_PORT)"; APP_PORT="${APP_PORT:-18080}"
 
-info "启动 compose…"
-docker compose pull || true
-docker compose up -d --build
+echo ""
+info "拉取镜像并启动服务（首次构建可能较久）…"
+compose pull 2>/dev/null || true
+compose up -d --build
+
+echo ""
+# 等待健康
+info "等待服务就绪…"
+ok=0
+for i in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:${APP_PORT}/healthz" >/dev/null 2>&1 || \
+     wget -qO- "http://127.0.0.1:${APP_PORT}/healthz" >/dev/null 2>&1; then
+    ok=1
+    break
+  fi
+  sleep 2
+done
 
 echo ""
 green "========================================"
-green "  CardKey 部署完成"
-green "  管理端: http://localhost:${APP_PORT}/admin"
-green "  兑换页: http://localhost:${APP_PORT}/"
-green ""
-green "  首次打开管理端将进入「安装向导」"
-green "  设置管理员账号与站点名称"
-green ""
-green "  数据库密码等见: $(pwd)/.env"
+if [[ "$ok" == "1" ]]; then
+  green "  CardKey 安装成功"
+else
+  yellow "  服务已启动，健康检查仍在等待（可查看日志）"
+fi
+green "----------------------------------------"
+green "  兑换页:  http://localhost:${APP_PORT}/"
+green "  管理端:  http://localhost:${APP_PORT}/admin"
+green "  安装向导: http://localhost:${APP_PORT}/admin/setup"
+green "----------------------------------------"
+green "  配置文件: $(pwd)/.env"
+green "  查看日志: docker compose logs -f cardkey"
+green "  首次打开管理端完成管理员设置"
 green "========================================"
 echo ""

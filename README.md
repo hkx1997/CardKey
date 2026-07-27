@@ -35,18 +35,54 @@
 
 - Docker 20+ / Docker Compose v2
 - Linux / macOS / Windows（Docker Desktop）
+- `git`、`bash`（Windows 可用 Git Bash）
 
-### 步骤
+### 方式 A：克隆后交互安装（推荐）
 
 ```bash
-# 1. 克隆
 git clone https://github.com/hkx1997/CardKey.git
 cd CardKey
-
-# 2. 生成 .env（随机库密码与密钥）并启动
 bash deploy/docker-deploy.sh
+```
 
-# 或手动
+安装过程中会**交互询问**（直接回车=默认）：
+
+| 项 | 默认 | 说明 |
+|----|------|------|
+| 应用端口 `APP_PORT` | 18080 | 管理端 / 兑换页 |
+| Postgres 端口 | 5432 | 宿主机映射 |
+| Redis 端口 | 6379 | 宿主机映射 |
+| 数据库用户/库名 | cardkey | |
+| 数据库密码 | 随机 | 也可自定义 |
+
+并会**检测端口是否被占用**；冲突时提示更换（非交互模式自动选空闲端口）。
+
+```bash
+# 非交互（CI / 无人值守，可用环境变量覆盖）
+APP_PORT=19000 bash deploy/docker-deploy.sh --yes
+
+# 强制重新配置 .env
+bash deploy/docker-deploy.sh --reconfig
+```
+
+### 方式 B：在线一键（Linux/macOS）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hkx1997/CardKey/main/deploy/install-online.sh | bash
+```
+
+默认安装到 `~/cardkey`。自定义目录：
+
+```bash
+CARDKEY_DIR=/opt/cardkey bash -c \
+  'curl -fsSL https://raw.githubusercontent.com/hkx1997/CardKey/main/deploy/install-online.sh | bash'
+```
+
+> 通过管道安装时通常**没有交互终端**，会走默认端口；若冲突会自动顺延。需要交互配置请用方式 A。
+
+### 方式 C：纯手动
+
+```bash
 cp .env.example .env
 # 编辑 APP_PORT、POSTGRES_PASSWORD、JWT_SECRET、CONTENT_KEY 等
 docker compose up -d --build
