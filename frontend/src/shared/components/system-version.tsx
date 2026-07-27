@@ -73,6 +73,22 @@ export function SystemVersion({ className }: { className?: string }) {
           </DialogHeader>
 
           <div className="space-y-4 text-sm">
+            {infoQ.data?.migrationsEmbedded ? (
+              <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
+                <p className="font-medium text-foreground">数据库迁移随版本包</p>
+                <p className="mt-0.5">
+                  SQL 嵌入二进制；一键更新替换进程并重启后，会自动执行尚未应用的迁移（不删库、不
+                  down -v）。
+                </p>
+                {infoQ.data.migrationsApplied &&
+                infoQ.data.migrationsApplied.length > 0 ? (
+                  <p className="mt-1 font-mono text-[10px] break-all">
+                    已应用：{infoQ.data.migrationsApplied.join(", ")}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -158,7 +174,7 @@ export function SystemVersion({ className }: { className?: string }) {
                           const ok = await confirm({
                             title: `更新到 v${check.latest}`,
                             description:
-                              "将下载 Linux 二进制（Release 资产），替换当前进程并自动重启。数据卷不会删除。",
+                              "将下载 Linux 二进制（含内嵌数据库迁移），替换当前进程并自动重启；启动时执行未应用的 SQL。Postgres 数据卷不会删除。",
                             confirmLabel: "一键更新并重启",
                             destructive: true,
                           });
@@ -166,7 +182,7 @@ export function SystemVersion({ className }: { className?: string }) {
                           applyM.mutate(check.latest, {
                             onSuccess: () =>
                               toast.message(
-                                "更新已提交，服务即将重启…请稍候刷新页面",
+                                "更新已提交，即将重启并自动执行数据库迁移…请稍候刷新",
                               ),
                           });
                         }}

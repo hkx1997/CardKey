@@ -213,13 +213,12 @@ func finalizeUpdateResult(in UpdateCheckResult, cur, mode string, fromCache bool
 		out.HasUpdate = false
 		out.Message = "当前版本已新于远端记录（v" + out.Latest + "），无需更新"
 	} else if out.HasUpdate {
-		out.Message = "发现新版本 v" + out.Latest + "。Docker 请执行：bash scripts/upgrade.sh（或 git fetch --tags && git checkout v" + out.Latest + " && docker compose up -d --build）"
+		out.Message = "发现新版本 v" + out.Latest +
+			"。一键更新会下载 Linux 二进制（内嵌 DB 迁移），替换后重启并自动执行未应用的 SQL；数据卷不删。" +
+			" 也可用：bash scripts/upgrade.sh v" + out.Latest
 		out.ReleaseURL = strings.TrimSpace(out.ReleaseURL)
-		if out.ReleaseURL == "" {
-			// 占位，前端可拼
-		}
 	} else {
-		out.Message = "已是最新版本"
+		out.Message = "已是最新版本（内嵌迁移已在启动时校验）"
 	}
 	if fromCache {
 		if !strings.Contains(out.Message, "缓存") {
@@ -814,12 +813,18 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 	_ = os.Chmod(binPath, 0o755)
 	a.pruneReleases()
 	a.Audit(ctx, "admin", actor, "update_apply", "system", "apply "+targetVer+" mode="+a.UpdateMode, ip)
-	a.setUpdateStatus(UpdateStatus{State: "restarting", Message: "即将重启服务…", Progress: 95})
+	a.setUpdateStatus(UpdateStatus{
+		State:    "restarting",
+		Message:  "即将重启：新版本内嵌的数据库迁移会在启动时自动执行（不删库）…",
+		Progress: 95,
+	})
 	// Docker: restart policy 会拉起同容器（可写层已换二进制）；systemd 同理
+	// 重启后 main 会 MigrateFS(migrations.FS)，新 SQL 随二进制一并生效。
 	go func() {
 		time.Sleep(900 * time.Millisecond)
 		if a.Log != nil {
-			a.Log.Info("exiting for update restart", "version", targetVer, "mode", a.UpdateMode, "bin", binPath)
+			a.Log.Info("exiting for update restart (embedded migrations apply on boot)",
+				"version", targetVer, "mode", a.UpdateMode, "bin", binPath)
 		}
 		os.Exit(0)
 	}()

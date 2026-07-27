@@ -96,7 +96,16 @@ UPDATE_BINARY_PATH=/opt/cardkey/cardkey
 UPDATE_RELEASES_DIR=/opt/cardkey/releases
 ```
 
-留空即可。在线更新**只替换应用二进制并重启 cardkey 进程**，不碰 Postgres 卷。
+留空即可。
+
+在线更新流程：
+
+1. 下载 Release 中的 **Linux 二进制**（内嵌 `backend/migrations/*.sql`）  
+2. 替换当前进程文件并退出，由 Docker/`unless-stopped` 拉起  
+3. **启动时自动执行**尚未应用的 SQL 迁移（`schema_migrations` 幂等）  
+4. **不**碰 Postgres 数据卷，**不** `down -v`  
+
+因此：**改表结构必须新增 `00N_xxx.sql` 并随发版打进二进制**；不要指望只热换业务代码却靠镜像里旧的 `/app/migrations` 目录。
 
 ## 备份（强烈建议）
 

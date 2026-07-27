@@ -47,19 +47,19 @@ func ConnectWithPool(ctx context.Context, url string, maxConns, minConns int32) 
 	return pool, nil
 }
 
-// MigrateFS 按文件名排序执行 *.sql（幂等：schema_migrations 记录）。
-func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) error {
-	_, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			filename TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`)
-	if err != nil {
-		return err
-	}
+// MigrateResult 一次迁移执行结果。
+type MigrateResult struct {
+	// Bundled 嵌入/目录中的全部 *.sql（已排序）
+	Bundled []string
+	// AppliedNow 本次新执行的文件
+	AppliedNow []string
+}
+
+// ListSQLFiles 列出 fs 根目录下 *.sql（排序）。
+func ListSQLFiles(fsys fs.FS) ([]string, error) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		return fmt.Errorf("read migrations fs: %w", err)
+		return nil, fmt.Errorf("read migrations fs: %w", err)
 	}
 	var files []string
 	for _, e := range entries {
@@ -68,41 +68,83 @@ func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) error {
 		}
 	}
 	sort.Strings(files)
+	return files, nil
+}
+
+// MigrateFS 按文件名排序执行 *.sql（幂等：schema_migrations 记录）。
+// 在线更新替换二进制后，进程重启会再次调用本函数，从而自动应用新嵌入的 SQL。
+func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (*MigrateResult, error) {
+	res := &MigrateResult{}
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			filename TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`)
+	if err != nil {
+		return nil, err
+	}
+	files, err := ListSQLFiles(fsys)
+	if err != nil {
+		return nil, err
+	}
+	res.Bundled = files
 	for _, name := range files {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename=$1)`, name).Scan(&exists); err != nil {
-			return err
+			return res, err
 		}
 		if exists {
 			continue
 		}
 		body, err := fs.ReadFile(fsys, name)
 		if err != nil {
-			return err
+			return res, err
 		}
 		tx, err := pool.Begin(ctx)
 		if err != nil {
-			return err
+			return res, err
 		}
 		if _, err := tx.Exec(ctx, string(body)); err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migrate %s: %w", name, err)
+			return res, fmt.Errorf("migrate %s: %w", name, err)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(filename) VALUES($1)`, name); err != nil {
 			_ = tx.Rollback(ctx)
-			return err
+			return res, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return err
+			return res, err
 		}
+		res.AppliedNow = append(res.AppliedNow, name)
 	}
-	return nil
+	return res, nil
+}
+
+// ListAppliedMigrations 已写入 schema_migrations 的文件名（排序）。
+func ListAppliedMigrations(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+	rows, err := pool.Query(ctx, `SELECT filename FROM schema_migrations ORDER BY filename`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out, rows.Err()
 }
 
 // Migrate 从磁盘目录执行迁移（开发 / 兼容 MIGRATIONS_DIR）。
-func Migrate(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) error {
+func Migrate(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) (*MigrateResult, error) {
 	if migrationsDir == "" {
-		return fmt.Errorf("migrations dir empty")
+		return nil, fmt.Errorf("migrations dir empty")
 	}
 	return MigrateFS(ctx, pool, os.DirFS(migrationsDir))
 }

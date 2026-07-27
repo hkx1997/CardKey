@@ -80,6 +80,7 @@ HTTP → handler → app（业务）→ pgx / redis
 - 业务逻辑写在 `internal/app`，不要堆在 handler。
 - 错误用 `internal/pkg/apperr`，响应用 `internal/pkg/response`（`success` + `data` / `error`）。
 - 新表/改列：新增 `backend/migrations/00N_xxx.sql`，**禁止**改写已发布的旧迁移文件内容（新装环境靠 001 的现行定义即可同步）。
+- **在线更新契约（强制）**：迁移 SQL 经 `backend/migrations/embed.go` 的 `//go:embed *.sql` 打进二进制；一键更新只换 exe 后，进程重启会 `MigrateFS(migrations.FS)` 自动应用。发版检查清单必须包含新迁移文件；勿依赖容器内磁盘 `/app/migrations` 是否最新。
 
 **分层约定（前端）**
 
@@ -317,8 +318,9 @@ docker compose up -d --no-deps cardkey
 
 后台 → 版本信息 → **检测更新** → **一键更新**：
 
-- 下载当前架构的 `cardkey-linux-*` Release 资产  
+- 下载当前架构的 `cardkey-linux-*` Release 资产（**内嵌全部 `*.sql` 迁移**）  
 - 替换进程二进制并退出，由 `restart: unless-stopped` 拉起  
+- **启动时自动跑未应用迁移**（幂等；失败则进程起不来，便于从日志排查）  
 - **不**执行 `compose down -v`，不删 Postgres 卷  
 
 `.env` 中 `UPDATE_BINARY_PATH` / `UPDATE_RELEASES_DIR` **请留空**（自动用 `os.Executable()`）。
@@ -377,6 +379,7 @@ docker compose exec -T postgres \
 2. **演示数据**：禁止在 `Bootstrap` 里自动 `seedDemo`；仅 setup 显式开关。  
 3. **鉴权**：管理 API 变更须同时考虑 Cookie JWT 与 `admin:api` Bearer。  
 4. **发版**：改功能后若需用户可升级，应走 `scripts/release.sh` 产出 Linux 资产，勿只打无资产的 tag。  
+4b. **迁移随更新**：任何 schema 变更必须新增 `backend/migrations/00N_*.sql` 并随 `release.sh` 编进二进制；在线更新不单独下发 SQL 文件。  
 5. **范围**：不擅自改无关模块；不主动扩大需求；密钥永不写死进仓库。  
 6. **文档**：架构/升级行为变更时同步 `AGENTS.md`、`README.md`、`deploy/DATA_SAFETY.md` 中相关段落。  
 

@@ -41,14 +41,25 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 优先嵌入式迁移（在线只换二进制也能执行新 SQL）；磁盘目录仅作开发覆盖
-	if err := db.MigrateFS(ctx, pool, migrations.FS); err != nil {
+	// 在线更新契约：SQL 经 go:embed 打进二进制 → 替换 exe 后重启自动 MigrateFS。
+	// 磁盘 MIGRATIONS_DIR 仅作开发/额外补丁，不是 Docker 一键更新的依赖路径。
+	migRes, err := db.MigrateFS(ctx, pool, migrations.FS)
+	if err != nil {
 		log.Error("migrate (embedded) failed", "err", err)
 		os.Exit(1)
 	}
+	if migRes != nil {
+		log.Info("db migrations (embedded)",
+			"bundled", len(migRes.Bundled),
+			"appliedNow", migRes.AppliedNow,
+			"files", migRes.Bundled,
+		)
+	}
 	if migDir := findMigrations(); migDir != "" {
-		if err := db.Migrate(ctx, pool, migDir); err != nil {
-			log.Warn("migrate (disk) skipped/failed", "dir", migDir, "err", err)
+		if diskRes, derr := db.Migrate(ctx, pool, migDir); derr != nil {
+			log.Warn("migrate (disk) skipped/failed", "dir", migDir, "err", derr)
+		} else if diskRes != nil && len(diskRes.AppliedNow) > 0 {
+			log.Info("db migrations (disk extra)", "dir", migDir, "appliedNow", diskRes.AppliedNow)
 		}
 	}
 	if err := db.EnsureSchemaHotfixes(ctx, pool); err != nil {

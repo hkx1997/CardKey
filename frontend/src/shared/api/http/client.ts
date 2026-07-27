@@ -315,6 +315,9 @@ export const httpClient = {
       updateMode: string;
       startedAt: string;
       uptimeSec: number;
+      migrationsEmbedded?: boolean;
+      migrationsBundled?: string[];
+      migrationsApplied?: string[];
     }>("/api/v1/admin/system/info"),
 
   checkUpdates: (force?: boolean) =>
