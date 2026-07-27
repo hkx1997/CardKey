@@ -119,8 +119,9 @@ func Load() Config {
 		UpdateGitHubOwner:   getenv("UPDATE_GITHUB_OWNER", "hkx1997"),
 		UpdateGitHubRepo:    getenv("UPDATE_GITHUB_REPO", "CardKey"),
 		UpdateGitHubToken:   getenv("UPDATE_GITHUB_TOKEN", ""),
-		UpdateReleasesDir:   getenv("UPDATE_RELEASES_DIR", "/opt/cardkey/releases"),
-		// 空=自动用 os.Executable()（Docker 内为 /app/cardkey）；勿默认 /opt/...（容器内不存在）
+		// 空则运行时落到 DATA_DIR/releases 或可写临时目录（勿默认 /opt，容器内通常不存在）
+		UpdateReleasesDir: getenv("UPDATE_RELEASES_DIR", ""),
+		// 空=自动用 os.Executable()（Docker 内为 /app/cardkey）；勿默认 /opt/...
 		UpdateBinaryPath: getenv("UPDATE_BINARY_PATH", ""),
 		UpdateKeepReleases:  EnvInt("UPDATE_KEEP_RELEASES", 5),
 	}
