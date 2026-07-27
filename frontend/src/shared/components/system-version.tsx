@@ -158,8 +158,8 @@ export function SystemVersion({ className }: { className?: string }) {
                           const ok = await confirm({
                             title: `更新到 v${check.latest}`,
                             description:
-                              "若 Release 带有对应平台二进制则在线替换并重启；否则请用服务器升级命令（不删数据卷）。",
-                            confirmLabel: "尝试一键更新",
+                              "将下载 Linux 二进制（Release 资产），替换当前进程并自动重启。数据卷不会删除。",
+                            confirmLabel: "一键更新并重启",
                             destructive: true,
                           });
                           if (!ok) return;
@@ -172,30 +172,24 @@ export function SystemVersion({ className }: { className?: string }) {
                         }}
                       >
                         <ArrowUpCircle className="size-3.5" />
-                        尝试一键更新
+                        一键更新并重启
                       </Button>
                     )}
-                    <div className="rounded-lg border border-border/70 bg-background/80 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
-                      <p className="mb-1 font-sans text-[10px] font-medium text-foreground">
-                        推荐（Docker，与发版一致）
-                      </p>
-                      bash scripts/upgrade.sh
-                      <br />
-                      # 或 git fetch --tags && git checkout v
-                      {check.latest}
-                      <br /># docker compose up -d --build
-                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      也可在服务器执行{" "}
+                      <code className="font-mono">
+                        bash scripts/upgrade.sh v{check.latest}
+                      </code>
+                      （只重建应用，不删库）。勿使用{" "}
+                      <code className="font-mono">down -v</code>。
+                    </p>
                   </div>
                 ) : null}
                 {check.mode === "docker" ? (
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    发版默认<strong>不附带</strong>各平台二进制包。升级请在宿主机拉
-                    tag 后{" "}
-                    <code className="font-mono">
-                      docker compose up -d --build
-                    </code>
-                    ，勿使用{" "}
-                    <code className="font-mono">down -v</code>。
+                    Release 附带{" "}
+                    <code className="font-mono">cardkey-linux-amd64/arm64</code>
+                    ，一键更新会替换容器内二进制并由 restart 拉起。
                   </p>
                 ) : null}
               </div>

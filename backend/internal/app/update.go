@@ -716,7 +716,7 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 
 	a.setUpdateStatus(UpdateStatus{State: "downloading", Message: "下载 " + assetName, Progress: 15})
 	if err := a.downloadFile(ctx, assetURL, partial); err != nil {
-		// 再试 API 解析（仅当 Release 仍挂有资产时；默认发版已不再附带多平台包）
+		// 直链失败：尝试 API 列出资产（有 Token 或公开 API）
 		if rel == nil {
 			if r, e2 := a.fetchReleaseByTag(ctx, targetVer); e2 == nil {
 				rel = r
@@ -734,12 +734,12 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 					return apperr.Internal("下载更新失败: " + err.Error())
 				}
 			} else {
-				a.setUpdateStatus(UpdateStatus{State: "failed", Error: "release has no assets"})
-				return apperr.Validation("该版本 Release 未附带二进制。Docker 请在服务器执行：bash scripts/upgrade.sh（或 git pull && docker compose up -d --build）")
+				a.setUpdateStatus(UpdateStatus{State: "failed", Error: "release has no linux asset"})
+				return apperr.Validation("该版本 Release 无 linux/" + runtime.GOARCH + " 资产。请升级到附带 cardkey-linux-amd64 的版本，或执行 bash scripts/upgrade.sh")
 			}
 		} else {
 			a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-			return apperr.Validation("无法下载更新包（发版默认不附带多平台二进制）。请执行：bash scripts/upgrade.sh")
+			return apperr.Validation("无法下载更新包: " + err.Error() + "。请确认 Release 含 cardkey-linux-amd64，或执行 bash scripts/upgrade.sh")
 		}
 	}
 
@@ -956,19 +956,43 @@ func truncate(s string, n int) string {
 }
 
 func (a *App) downloadFile(ctx context.Context, url, dest string) error {
+	if dir := filepath.Dir(dest); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0o755)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "CardKey-Updater")
-	if a.UpdateGitHubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+a.UpdateGitHubToken)
+	req.Header.Set("User-Agent", "CardKey-Updater/1.0")
+	req.Header.Set("Accept", "application/octet-stream")
+	// 仅 api.github.com 带 Token；下载会 302 到 objects.githubusercontent.com，必须去掉 Authorization
+	tok := strings.TrimSpace(a.UpdateGitHubToken)
+	client := &http.Client{
+		Timeout: 15 * time.Minute,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			host := strings.ToLower(req.URL.Host)
+			if host != "api.github.com" {
+				req.Header.Del("Authorization")
+			} else if tok != "" {
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+			return nil
+		},
 	}
-	resp, err := http.DefaultClient.Do(req)
+	if tok != "" && strings.Contains(strings.ToLower(url), "api.github.com") {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return fmt.Errorf("download 404: release asset not found (%s)", url)
+	}
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("download status %d", resp.StatusCode)
 	}
@@ -977,8 +1001,14 @@ func (a *App) downloadFile(ctx context.Context, url, dest string) error {
 		return err
 	}
 	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	n, err := io.Copy(f, io.LimitReader(resp.Body, 500<<20))
+	if err != nil {
+		return err
+	}
+	if n < 1024 {
+		return fmt.Errorf("downloaded file too small (%d bytes), likely not a binary", n)
+	}
+	return nil
 }
 
 func pickAsset(rel *ghRelease) (url, name string, err error) {

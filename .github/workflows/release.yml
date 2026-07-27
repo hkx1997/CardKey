@@ -1,8 +1,7 @@
 name: Release
 
-# 对齐 Docker 部署为主：Release 只打 tag + 说明，不附带各平台二进制包。
-# 升级：git checkout <tag> && docker compose up -d --build
-# 或：bash scripts/upgrade.sh
+# Docker 一键更新需要 Linux 资产：仅上传 linux-amd64 / linux-arm64 + checksums
+# 不附带 Windows / macOS 包
 
 on:
   push:
@@ -20,11 +19,39 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create GitHub Release (notes only)
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Version
+        id: ver
+        run: |
+          V=$(tr -d ' \t\r\n' < VERSION)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Build Linux binaries
+        working-directory: backend
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p ../dist
+          COMMIT="${GITHUB_SHA::7}"
+          BT="$(date -u +%Y-%m-%dT%H:%MZ)"
+          LDFLAGS="-s -w -X github.com/cardkey/cardkey/internal/version.Version=${VERSION} -X github.com/cardkey/cardkey/internal/version.Commit=${COMMIT} -X github.com/cardkey/cardkey/internal/version.BuildTime=${BT}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o ../dist/cardkey-linux-amd64 ./cmd/cardkey
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o ../dist/cardkey-linux-arm64 ./cmd/cardkey
+          cd ../dist
+          sha256sum cardkey-linux-* > checksums.txt
+          ls -la
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: CardKey ${{ github.ref_name }}
           generate_release_notes: true
-          # 不上传 files —— 无多平台二进制
+          files: |
+            dist/cardkey-linux-amd64
+            dist/cardkey-linux-arm64
+            dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
