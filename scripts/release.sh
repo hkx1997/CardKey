@@ -67,7 +67,24 @@ COMMIT="$(git rev-parse --short HEAD)"
 BT="$(date -u +%Y-%m-%dT%H:%MZ 2>/dev/null || echo unknown)"
 LDFLAGS="-s -w -X github.com/cardkey/cardkey/internal/version.Version=${VERSION} -X github.com/cardkey/cardkey/internal/version.Commit=${COMMIT} -X github.com/cardkey/cardkey/internal/version.BuildTime=${BT}"
 
-echo "==> 构建 linux-amd64 / linux-arm64"
+echo "==> 构建前端（嵌入二进制，一键更新可刷新 UI）"
+(
+  cd frontend
+  if command -v pnpm >/dev/null 2>&1; then
+    VITE_API_MODE=http VITE_APP_VERSION="$VERSION" pnpm install --frozen-lockfile
+    VITE_API_MODE=http VITE_APP_VERSION="$VERSION" pnpm build
+  else
+    echo "需要 pnpm 以构建前端并嵌入 Release 二进制" >&2
+    exit 1
+  fi
+)
+rm -rf backend/internal/webstatic/dist
+mkdir -p backend/internal/webstatic/dist
+cp -a frontend/dist/. backend/internal/webstatic/dist/
+# 确保 embed 有 index
+test -f backend/internal/webstatic/dist/index.html || { echo "frontend dist 缺少 index.html" >&2; exit 1; }
+
+echo "==> 构建 linux-amd64 / linux-arm64（含嵌入 SPA + migrations）"
 (
   cd backend
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$DIST/cardkey-linux-amd64" ./cmd/cardkey
@@ -93,7 +110,9 @@ NOTES="$(mktemp)"
   echo ""
   echo "**界面一键更新（Docker）**：管理后台 → 版本号 → 检测更新 → 一键更新（下载 \`cardkey-linux-amd64/arm64\` 并重启）。"
   echo ""
-  echo "**数据库迁移**：\`backend/migrations/*.sql\` 经 \`go:embed\` 打进二进制；替换重启后自动执行未应用迁移（幂等，不删库）。**发版必须把新 SQL 一并提交**，勿只改业务代码漏迁移文件。"
+  echo "**数据库迁移**：\`backend/migrations/*.sql\` 经 \`go:embed\` 打进二进制；替换重启后自动执行未应用迁移（幂等，不删库）。"
+  echo ""
+  echo "**前端 SPA**：\`frontend/dist\` 同样嵌入二进制；**一键更新换 exe 后 UI/CSS 一并更新**（不再依赖镜像里旧的 /app/static）。"
   echo ""
   echo "**命令行：**"
   echo '```bash'
@@ -102,7 +121,7 @@ NOTES="$(mktemp)"
   echo "git fetch --tags && git checkout $TAG && docker compose build cardkey && docker compose up -d --no-deps cardkey"
   echo '```'
   echo ""
-  echo "Release 附带 **Linux** 二进制（amd64/arm64）供在线更新；勿使用 \`docker compose down -v\`。"
+  echo "Release 附带 **Linux** 二进制（amd64/arm64，含 SPA+迁移）供在线更新；勿使用 \`docker compose down -v\`。"
   echo ""
   echo "### 变更"
   echo ""

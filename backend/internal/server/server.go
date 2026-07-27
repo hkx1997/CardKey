@@ -11,6 +11,7 @@ import (
 	"github.com/cardkey/cardkey/internal/app"
 	"github.com/cardkey/cardkey/internal/handler"
 	"github.com/cardkey/cardkey/internal/middleware"
+	"github.com/cardkey/cardkey/internal/webstatic"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -151,7 +152,10 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 		})
 	})
 
-	if staticDir != "" {
+	// 优先嵌入式前端（一键更新换二进制即可刷新 UI）；磁盘 STATIC_DIR 作开发覆盖
+	if webstatic.HasDist() {
+		r.Handle("/*", webstatic.Handler())
+	} else if staticDir != "" {
 		if st, err := os.Stat(staticDir); err == nil && st.IsDir() {
 			fileServer(r, staticDir)
 		}

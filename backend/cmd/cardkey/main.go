@@ -146,7 +146,8 @@ func main() {
 	go func() {
 		log.Info("cardkey listening",
 			"addr", cfg.HTTPAddr,
-			"static", staticDir,
+			"staticDir", staticDir,
+			"staticEmbedded", true, // SPA 优先 go:embed；见 internal/webstatic
 			"version", version.Version,
 			"commit", version.Commit,
 			"updateMode", cfg.UpdateMode,

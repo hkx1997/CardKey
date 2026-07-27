@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("cardkey-theme") || "light";
+          var dark = t === "dark" || t === "slate" || t === "midnight";
+          var id = dark ? "dark" : "light";
+          document.documentElement.dataset.theme = id;
+          document.documentElement.classList.toggle("dark", dark);
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.svg" />
+    <title>CardKey</title>
+    <script type="module" crossorigin src="/assets/index-B-MdbP9z.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-B-dQQn84.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

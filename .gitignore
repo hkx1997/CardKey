@@ -8,6 +8,10 @@ cookies.txt
 /backend/bin/
 /frontend/dist/
 /frontend/node_modules/
+# 仅提交占位 index；完整 SPA 由 release/Docker 注入
+/backend/internal/webstatic/dist/**
+!/backend/internal/webstatic/dist/.gitkeep
+!/backend/internal/webstatic/dist/index.html
 .DS_Store
 *.log
 coverage/

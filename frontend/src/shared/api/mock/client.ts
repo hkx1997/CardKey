@@ -900,6 +900,9 @@ export const mockClient = {
       updateMode: "docker",
       startedAt: new Date().toISOString(),
       uptimeSec: 0,
+      migrationsEmbedded: true,
+      migrationsBundled: ["001_init.sql", "002_icon_value_text.sql", "003_card_content_meta.sql"],
+      migrationsApplied: ["001_init.sql", "002_icon_value_text.sql", "003_card_content_meta.sql"],
     };
   },
 

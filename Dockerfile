@@ -18,6 +18,8 @@ RUN apk add --no-cache git ca-certificates
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
+# 将前端 dist 打进二进制（webstatic embed），一键更新即可刷新 UI
+COPY --from=frontend /fe/dist /src/internal/webstatic/dist
 COPY VERSION /src/VERSION
 ARG APP_VERSION=0.1.0
 ARG GIT_COMMIT=dev
@@ -33,6 +35,7 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 WORKDIR /app
 COPY --from=backend /out/cardkey /app/cardkey
 COPY --from=backend /src/migrations /app/migrations
+# 兼容旧部署：磁盘 static 仍拷一份；运行时优先用二进制内嵌 SPA
 COPY --from=frontend /fe/dist /app/static
 RUN mkdir -p /app/data/uploads && chown -R cardkey:cardkey /app
 USER cardkey

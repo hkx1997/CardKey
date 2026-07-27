@@ -92,8 +92,13 @@ info "确保数据库/缓存容器在跑（不强制重建、不 down -v）"
 compose up -d --no-recreate postgres redis 2>/dev/null \
   || compose up -d postgres redis
 
-info "仅构建并滚动应用 cardkey（不动 postgres 数据卷）"
-compose build cardkey
+info "仅构建并滚动应用 cardkey（不动 postgres 数据卷；会重建前端静态）"
+# --no-cache 前端阶段可选：默认缓存加速；UI 不更新时加: CARDKEY_BUILD_NO_CACHE=1
+if [[ "${CARDKEY_BUILD_NO_CACHE:-}" == "1" ]]; then
+  compose build --no-cache cardkey
+else
+  compose build cardkey
+fi
 compose up -d --no-deps cardkey
 
 # 启动后快速看库是否空（有 admin 才算已安装）
@@ -120,5 +125,7 @@ fi
 
 echo ""
 green "升级完成。未执行 docker compose down -v。"
+yellow "UI 修复依赖新前端：本脚本已 docker compose build cardkey。"
+yellow "若管理端仍像旧版，强制刷新浏览器；一键更新 exe 自 v0.1.21 起已嵌入 SPA。"
 echo "危险命令（切勿）: docker compose down -v / docker volume rm / docker system prune --volumes"
 echo "数据说明: deploy/DATA_SAFETY.md"

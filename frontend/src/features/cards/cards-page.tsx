@@ -413,6 +413,7 @@ export function CardsPage() {
                       <Badge variant="secondary">
                         {card.categoryName ?? card.categorySlug}
                       </Badge>
+                      <Badge variant="outline">{cardTypeLabel(card.type)}</Badge>
                       <CardStatusBadge status={card.status} />
                     </div>
                   </div>
@@ -440,6 +441,9 @@ export function CardsPage() {
                 <p className="text-[11px] text-muted-foreground">
                   {formatDateTime(card.createdAt)}
                   {card.batchName ? ` · ${card.batchName}` : ""}
+                  {card.filename
+                    ? ` · ${card.filename}${card.size ? ` (${formatBytes(card.size)})` : ""}`
+                    : ""}
                 </p>
               </div>
             )}
