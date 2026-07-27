@@ -818,7 +818,7 @@ func (a *App) pruneReleases() {
 	if keep < 1 {
 		keep = 5
 	}
-	dir := a.UpdateReleasesDir
+	dir := a.writableReleasesDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
