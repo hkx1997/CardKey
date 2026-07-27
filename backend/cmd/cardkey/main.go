@@ -17,6 +17,7 @@ import (
 	"github.com/cardkey/cardkey/internal/ratelimit"
 	"github.com/cardkey/cardkey/internal/server"
 	"github.com/cardkey/cardkey/internal/version"
+	"github.com/cardkey/cardkey/internal/webstatic"
 	"github.com/cardkey/cardkey/migrations"
 	"github.com/redis/go-redis/v9"
 )
@@ -147,7 +148,8 @@ func main() {
 		log.Info("cardkey listening",
 			"addr", cfg.HTTPAddr,
 			"staticDir", staticDir,
-			"staticEmbedded", true, // SPA 优先 go:embed；见 internal/webstatic
+			"staticEmbedded", webstatic.HasDist(),
+			"staticEmbeddedFiles", webstatic.AssetCount(),
 			"version", version.Version,
 			"commit", version.Commit,
 			"updateMode", cfg.UpdateMode,

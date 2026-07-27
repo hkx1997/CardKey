@@ -152,9 +152,17 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 		})
 	})
 
-	// 优先嵌入式前端（一键更新换二进制即可刷新 UI）；磁盘 STATIC_DIR 作开发覆盖
+	// 嵌入 SPA 优先；磁盘 STATIC_DIR 作缺文件回退（避免 assets 被 SPA 回成 HTML）
 	if webstatic.HasDist() {
-		r.Handle("/*", webstatic.Handler())
+		disk := ""
+		if staticDir != "" {
+			if st, err := os.Stat(staticDir); err == nil && st.IsDir() {
+				disk = staticDir
+			}
+		}
+		spa := webstatic.Handler(disk)
+		r.Get("/*", spa.ServeHTTP)
+		r.Head("/*", spa.ServeHTTP)
 	} else if staticDir != "" {
 		if st, err := os.Stat(staticDir); err == nil && st.IsDir() {
 			fileServer(r, staticDir)
@@ -182,7 +190,19 @@ func fileServer(r chi.Router, dir string) {
 			} else if strings.Contains(path, string(os.PathSeparator)+"assets"+string(os.PathSeparator)) {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
+			// 显式 MIME，避免被中间层改错
+			if strings.HasSuffix(strings.ToLower(path), ".js") {
+				w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			} else if strings.HasSuffix(strings.ToLower(path), ".css") {
+				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			}
 			http.ServeFile(w, req, path)
+			return
+		}
+		// 资产路径禁止回退 HTML
+		if strings.Contains(p, "/assets/") || strings.HasSuffix(strings.ToLower(p), ".js") ||
+			strings.HasSuffix(strings.ToLower(p), ".css") {
+			http.NotFound(w, req)
 			return
 		}
 		// /favicon.ico 无静态文件时回退到内置 svg（自定义图标由前端 link 注入）
