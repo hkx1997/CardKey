@@ -145,7 +145,8 @@ export function SystemVersion({ className }: { className?: string }) {
                     {check.body.slice(0, 2000)}
                   </pre>
                 ) : null}
-                {check.mode === "binary" && check.hasUpdate ? (
+                {check.hasUpdate &&
+                (check.mode === "binary" || check.mode === "docker") ? (
                   <Button
                     size="sm"
                     className="w-full"
@@ -154,25 +155,35 @@ export function SystemVersion({ className }: { className?: string }) {
                       const ok = await confirm({
                         title: `更新到 v${check.latest}`,
                         description:
-                          "将下载二进制并重启服务（约数秒中断）。确认继续？",
+                          check.mode === "docker"
+                            ? "将从 GitHub Release 下载二进制，替换容器内程序并自动重启（约数秒中断，数据卷不受影响）。确认继续？"
+                            : "将下载二进制并重启服务（约数秒中断）。确认继续？",
                         confirmLabel: "立即更新",
                         destructive: true,
                       });
                       if (!ok) return;
                       applyM.mutate(check.latest, {
                         onSuccess: () =>
-                          toast.message("更新已提交，服务即将重启…"),
+                          toast.message(
+                            "更新已提交，服务即将重启…请稍候刷新页面",
+                          ),
                       });
                     }}
                   >
                     <ArrowUpCircle className="size-3.5" />
-                    一键更新
+                    一键更新并重启
                   </Button>
                 ) : null}
                 {check.mode === "docker" ? (
-                  <code className="block rounded border bg-background p-2 font-mono text-[10px]">
-                    docker compose pull && docker compose up -d
-                  </code>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Docker 模式与 sub2api 类似：在线替换容器内二进制并由{" "}
+                    <code className="font-mono">restart</code>{" "}
+                    策略拉起。也可用宿主机{" "}
+                    <code className="font-mono">
+                      git pull && docker compose up -d --build
+                    </code>{" "}
+                    重建镜像。
+                  </p>
                 ) : null}
               </div>
             ) : null}
@@ -199,7 +210,9 @@ export function SystemVersion({ className }: { className?: string }) {
                           </span>
                         ) : null}
                       </span>
-                      {!h.isCurrent && infoQ.data?.updateMode === "binary" ? (
+                      {!h.isCurrent &&
+                      (infoQ.data?.updateMode === "binary" ||
+                        infoQ.data?.updateMode === "docker") ? (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -232,7 +245,8 @@ export function SystemVersion({ className }: { className?: string }) {
                   ))}
                 </ul>
               )}
-              {infoQ.data?.updateMode === "binary" ? (
+              {infoQ.data?.updateMode === "binary" ||
+              infoQ.data?.updateMode === "docker" ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -241,7 +255,7 @@ export function SystemVersion({ className }: { className?: string }) {
                   onClick={async () => {
                     const ok = await confirm({
                       title: "回滚到上一备份",
-                      description: "使用 cardkey.bak 替换当前二进制并重启。",
+                      description: "使用 .bak 替换当前二进制并重启。",
                       confirmLabel: "回滚",
                       destructive: true,
                     });

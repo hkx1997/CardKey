@@ -179,10 +179,10 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 	out.ReleaseURL = htmlURL
 	out.HasUpdate = semverGreater(latest, cur)
 	switch {
-	case mode == "docker" && out.HasUpdate:
-		out.Message = "发现新版本 · Docker 模式请在宿主机执行：docker compose pull && docker compose up -d"
-	case mode == "docker":
-		out.Message = "已是最新版本"
+	case out.HasUpdate && (mode == "docker" || mode == "binary"):
+		out.Message = "发现新版本，可在界面一键更新（下载二进制并自动重启）"
+	case out.HasUpdate:
+		out.Message = "发现新版本"
 	case !out.HasUpdate:
 		out.Message = "已是最新版本"
 	}
@@ -533,9 +533,80 @@ func (a *App) ListUpdateHistory() ([]UpdateHistoryItem, error) {
 	return items, nil
 }
 
+// canApplyUpdate docker / binary 均可在线替换可执行文件后退出，由 Docker restart / systemd 拉起。
+func (a *App) canApplyUpdate() bool {
+	if !a.UpdateEnabled {
+		return false
+	}
+	switch a.UpdateMode {
+	case "binary", "docker":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) currentBinaryPath() (string, error) {
+	if p := strings.TrimSpace(a.UpdateBinaryPath); p != "" {
+		return p, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		return resolved, nil
+	}
+	return exe, nil
+}
+
+func (a *App) writableReleasesDir() string {
+	candidates := []string{a.UpdateReleasesDir}
+	if a.DataDir != "" {
+		candidates = append(candidates, filepath.Join(a.DataDir, "releases"))
+	}
+	if exe, err := a.currentBinaryPath(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "releases"))
+	}
+	candidates = append(candidates, filepath.Join(os.TempDir(), "cardkey-releases"))
+	for _, d := range candidates {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			continue
+		}
+		// 写探针
+		probe := filepath.Join(d, ".write_probe")
+		if err := os.WriteFile(probe, []byte("1"), 0o600); err != nil {
+			continue
+		}
+		_ = os.Remove(probe)
+		return d
+	}
+	return filepath.Join(os.TempDir(), "cardkey-releases")
+}
+
+// directReleaseAssetURL 不走 API，直接拼 GitHub Release 下载地址（公开仓库可用）。
+func (a *App) directReleaseAssetURL(ver string) (assetURL, assetName string) {
+	ver = normalizeVer(ver)
+	goos, arch := runtime.GOOS, runtime.GOARCH
+	assetName = fmt.Sprintf("cardkey-%s-%s", goos, arch)
+	if goos == "windows" {
+		assetName += ".exe"
+	}
+	assetURL = fmt.Sprintf(
+		"https://github.com/%s/%s/releases/download/v%s/%s",
+		a.UpdateGitHubOwner, a.UpdateGitHubRepo, ver, assetName,
+	)
+	return assetURL, assetName
+}
+
 func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) error {
-	if a.UpdateMode != "binary" || !a.UpdateEnabled {
-		return apperr.Validation("当前部署模式不支持在线应用更新")
+	// 对齐 sub2api：下载 Release 二进制 → 原子替换当前进程文件 → 退出由编排器重启
+	if !a.canApplyUpdate() {
+		return apperr.Validation("当前更新模式不支持一键应用（UPDATE_MODE=disabled）")
 	}
 	if a.UpdateGitHubOwner == "" || a.UpdateGitHubRepo == "" {
 		return apperr.Validation("未配置 GitHub 仓库")
@@ -548,103 +619,184 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 	a.updateMu.Unlock()
 
 	targetVer = normalizeVer(targetVer)
-	a.setUpdateStatus(UpdateStatus{State: "checking", Message: "获取 Release…", Progress: 5})
-	rel, err := a.fetchReleaseByTag(ctx, targetVer)
-	if err != nil {
-		// 空 tag 用 latest
-		if targetVer == "" || targetVer == "latest" {
-			rel, err = a.fetchLatestRelease(ctx)
+	if targetVer == "" || targetVer == "latest" {
+		// 用检测链路拿最新版本号（不强制 API）
+		if check, err := a.CheckUpdates(ctx); err == nil && check.Latest != "" {
+			targetVer = normalizeVer(check.Latest)
 		}
+	}
+	if targetVer == "" {
+		a.setUpdateStatus(UpdateStatus{State: "failed", Error: "无法解析目标版本"})
+		return apperr.Validation("无法解析目标版本，请先检测更新")
+	}
+
+	binPath, err := a.currentBinaryPath()
+	if err != nil {
+		return apperr.Internal("无法定位当前可执行文件: " + err.Error())
+	}
+
+	a.setUpdateStatus(UpdateStatus{State: "checking", Message: "准备下载 v" + targetVer + "…", Progress: 5})
+
+	// 1) 优先直连 Release 资产（无 API 限流）
+	assetURL, assetName := a.directReleaseAssetURL(targetVer)
+	// 2) 有 Token 时尝试 API 拿精确资产（含 checksum）
+	var rel *ghRelease
+	if strings.TrimSpace(a.UpdateGitHubToken) != "" {
+		if r, err := a.fetchReleaseByTag(ctx, targetVer); err == nil {
+			rel = r
+			if u, n, err := pickAsset(r); err == nil {
+				assetURL, assetName = u, n
+			}
+		}
+	}
+
+	// 与可执行文件同目录建临时目录，保证 rename 原子（同文件系统）
+	exeDir := filepath.Dir(binPath)
+	tempDir, err := os.MkdirTemp(exeDir, ".cardkey-update-*")
+	if err != nil {
+		// 回退 data/releases
+		relDir := a.writableReleasesDir()
+		tempDir, err = os.MkdirTemp(relDir, ".cardkey-update-*")
 		if err != nil {
 			a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-			return err
+			return apperr.Internal("无法创建临时目录（请检查 /app 或 DATA_DIR 写权限）")
 		}
-		targetVer = normalizeVer(rel.TagName)
 	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	assetURL, assetName, err := pickAsset(rel)
-	if err != nil {
-		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-		return err
-	}
-
-	if err := os.MkdirAll(a.UpdateReleasesDir, 0o755); err != nil {
-		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-		return apperr.Internal("无法创建 releases 目录")
-	}
-
-	destDir := filepath.Join(a.UpdateReleasesDir, targetVer)
-	_ = os.MkdirAll(destDir, 0o755)
-	partial := filepath.Join(destDir, "cardkey.partial")
-	final := filepath.Join(destDir, "cardkey")
+	partial := filepath.Join(tempDir, assetName+".partial")
+	finalNew := filepath.Join(tempDir, "cardkey.new")
 
 	a.setUpdateStatus(UpdateStatus{State: "downloading", Message: "下载 " + assetName, Progress: 15})
 	if err := a.downloadFile(ctx, assetURL, partial); err != nil {
-		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-		return err
+		// 再试 API 解析（匿名可能限流，但资产 URL 有时仍可用）
+		if rel == nil {
+			if r, e2 := a.fetchReleaseByTag(ctx, targetVer); e2 == nil {
+				rel = r
+			} else if r, e2 := a.fetchLatestRelease(ctx); e2 == nil {
+				rel = r
+				targetVer = normalizeVer(r.TagName)
+			}
+		}
+		if rel != nil {
+			if u, n, e3 := pickAsset(rel); e3 == nil {
+				assetURL, assetName = u, n
+				partial = filepath.Join(tempDir, assetName+".partial")
+				if err = a.downloadFile(ctx, assetURL, partial); err != nil {
+					a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
+					return apperr.Internal("下载更新失败: " + err.Error())
+				}
+			} else {
+				a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
+				return apperr.Internal("下载更新失败: " + err.Error() + "；且 Release 无匹配平台资产")
+			}
+		} else {
+			a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
+			return apperr.Internal("下载更新失败: " + err.Error() + "。请确认 GitHub 已发布 v" + targetVer + " 及对应平台资产")
+		}
 	}
 
 	a.setUpdateStatus(UpdateStatus{State: "verifying", Message: "校验文件…", Progress: 70})
-	// 可选 checksums 资产
-	if sumURL := findAssetURL(rel, "checksums.txt"); sumURL != "" {
+	if rel != nil {
+		if sumURL := findAssetURL(rel, "checksums.txt"); sumURL != "" {
+			ok, err := verifySHA256(partial, assetName, sumURL, a.UpdateGitHubToken)
+			if err != nil {
+				if a.Log != nil {
+					a.Log.Warn("checksum verify skipped", "err", err)
+				}
+			} else if !ok {
+				_ = os.Remove(partial)
+				a.setUpdateStatus(UpdateStatus{State: "failed", Error: "SHA256 校验失败"})
+				return apperr.Validation("SHA256 校验失败")
+			}
+		}
+	}
+	// 无 API 时尝试下载 checksums.txt 直链
+	if rel == nil {
+		sumURL := fmt.Sprintf(
+			"https://github.com/%s/%s/releases/download/v%s/checksums.txt",
+			a.UpdateGitHubOwner, a.UpdateGitHubRepo, targetVer,
+		)
 		ok, err := verifySHA256(partial, assetName, sumURL, a.UpdateGitHubToken)
 		if err != nil {
-			a.Log.Warn("checksum verify skipped", "err", err)
+			if a.Log != nil {
+				a.Log.Warn("checksum optional skip", "err", err)
+			}
 		} else if !ok {
 			_ = os.Remove(partial)
 			a.setUpdateStatus(UpdateStatus{State: "failed", Error: "SHA256 校验失败"})
 			return apperr.Validation("SHA256 校验失败")
 		}
 	}
-	_ = os.Chmod(partial, 0o755)
-	if err := os.Rename(partial, final); err != nil {
-		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-		return err
-	}
 
-	binPath := a.UpdateBinaryPath
-	if binPath == "" {
-		binPath = "/opt/cardkey/cardkey"
+	_ = os.Chmod(partial, 0o755)
+	if err := os.Rename(partial, finalNew); err != nil {
+		// Windows 可能 rename 失败，copy
+		if err := copyFile(partial, finalNew); err != nil {
+			a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
+			return err
+		}
+		_ = os.Remove(partial)
 	}
+	_ = os.Chmod(finalNew, 0o755)
+
+	// 归档一份到 releases 目录
+	relDir := a.writableReleasesDir()
+	archDir := filepath.Join(relDir, targetVer)
+	_ = os.MkdirAll(archDir, 0o755)
+	_ = copyFile(finalNew, filepath.Join(archDir, "cardkey"))
+
 	a.setUpdateStatus(UpdateStatus{State: "applying", Message: "切换二进制…", Progress: 85})
-	// 备份当前
-	if st, err := os.Stat(binPath); err == nil && !st.IsDir() {
-		bak := binPath + ".bak"
-		_ = copyFile(binPath, bak)
+	backupPath := binPath + ".bak"
+	_ = os.Remove(backupPath)
+	// 1) 当前 → .bak
+	if err := os.Rename(binPath, backupPath); err != nil {
+		// 不可 rename 则 copy 备份
+		_ = copyFile(binPath, backupPath)
 	}
-	if err := copyFile(final, binPath); err != nil {
-		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-		return apperr.Internal("替换二进制失败: " + err.Error())
+	// 2) 新文件 → 当前路径
+	if err := os.Rename(finalNew, binPath); err != nil {
+		// 跨设备时 copy
+		if err2 := copyFile(finalNew, binPath); err2 != nil {
+			// 尝试恢复
+			_ = os.Rename(backupPath, binPath)
+			a.setUpdateStatus(UpdateStatus{State: "failed", Error: err2.Error()})
+			return apperr.Internal("替换二进制失败: " + err2.Error())
+		}
 	}
 	_ = os.Chmod(binPath, 0o755)
 	a.pruneReleases()
-	a.Audit(ctx, "admin", actor, "update_apply", "system", "apply "+targetVer, ip)
+	a.Audit(ctx, "admin", actor, "update_apply", "system", "apply "+targetVer+" mode="+a.UpdateMode, ip)
 	a.setUpdateStatus(UpdateStatus{State: "restarting", Message: "即将重启服务…", Progress: 95})
-	// 延迟退出，让响应先返回
+	// Docker: restart policy 会拉起同容器（可写层已换二进制）；systemd 同理
 	go func() {
-		time.Sleep(800 * time.Millisecond)
-		a.Log.Info("exiting for update restart", "version", targetVer)
-		os.Exit(0) // systemd Restart=always 拉起新二进制
+		time.Sleep(900 * time.Millisecond)
+		if a.Log != nil {
+			a.Log.Info("exiting for update restart", "version", targetVer, "mode", a.UpdateMode, "bin", binPath)
+		}
+		os.Exit(0)
 	}()
 	return nil
 }
 
 func (a *App) RollbackUpdate(ctx context.Context, targetVer, actor, ip string) error {
-	if a.UpdateMode != "binary" || !a.UpdateEnabled {
-		return apperr.Validation("当前部署模式不支持回滚")
+	if !a.canApplyUpdate() {
+		return apperr.Validation("当前更新模式不支持回滚")
 	}
 	targetVer = normalizeVer(targetVer)
-	binPath := a.UpdateBinaryPath
+	binPath, err := a.currentBinaryPath()
+	if err != nil {
+		return apperr.Internal("无法定位当前可执行文件")
+	}
 	var src string
 	if targetVer == "" || targetVer == "previous" || targetVer == "bak" {
 		src = binPath + ".bak"
 	} else {
-		src = filepath.Join(a.UpdateReleasesDir, targetVer, "cardkey")
+		src = filepath.Join(a.writableReleasesDir(), targetVer, "cardkey")
 	}
 	if _, err := os.Stat(src); err != nil {
 		return apperr.NotFound("找不到可回滚版本: " + targetVer)
 	}
-	// 先备份当前
 	if st, err := os.Stat(binPath); err == nil && !st.IsDir() {
 		_ = copyFile(binPath, binPath+".pre-rollback")
 	}
@@ -655,7 +807,7 @@ func (a *App) RollbackUpdate(ctx context.Context, targetVer, actor, ip string) e
 	a.Audit(ctx, "admin", actor, "update_rollback", "system", "rollback "+targetVer, ip)
 	a.setUpdateStatus(UpdateStatus{State: "restarting", Message: "回滚完成，即将重启…", Progress: 95})
 	go func() {
-		time.Sleep(800 * time.Millisecond)
+		time.Sleep(900 * time.Millisecond)
 		os.Exit(0)
 	}()
 	return nil

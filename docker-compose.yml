@@ -68,6 +68,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # 在线更新会 os.Exit(0)，依赖策略自动拉起（容器可写层已替换二进制）
     restart: unless-stopped
 
   frontend-mock:
