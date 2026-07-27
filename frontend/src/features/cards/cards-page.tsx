@@ -446,15 +446,15 @@ export function CardsPage() {
           }
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>卡密详情</DialogTitle>
-            <DialogDescription className="font-mono text-xs">
+            <DialogDescription className="break-all font-mono text-xs">
               {detailQ.data?.code}
             </DialogDescription>
           </DialogHeader>
           {detailQ.data && (
-            <div className="space-y-3 text-sm">
+            <div className="dialog-body space-y-3 text-sm">
               <div className="flex flex-wrap gap-2">
                 <CardStatusBadge status={detailQ.data.status} />
                 <Badge variant="outline">{detailQ.data.type}</Badge>

@@ -29,13 +29,13 @@ export function SecretField({
   return (
     <div
       className={cn(
-        "flex items-stretch gap-0.5 rounded-xl border border-border bg-secondary/40 pl-3 pr-1",
+        "flex min-w-0 max-w-full items-stretch gap-0.5 overflow-hidden rounded-xl border border-border bg-secondary/40 pl-3 pr-1",
         className,
       )}
     >
       <code
         className={cn(
-          "min-w-0 flex-1 self-center break-all py-2.5 font-mono text-xs leading-relaxed sm:text-[13px]",
+          "min-w-0 flex-1 self-center overflow-x-hidden break-all py-2.5 font-mono text-xs leading-relaxed sm:text-[13px]",
           monoClassName,
         )}
       >

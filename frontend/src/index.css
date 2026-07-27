@@ -600,12 +600,66 @@ input[type="checkbox"]:disabled {
   opacity: 0.5;
 }
 
+/* —— 弹窗：全局防横向溢出（Radix Dialog） —— */
+/* 不写死 28rem：由 Tailwind max-w-* 控制；这里只保证永不超出视口 */
+[role="dialog"].dialog-content,
+.dialog-content {
+  box-sizing: border-box !important;
+  width: min(100%, calc(100vw - 2rem)) !important;
+  max-width: min(var(--dialog-max-w, 28rem), calc(100vw - 2rem)) !important;
+  min-width: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 常用 max-w 映射，避免 tailwind max-w-* 被上面 max-width 粗暴覆盖时语义丢失 */
+[role="dialog"].dialog-content.max-w-sm {
+  --dialog-max-w: 24rem;
+}
+[role="dialog"].dialog-content.max-w-md {
+  --dialog-max-w: 28rem;
+}
+[role="dialog"].dialog-content.max-w-lg {
+  --dialog-max-w: 32rem;
+}
+[role="dialog"].dialog-content.max-w-xl {
+  --dialog-max-w: 36rem;
+}
+[role="dialog"].dialog-content.max-w-2xl {
+  --dialog-max-w: 42rem;
+}
+/* 弹窗内常见撑破元素 */
+[role="dialog"] input,
+[role="dialog"] textarea,
+[role="dialog"] pre,
+[role="dialog"] code,
+[role="dialog"] [contenteditable="true"] {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+[role="dialog"] [contenteditable="true"] {
+  overflow-x: hidden !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-all !important;
+  white-space: pre-wrap !important;
+}
+/* 弹窗表单体 */
+.dialog-body {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
 /* contentEditable 空态占位 + 强制断行（防弹窗横向滚动） */
 .rich-text-editor-shell {
   min-width: 0;
   max-width: 100%;
   width: 100%;
   box-sizing: border-box;
+  overflow: hidden;
 }
 .rich-text-editor:empty:before {
   color: var(--muted-foreground);

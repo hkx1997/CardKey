@@ -58,21 +58,21 @@ export function SystemVersion({ className }: { className?: string }) {
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex min-w-0 flex-wrap items-center gap-2">
               系统更新
               <span className="font-mono text-xs font-normal text-muted-foreground">
                 v{version}
               </span>
             </DialogTitle>
-            <DialogDescription className="text-xs">
+            <DialogDescription className="break-all text-xs">
               模式 {infoQ.data?.updateMode ?? "—"} · commit{" "}
               <span className="font-mono">{infoQ.data?.commit ?? "—"}</span>
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 text-sm">
+          <div className="dialog-body space-y-4 text-sm">
             {infoQ.data?.migrationsEmbedded ? (
               <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
                 <p className="font-medium text-foreground">数据库迁移随版本包</p>

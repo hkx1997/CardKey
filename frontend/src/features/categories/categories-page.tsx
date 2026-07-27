@@ -340,14 +340,14 @@ export function CategoriesPage() {
           else setOpen(true);
         }}
       >
-        <DialogContent className="max-h-[90vh] max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>新建类别</DialogTitle>
             <DialogDescription>
               前缀决定编码形态；图标展示于兑换 Tab
             </DialogDescription>
           </DialogHeader>
-          <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
+          <div className="dialog-body space-y-3">
             <FormField label="名称" required error={errors.name}>
               <Input
                 value={name}
@@ -410,14 +410,14 @@ export function CategoriesPage() {
           if (!v) setEdit(null);
         }}
       >
-        <DialogContent className="max-h-[90vh] max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>编辑类别</DialogTitle>
-            <DialogDescription className="font-mono text-xs break-all">
+            <DialogDescription className="break-all font-mono text-xs">
               {edit?.slug} · 前缀 {edit?.codePrefix}-（不可改）
             </DialogDescription>
           </DialogHeader>
-          <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
+          <div className="dialog-body space-y-3">
             <FormField label="名称" required error={errors.name}>
               <Input value={name} onChange={(e) => setName(e.target.value)} />
             </FormField>

@@ -9,7 +9,7 @@ export const Input = React.forwardRef<
   <input
     type={type}
     className={cn(
-      "flex h-8 w-full rounded-md border border-transparent bg-secondary/55 px-3 py-1 text-xs shadow-xs",
+      "box-border flex h-8 w-full min-w-0 max-w-full rounded-md border border-transparent bg-secondary/55 px-3 py-1 text-xs shadow-xs",
       "transition-[background-color,border-color,box-shadow] duration-150",
       "placeholder:text-muted-foreground",
       "hover:bg-secondary/75 hover:border-border/60",

@@ -374,7 +374,7 @@ export function ApiKeysPage() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
               {plaintext ? "新密钥（请复制）" : "创建 API 密钥"}

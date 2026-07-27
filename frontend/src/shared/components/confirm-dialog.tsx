@@ -60,10 +60,13 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           if (!v) finish(false);
         }}
       >
-        <DialogContent className="sm:max-w-md" onOpenAutoFocus={(e) => e.preventDefault()}>
+        <DialogContent
+          className="max-w-md"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>{opts.title ?? "确认操作"}</DialogTitle>
-            <DialogDescription className="text-left">
+            <DialogDescription className="break-words text-left">
               {opts.description}
             </DialogDescription>
           </DialogHeader>

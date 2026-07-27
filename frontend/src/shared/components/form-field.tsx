@@ -21,7 +21,7 @@ export function FormField({
   htmlFor?: string;
 }) {
   return (
-    <div className={cn("space-y-1.5", className)}>
+    <div className={cn("min-w-0 max-w-full space-y-1.5", className)}>
       <Label className="text-xs" htmlFor={htmlFor}>
         {label}
         {required ? (
@@ -30,13 +30,13 @@ export function FormField({
           </span>
         ) : null}
       </Label>
-      {children}
+      <div className="min-w-0 max-w-full">{children}</div>
       {error ? (
-        <p className="text-[11px] text-destructive" role="alert">
+        <p className="break-words text-[11px] text-destructive" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="text-[11px] text-muted-foreground">{hint}</p>
+        <p className="break-words text-[11px] text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );

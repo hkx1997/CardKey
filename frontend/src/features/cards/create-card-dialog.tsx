@@ -162,7 +162,7 @@ export function CreateCardDialog({
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-h-[90vh] max-w-md">
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>新建卡密</DialogTitle>
           <DialogDescription>
@@ -170,7 +170,7 @@ export function CreateCardDialog({
           </DialogDescription>
         </DialogHeader>
         {createdCode ? (
-          <div className="space-y-3">
+          <div className="dialog-body space-y-3">
             <p className="text-sm text-muted-foreground">兑换编码</p>
             <SecretField value={createdCode} monoClassName="text-sm" />
             <FormActions>
@@ -186,7 +186,7 @@ export function CreateCardDialog({
             </FormActions>
           </div>
         ) : (
-          <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
+          <div className="dialog-body space-y-3">
             <FormField label="类别" required error={errors.categoryId}>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger>

@@ -41,19 +41,19 @@ export function IconPicker({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <div className="flex size-11 items-center justify-center rounded-lg bg-secondary/70">
+    <div className="min-w-0 max-w-full space-y-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-secondary/70">
           <CategoryIconView icon={value} size={22} />
         </div>
-        <div className="text-[11px] text-muted-foreground">
+        <div className="min-w-0 truncate text-[11px] text-muted-foreground">
           {value.kind === "image" ? "自定义图片" : `图标库 · ${value.value}`}
         </div>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="min-w-0 space-y-1.5">
         <Label className="text-xs">图标库</Label>
-        <div className="grid grid-cols-6 gap-1.5">
+        <div className="grid min-w-0 grid-cols-6 gap-1.5">
           {LUCIDE_ICON_OPTIONS.map((name) => {
             const active = value.kind === "lucide" && value.value === name;
             return (
