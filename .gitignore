@@ -23,3 +23,6 @@ scripts/verify-out/
 .docker/
 /dist/
 *.ps1.bak
+.playwright-mcp/
+scripts/check_css.py
+scripts/_check_css.py
