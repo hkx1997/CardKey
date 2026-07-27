@@ -1,4 +1,5 @@
 # CardKey 全栈：Postgres + Redis + API（端口与密码均可通过 .env 配置）
+# 项目名固定，避免换目录导致 project 前缀变化、挂上新空卷
 name: cardkey
 
 services:
@@ -9,8 +10,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cardkey}
       POSTGRES_DB: ${POSTGRES_DB:-cardkey}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    # 仅绑定本机环回，避免公网扫库（需远程访问请用 SSH 隧道）
+      # 卷名可用 .env 覆盖以挂接旧数据，见 deploy/DATA_SAFETY.md
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql/data
+        volume: {}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
@@ -18,10 +22,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    # 重启策略：升级应用时尽量不重建本服务
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - type: volume
+        source: redis_data
+        target: /data
+        volume: {}
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
@@ -29,6 +40,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    restart: unless-stopped
 
   cardkey:
     build:
@@ -38,7 +50,6 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-cardkey}:${POSTGRES_PASSWORD:-cardkey}@postgres:5432/${POSTGRES_DB:-cardkey}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      # 生产必须在 .env 中设置强随机 JWT_SECRET / CONTENT_KEY（见 deploy/docker-deploy.sh）
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       CONTENT_KEY: ${CONTENT_KEY:?set CONTENT_KEY in .env}
       BOOTSTRAP_ADMIN_USER: ${BOOTSTRAP_ADMIN_USER:-}
@@ -56,11 +67,17 @@ services:
       UPDATE_GITHUB_OWNER: ${UPDATE_GITHUB_OWNER:-hkx1997}
       UPDATE_GITHUB_REPO: ${UPDATE_GITHUB_REPO:-CardKey}
       UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
+      # 留空：自动用进程路径 os.Executable()；勿写 /opt/cardkey/...
+      UPDATE_BINARY_PATH: ${UPDATE_BINARY_PATH:-}
+      UPDATE_RELEASES_DIR: ${UPDATE_RELEASES_DIR:-}
       MIGRATIONS_DIR: /app/migrations
       STATIC_DIR: /app/static
       DATA_DIR: /app/data
     volumes:
-      - cardkey_data:/app/data
+      - type: volume
+        source: cardkey_data
+        target: /app/data
+        volume: {}
     ports:
       - "${APP_PORT:-18080}:8080"
     depends_on:
@@ -68,7 +85,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # 在线更新会 os.Exit(0)，依赖策略自动拉起（容器可写层已替换二进制）
     restart: unless-stopped
 
   frontend-mock:
@@ -82,9 +98,15 @@ services:
       - "${FRONTEND_PORT:-5173}:80"
     restart: unless-stopped
 
-# 固定卷名：避免因目录改名 / project name 变化产生新空卷导致「数据丢失」假象
+# 固定外部可识别卷名；升级时用 scripts/upgrade.sh 只重建 cardkey，不碰 postgres
+# 若你旧数据在别的卷名，在 .env 设置：
+#   POSTGRES_VOLUME_NAME=旧卷名
+#   APP_VOLUME_NAME=旧卷名
+#   REDIS_VOLUME_NAME=旧卷名
 volumes:
   postgres_data:
-    name: cardkey_postgres_data
+    name: ${POSTGRES_VOLUME_NAME:-cardkey_postgres_data}
   cardkey_data:
-    name: cardkey_app_data
+    name: ${APP_VOLUME_NAME:-cardkey_app_data}
+  redis_data:
+    name: ${REDIS_VOLUME_NAME:-cardkey_redis_data}

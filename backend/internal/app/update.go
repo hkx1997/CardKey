@@ -560,31 +560,51 @@ func (a *App) canApplyUpdate() bool {
 }
 
 func (a *App) currentBinaryPath() (string, error) {
-	// 显式配置且路径可用时才用；否则走当前进程路径（Docker 一般为 /app/cardkey）
-	if p := strings.TrimSpace(a.UpdateBinaryPath); p != "" {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, nil
+	// 始终优先当前进程真实路径（Docker 入口 /app/cardkey；勿用已失效的 UPDATE_BINARY_PATH）
+	exe, err := os.Executable()
+	if err == nil {
+		if resolved, e2 := filepath.EvalSymlinks(exe); e2 == nil {
+			exe = resolved
 		}
-		// 配置了但文件不存在：若父目录可写则仍可用（首次安装路径）
-		if dir := filepath.Dir(p); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err == nil {
-				// 探测是否可写
-				probe := filepath.Join(dir, ".ck_write_probe")
-				if err := os.WriteFile(probe, []byte("1"), 0o600); err == nil {
-					_ = os.Remove(probe)
-					return p, nil
+		if st, e2 := os.Stat(exe); e2 == nil && !st.IsDir() {
+			// 若用户显式配置了且与当前进程不同、且文件存在，才用配置（裸机自定义路径）
+			if p := strings.TrimSpace(a.UpdateBinaryPath); p != "" {
+				if st2, e3 := os.Stat(p); e3 == nil && !st2.IsDir() {
+					// 仅当配置路径就是正在运行的文件时采用（避免指到 /opt/... 空路径）
+					if sameFile(exe, p) {
+						return p, nil
+					}
+				}
+				if a.Log != nil {
+					a.Log.Warn("ignore UPDATE_BINARY_PATH (use running executable)",
+						"configured", p, "executable", exe)
 				}
 			}
+			return exe, nil
 		}
 	}
-	exe, err := os.Executable()
+	// Executable 失败时的兜底
+	if p := strings.TrimSpace(a.UpdateBinaryPath); p != "" {
+		if st, e2 := os.Stat(p); e2 == nil && !st.IsDir() {
+			return p, nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		return resolved, nil
-	}
 	return exe, nil
+}
+
+func sameFile(a, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	// 忽略符号链接差异
+	ra, ea := filepath.EvalSymlinks(a)
+	rb, eb := filepath.EvalSymlinks(b)
+	return ea == nil && eb == nil && ra == rb
 }
 
 func (a *App) writableReleasesDir() string {
