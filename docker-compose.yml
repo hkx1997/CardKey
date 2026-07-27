@@ -10,8 +10,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-cardkey}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # 仅绑定本机环回，避免公网扫库（需远程访问请用 SSH 隧道）
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -22,7 +23,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -37,9 +38,9 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-cardkey}:${POSTGRES_PASSWORD:-cardkey}@postgres:5432/${POSTGRES_DB:-cardkey}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET:-cardkey-local-dev-jwt-secret-please-rotate-xx}
-      CONTENT_KEY: ${CONTENT_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
-      # 留空 BOOTSTRAP_ADMIN_PASS → 首次打开 /admin/setup 向导创建管理员
+      # 生产必须在 .env 中设置强随机 JWT_SECRET / CONTENT_KEY（见 deploy/docker-deploy.sh）
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      CONTENT_KEY: ${CONTENT_KEY:?set CONTENT_KEY in .env}
       BOOTSTRAP_ADMIN_USER: ${BOOTSTRAP_ADMIN_USER:-}
       BOOTSTRAP_ADMIN_PASS: ${BOOTSTRAP_ADMIN_PASS:-}
       PUBLIC_REDEEM_API_KEY: ${PUBLIC_REDEEM_API_KEY:-}
@@ -47,9 +48,10 @@ services:
       APP_ENV: ${APP_ENV:-production}
       SECURE_COOKIE: ${SECURE_COOKIE:-false}
       TRUST_PROXY: ${TRUST_PROXY:-true}
-      CSRF_CHECK: ${CSRF_CHECK:-false}
+      CSRF_CHECK: ${CSRF_CHECK:-true}
+      REQUIRE_REDIS: ${REQUIRE_REDIS:-true}
       REQUIRE_REDEEM_API_KEY: ${REQUIRE_REDEEM_API_KEY:-false}
-      # docker 模式：默认启用检测更新；一键应用请用 compose pull
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       UPDATE_MODE: ${UPDATE_MODE:-docker}
       UPDATE_GITHUB_OWNER: ${UPDATE_GITHUB_OWNER:-hkx1997}
       UPDATE_GITHUB_REPO: ${UPDATE_GITHUB_REPO:-CardKey}

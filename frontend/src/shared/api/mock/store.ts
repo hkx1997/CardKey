@@ -386,7 +386,7 @@ function createDb(): MockDb {
       maskCardErrors: true,
       apiDocsEnabled: true,
       showApiDocsEntry: true,
-      exposePublicRedeemKeyInDocs: true,
+      exposePublicRedeemKeyInDocs: false,
       publicRedeemApiKey: "ck_redeem_demo_fixed_key_change_me",
       apiBasePath: "/api/v1",
       apiPublicBaseUrl: "",

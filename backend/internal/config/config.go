@@ -27,6 +27,10 @@ type Config struct {
 	RequireRedeemAPIKey bool
 	// 管理端写操作 CSRF：校验 Origin/Referer 同源（浏览器 Cookie 场景）
 	CSRFCheck bool
+	// 生产环境是否要求 Redis 可用（限流 / JWT 吊销）
+	RequireRedis bool
+	// /metrics 访问令牌；空则生产禁用、开发放行
+	MetricsToken string
 
 	// 在线更新
 	UpdateEnabled      bool
@@ -39,24 +43,56 @@ type Config struct {
 	UpdateKeepReleases int
 }
 
+// 已知不安全默认值（生产禁止）
+var (
+	deniedJWTSubstr = []string{
+		"change-me",
+		"please-rotate",
+		"local-dev",
+		"dev-jwt-secret",
+		"cardkey-local",
+	}
+	// 文档/compose 示例 CONTENT_KEY（全 0-f 重复）
+	deniedContentKeys = map[string]bool{
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": true,
+	}
+)
+
 func Load() Config {
 	env := getenv("APP_ENV", "development")
 	prod := env == "production"
-	secure := strings.EqualFold(getenv("SECURE_COOKIE", ""), "true")
-	trust := !strings.EqualFold(getenv("TRUST_PROXY", "true"), "false")
-	csrfDefault := "true"
-	if !prod {
-		csrfDefault = "false"
+
+	// SecureCookie：显式 true/false，否则生产默认 true、开发 false
+	secure := !prod
+	if v := getenv("SECURE_COOKIE", ""); v != "" {
+		secure = strings.EqualFold(v, "true")
 	}
-	// 默认启用在线更新：binary（裸机）/ docker（容器内仅检测）/ disabled
-	// UPDATE_ENABLED=false 可强制关闭；UPDATE_MODE 可显式覆盖。
-	updateMode := strings.ToLower(strings.TrimSpace(getenv("UPDATE_MODE", "binary")))
+
+	// TrustProxy：生产默认 true（通常在反代后）；开发默认 false 防伪造 IP
+	trustDefault := "false"
+	if prod {
+		trustDefault = "true"
+	}
+	trust := strings.EqualFold(getenv("TRUST_PROXY", trustDefault), "true")
+
+	// CSRF：默认开启（含生产与开发中管理写操作）
+	csrfDefault := "true"
+	csrf := strings.EqualFold(getenv("CSRF_CHECK", csrfDefault), "true")
+
+	// 在线更新默认：docker 更安全（仅检测）；binary 需显式开启
+	updateMode := strings.ToLower(strings.TrimSpace(getenv("UPDATE_MODE", "docker")))
 	if updateMode == "" {
-		updateMode = "binary"
+		updateMode = "docker"
 	}
 	if strings.EqualFold(getenv("UPDATE_ENABLED", "true"), "false") {
 		updateMode = "disabled"
 	}
+
+	requireRedisDefault := "false"
+	if prod {
+		requireRedisDefault = "true"
+	}
+
 	return Config{
 		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://cardkey:cardkey@localhost:5432/cardkey?sslmode=disable"),
@@ -65,7 +101,7 @@ func Load() Config {
 		ContentKeyHex:   getenv("CONTENT_KEY", ""),
 		BootstrapUser:   getenv("BOOTSTRAP_ADMIN_USER", "admin"),
 		BootstrapPass:   getenv("BOOTSTRAP_ADMIN_PASS", ""),
-		PublicRedeemKey: getenv("PUBLIC_REDEEM_API_KEY", "ck_redeem_demo_fixed_key_change_me"),
+		PublicRedeemKey: getenv("PUBLIC_REDEEM_API_KEY", ""),
 		CORSOrigins: splitCSV(getenv("CORS_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:18080,http://127.0.0.1:18080")),
 		StaticDir:           getenv("STATIC_DIR", ""),
@@ -75,7 +111,9 @@ func Load() Config {
 		DBMaxConns:          int32(EnvInt("DB_MAX_CONNS", 20)),
 		DBMinConns:          int32(EnvInt("DB_MIN_CONNS", 2)),
 		RequireRedeemAPIKey: strings.EqualFold(getenv("REQUIRE_REDEEM_API_KEY", "false"), "true"),
-		CSRFCheck:           strings.EqualFold(getenv("CSRF_CHECK", csrfDefault), "true"),
+		CSRFCheck:           csrf,
+		RequireRedis:        strings.EqualFold(getenv("REQUIRE_REDIS", requireRedisDefault), "true"),
+		MetricsToken:        getenv("METRICS_TOKEN", ""),
 		UpdateEnabled:       updateMode != "disabled",
 		UpdateMode:          updateMode,
 		UpdateGitHubOwner:   getenv("UPDATE_GITHUB_OWNER", "hkx1997"),
@@ -92,14 +130,29 @@ func (c Config) ValidateProduction() error {
 	if c.Env != "production" {
 		return nil
 	}
-	if len(c.JWTSecret) < 32 || strings.Contains(c.JWTSecret, "change-me") {
-		return errf("production requires strong JWT_SECRET (>=32 chars, not default)")
+	if len(c.JWTSecret) < 32 {
+		return errf("production requires JWT_SECRET >= 32 characters")
+	}
+	low := strings.ToLower(c.JWTSecret)
+	for _, s := range deniedJWTSubstr {
+		if strings.Contains(low, s) {
+			return errf("production JWT_SECRET looks like a default/dev secret; generate a random one")
+		}
 	}
 	if c.ContentKeyHex == "" {
 		return errf("production requires CONTENT_KEY (64 hex chars = 32 bytes AES)")
 	}
 	if len(c.ContentKeyHex) != 64 {
 		return errf("CONTENT_KEY must be 64 hex characters")
+	}
+	if deniedContentKeys[strings.ToLower(c.ContentKeyHex)] {
+		return errf("production CONTENT_KEY must not use the documented example key; run: openssl rand -hex 32")
+	}
+	// 校验 hex
+	for _, ch := range strings.ToLower(c.ContentKeyHex) {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
+			return errf("CONTENT_KEY must be hex")
+		}
 	}
 	return nil
 }

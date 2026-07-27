@@ -2,15 +2,16 @@ package response
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 )
 
 type envelope struct {
-	Success bool        `json:"success"`
-	Data    any         `json:"data,omitempty"`
-	Error   *errBody    `json:"error,omitempty"`
+	Success bool           `json:"success"`
+	Data    any            `json:"data,omitempty"`
+	Error   *errBody       `json:"error,omitempty"`
 	Meta    map[string]any `json:"meta,omitempty"`
 }
 
@@ -41,6 +42,9 @@ func Fail(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	// 非业务错误：记日志，对外统一文案
+	reqID := w.Header().Get("X-Request-Id")
+	slog.Error("internal error", "err", err, "requestId", reqID)
 	writeJSON(w, http.StatusInternalServerError, envelope{
 		Success: false,
 		Error:   &errBody{Code: "INTERNAL_ERROR", Message: "内部错误"},

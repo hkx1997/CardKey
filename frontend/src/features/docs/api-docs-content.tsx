@@ -13,7 +13,10 @@ import {
 } from "@/features/docs/api-endpoints";
 import { CodeBlock } from "@/shared/components/code-block";
 import { SecretField } from "@/shared/components/secret-field";
+import { resolveApiBase } from "@/shared/lib/api-base";
 import { cn } from "@/shared/lib/cn";
+
+export { resolveApiBase } from "@/shared/lib/api-base";
 
 type LangId = "curl" | "js" | "python" | "go" | "java" | "php";
 export type DocsScope = "public" | "admin";
@@ -34,35 +37,6 @@ const METHOD_CLASS: Record<string, string> = {
   PATCH: "bg-orange-500/15 text-orange-700 dark:text-orange-400",
   DELETE: "bg-red-500/15 text-red-700 dark:text-red-400",
 };
-
-/** 解析文档中展示的 API 根地址与完整 redeem URL */
-export function resolveApiBase(
-  cfg?: Pick<PublicConfig, "apiBasePath" | "apiPublicBaseUrl"> | null,
-) {
-  const path = (cfg?.apiBasePath || "/api/v1").replace(/\/$/, "") || "/api/v1";
-  const configured = (cfg?.apiPublicBaseUrl || "").replace(/\/$/, "");
-  const origin =
-    configured ||
-    (typeof window !== "undefined" ? window.location.origin : "https://host");
-  let baseRoot = origin;
-  let apiPrefix = path;
-  if (configured) {
-    try {
-      const u = new URL(configured);
-      if (u.pathname && u.pathname !== "/") {
-        baseRoot = `${u.protocol}//${u.host}`;
-        apiPrefix = u.pathname.replace(/\/$/, "") || path;
-      } else {
-        baseRoot = configured;
-        apiPrefix = path;
-      }
-    } catch {
-      baseRoot = configured;
-    }
-  }
-  const redeemUrl = `${baseRoot}${apiPrefix}/public/redeem`;
-  return { baseRoot, apiPrefix, redeemUrl };
-}
 
 function EndpointTable({
   title,

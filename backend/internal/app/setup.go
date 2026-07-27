@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cardkey/cardkey/internal/crypto"
@@ -10,6 +12,9 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/google/uuid"
 )
+
+// setupAdvisoryLockKey 进程/集群内串行化首次安装
+const setupAdvisoryLockKey int64 = 0x434152444b455931 // "CARDKEY1"
 
 type SetupStatus struct {
 	NeedsSetup bool   `json:"needsSetup"`
@@ -61,16 +66,8 @@ func (a *App) GetSetupStatus(ctx context.Context) (SetupStatus, error) {
 	return st, nil
 }
 
-// CompleteSetup 首次创建管理员；仅当 admins 表为空时可用。
+// CompleteSetup 首次创建管理员；仅当 admins 表为空时可用。使用 advisory lock 防并发双开。
 func (a *App) CompleteSetup(ctx context.Context, in SetupInput, ip string) (domain.AdminUser, string, error) {
-	needs, err := a.NeedsSetup(ctx)
-	if err != nil {
-		return domain.AdminUser{}, "", err
-	}
-	if !needs {
-		return domain.AdminUser{}, "", apperr.Conflict("系统已完成初始化，请直接登录")
-	}
-
 	user := strings.TrimSpace(in.Username)
 	pass := in.Password
 	if user == "" {
@@ -90,8 +87,28 @@ func (a *App) CompleteSetup(ctx context.Context, in SetupInput, ip string) (doma
 	if err != nil {
 		return domain.AdminUser{}, "", apperr.Internal("密码加密失败")
 	}
+
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		return domain.AdminUser{}, "", err
+	}
+	defer tx.Rollback(ctx)
+
+	// 串行化安装，避免双管理员竞态
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, setupAdvisoryLockKey); err != nil {
+		return domain.AdminUser{}, "", err
+	}
+
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM admins`).Scan(&n); err != nil {
+		return domain.AdminUser{}, "", err
+	}
+	if n > 0 {
+		return domain.AdminUser{}, "", apperr.Conflict("系统已完成初始化，请直接登录")
+	}
+
 	id := uuid.NewString()
-	_, err = a.Pool.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO admins(id, username, password_hash, must_change_password)
 		VALUES($1,$2,$3,false)`, id, user, hash)
 	if err != nil {
@@ -101,43 +118,71 @@ func (a *App) CompleteSetup(ctx context.Context, in SetupInput, ip string) (doma
 		return domain.AdminUser{}, "", err
 	}
 
-	// 站点名 / 兑换密钥
+	// 站点名 / 兑换密钥（在锁内完成核心设置）
 	s, _ := a.GetSettings(ctx)
 	if sn := strings.TrimSpace(in.SiteName); sn != "" {
 		s.SiteName = sn
 		s.DocumentTitle = sn
 		s.RedeemTitle = sn + " · 卡密兑换"
 	}
+	// 默认不在公开文档暴露密钥
+	s.ExposePublicRedeemKeyInDocs = false
 	if k := strings.TrimSpace(in.PublicRedeemAPIKey); k != "" {
 		if len(k) < 16 {
 			return domain.AdminUser{}, "", apperr.Validation("公开兑换密钥至少 16 位")
 		}
 		s.PublicRedeemApiKey = k
 	} else if s.PublicRedeemApiKey == "" || s.PublicRedeemApiKey == "ck_redeem_demo_fixed_key_change_me" {
-		plain, _ := crypto.RandomAPIKey()
+		plain, genErr := crypto.RandomAPIKey()
+		if genErr != nil {
+			return domain.AdminUser{}, "", apperr.Internal("生成兑换密钥失败")
+		}
 		s.PublicRedeemApiKey = plain
 	}
-	_ = a.SaveSettings(ctx, s)
 
-	// 同步系统兑换 key 行
+	b, err := json.Marshal(s)
+	if err != nil {
+		return domain.AdminUser{}, "", err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO settings(key, value, updated_at) VALUES('all', $1::jsonb, now())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, string(b))
+	if err != nil {
+		return domain.AdminUser{}, "", err
+	}
+
 	prefix := s.PublicRedeemApiKey
 	if len(prefix) > 14 {
 		prefix = prefix[:14]
 	}
 	var kn int
-	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE is_system_redeem_key`).Scan(&kn)
+	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE is_system_redeem_key`).Scan(&kn)
 	if kn == 0 {
-		_, _ = a.Pool.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			INSERT INTO api_keys(name, key_prefix, key_hash, scopes, is_system_redeem_key, rate_limit_rpm)
 			VALUES('系统兑换密钥', $1, $2, ARRAY['redeem:api'], true, 120)`,
 			prefix, crypto.HashAPIKey(s.PublicRedeemApiKey))
 	} else {
-		_, _ = a.Pool.Exec(ctx, `
+		_, err = tx.Exec(ctx, `
 			UPDATE api_keys SET key_prefix=$1, key_hash=$2, revoked_at=NULL
 			WHERE is_system_redeem_key=true`, prefix, crypto.HashAPIKey(s.PublicRedeemApiKey))
 	}
+	if err != nil {
+		return domain.AdminUser{}, "", err
+	}
 
-	// 演示类别（可选，默认 true）
+	if err := tx.Commit(ctx); err != nil {
+		return domain.AdminUser{}, "", err
+	}
+	a.InvalidateSettingsCache()
+	// 刷新缓存为刚保存的设置
+	a.settingsMu.Lock()
+	cp := s
+	a.settingsCache = &cp
+	a.settingsAt = time.Now()
+	a.settingsMu.Unlock()
+
+	// 演示类别（可选，默认 true）—— 安装成功后执行，失败不回滚管理员
 	seed := true
 	if in.SeedDemoCategories != nil {
 		seed = *in.SeedDemoCategories

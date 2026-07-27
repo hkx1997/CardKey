@@ -19,7 +19,7 @@ func TestPasswordHash(t *testing.T) {
 }
 
 func TestEncryptDecrypt(t *testing.T) {
-	key, err := NewAESKeyFromHex("")
+	key, err := NewAESKeyFromHex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}

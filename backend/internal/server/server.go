@@ -33,7 +33,8 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 
 	r.Get("/healthz", h.Health)
 	r.Get("/readyz", h.Ready)
-	r.Get("/metrics", app.MetricsHandler(a))
+	isProd := a.Env == "production"
+	r.Get("/metrics", middleware.ProtectMetrics(a.MetricsToken, isProd, app.MetricsHandler(a)))
 
 	// 公开上传静态资源（Logo / Favicon 等）
 	if a.DataDir != "" {

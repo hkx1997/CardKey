@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Settings } from "@/entities/types";
-import { resolveApiBase } from "@/features/docs/api-docs-content";
 import { FormField } from "@/shared/components/form-field";
 import { ImageUploadField } from "@/shared/components/image-upload-field";
 import { LoadingBlock } from "@/shared/components/loading-block";
@@ -15,15 +14,45 @@ import {
   useSettingsQuery,
   useUpdateSettings,
 } from "@/shared/hooks/use-settings";
+import { resolveApiBase } from "@/shared/lib/api-base";
 
 export function SettingsPage() {
   const q = useSettingsQuery();
   const m = useUpdateSettings();
   const [form, setForm] = useState<Settings | null>(null);
+  const [baseline, setBaseline] = useState<Settings | null>(null);
 
   useEffect(() => {
-    if (q.data) setForm(q.data);
-  }, [q.data]);
+    // 仅在无本地未保存改动时用服务端数据刷新，避免冲掉编辑中表单
+    if (!q.data) return;
+    if (!form || !baseline) {
+      setForm(q.data);
+      setBaseline(q.data);
+      return;
+    }
+    const isDirty = JSON.stringify(form) !== JSON.stringify(baseline);
+    if (!isDirty) {
+      setForm(q.data);
+      setBaseline(q.data);
+    }
+  }, [q.data]); // eslint-disable-line react-hooks/exhaustive-deps -- 故意只跟服务端数据
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!form || !baseline) return;
+      if (JSON.stringify(form) !== JSON.stringify(baseline)) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [form, baseline]);
+
+  const dirty = useMemo(() => {
+    if (!form || !baseline) return false;
+    return JSON.stringify(form) !== JSON.stringify(baseline);
+  }, [form, baseline]);
 
   if (!form) {
     return (
@@ -42,18 +71,25 @@ export function SettingsPage() {
     <PageContainer>
       <PageHeader
         title="系统设置"
-        description="品牌、兑换页、安全与 API 全局配置"
+        description={
+          dirty
+            ? "品牌、兑换页、安全与 API · 有未保存的更改"
+            : "品牌、兑换页、安全与 API 全局配置"
+        }
         actions={
           <Button
             className="interactive-press"
-            disabled={m.isPending}
+            disabled={m.isPending || !dirty}
             onClick={() =>
               m.mutate(form, {
-                onSuccess: (data) => setForm(data),
+                onSuccess: (data) => {
+                  setForm(data);
+                  setBaseline(data);
+                },
               })
             }
           >
-            保存
+            {m.isPending ? "保存中…" : dirty ? "保存" : "已保存"}
           </Button>
         }
       />
@@ -83,7 +119,7 @@ export function SettingsPage() {
             <ImageUploadField
               value={form.siteFavicon}
               onChange={(v) => set("siteFavicon", v)}
-              hint="浏览器标签图标，建议正方形"
+              hint="浏览器标签图标，建议正方形 PNG/ICO（不支持 SVG）"
             />
           </FormField>
           <FormField label="页脚" className="sm:col-span-2">
@@ -157,12 +193,12 @@ export function SettingsPage() {
             onChange={(v) => set("maskCardErrors", v)}
           />
           <ToggleRow
-            label="验证码"
+            label="验证码（预留，暂未接入兑换页）"
             checked={form.captchaEnabled}
             onChange={(v) => set("captchaEnabled", v)}
           />
           <ToggleRow
-            label="限流失败关闭"
+            label="限流失败时拒绝请求"
             checked={form.rateLimitFailClosed}
             onChange={(v) => set("rateLimitFailClosed", v)}
           />
@@ -205,10 +241,13 @@ export function SettingsPage() {
             onChange={(v) => set("showApiDocsEntry", v)}
           />
           <ToggleRow
-            label="文档展示固定密钥"
+            label="文档展示固定兑换密钥"
             checked={form.exposePublicRedeemKeyInDocs}
             onChange={(v) => set("exposePublicRedeemKeyInDocs", v)}
           />
+          <p className="text-[11px] text-muted-foreground -mt-1 px-0.5">
+            需同时开启「开放 API 文档」才会在公开 /docs 下发密钥；默认关闭。
+          </p>
           <FormField
             label="API 路径前缀"
             hint="相对路径，默认 /api/v1"

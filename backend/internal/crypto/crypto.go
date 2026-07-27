@@ -29,11 +29,8 @@ func HashAPIKey(plaintext string) []byte {
 
 func NewAESKeyFromHex(hexKey string) ([]byte, error) {
 	if hexKey == "" {
-		key := make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
-			return nil, err
-		}
-		return key, nil
+		// 禁止静默随机：重启后历史卡密密文将全部无法解密
+		return nil, fmt.Errorf("CONTENT_KEY is required (64 hex chars); generate with: openssl rand -hex 32")
 	}
 	b, err := hex.DecodeString(hexKey)
 	if err != nil {

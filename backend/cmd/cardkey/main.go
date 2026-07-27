@@ -51,13 +51,13 @@ func main() {
 	}
 
 	rdb := connectRedis(cfg.RedisURL, log)
+	if rdb == nil && cfg.RequireRedis {
+		log.Error("redis required but unavailable (set REQUIRE_REDIS=false to override)")
+		os.Exit(1)
+	}
 	aesKey, err := crypto.NewAESKeyFromHex(cfg.ContentKeyHex)
 	if err != nil {
 		log.Error("content key invalid", "err", err)
-		os.Exit(1)
-	}
-	if cfg.Env == "production" && cfg.ContentKeyHex == "" {
-		log.Error("CONTENT_KEY required in production")
 		os.Exit(1)
 	}
 
@@ -85,6 +85,7 @@ func main() {
 		CSRFCheck:           cfg.CSRFCheck,
 		Env:                 cfg.Env,
 		RequireRedeemAPIKey: cfg.RequireRedeemAPIKey,
+		MetricsToken:        cfg.MetricsToken,
 		UpdateEnabled:       cfg.UpdateEnabled,
 		UpdateMode:          cfg.UpdateMode,
 		UpdateGitHubOwner:   cfg.UpdateGitHubOwner,
@@ -132,6 +133,8 @@ func main() {
 			"version", version.Version,
 			"commit", version.Commit,
 			"updateMode", cfg.UpdateMode,
+			"csrf", cfg.CSRFCheck,
+			"trustProxy", cfg.TrustProxy,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("server error", "err", err)

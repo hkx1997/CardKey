@@ -79,10 +79,9 @@ export const mockClient = {
       apiPublicBaseUrl: s.apiPublicBaseUrl || "",
       apiDocsEnabled: docsOn,
       showApiDocsEntry: docsOn && !!s.showApiDocsEntry,
-      // 文档页固定密钥直接展示（管理端仍可用 expose 开关控制是否写入公开 config）
-      publicRedeemApiKey: docsOn
-        ? s.publicRedeemApiKey
-        : s.exposePublicRedeemKeyInDocs
+      // 仅当开放文档 + 显式允许展示时才下发密钥
+      publicRedeemApiKey:
+        docsOn && s.exposePublicRedeemKeyInDocs && s.publicRedeemApiKey
           ? s.publicRedeemApiKey
           : null,
       rateLimitIpPerMin: s.rateLimitIpPerMin,

@@ -18,7 +18,8 @@ Self-hosted high-concurrency card-key (gift code) redeem platform: public redeem
 - **API docs**: public `/docs` + admin **API Docs** page; configurable Base URL shown dynamically
 - **Branding**: Logo / Favicon upload
 - **Setup wizard**: first-run admin creation (sub2api-style)
-- **Ops**: health checks, metrics, **online updates enabled by default** (Docker check / binary apply)
+- **Ops**: health checks, protected metrics, **online updates** (Docker check + optional GitHub token)
+- **Security**: production secret denylist, strict CSRF, setup advisory lock, no public redeem key by default, no SVG uploads
 
 ## Stack
 

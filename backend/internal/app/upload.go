@@ -17,13 +17,13 @@ import (
 
 const maxUploadBytes = 2 << 20 // 2 MiB
 
+// 禁止 SVG（可内嵌脚本，存储型 XSS）；仅允许光栅图与 ICO
 var allowedImageTypes = map[string]string{
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
-	"image/gif":  ".gif",
-	"image/webp": ".webp",
-	"image/svg+xml": ".svg",
-	"image/x-icon":  ".ico",
+	"image/png":                ".png",
+	"image/jpeg":               ".jpg",
+	"image/gif":                ".gif",
+	"image/webp":               ".webp",
+	"image/x-icon":             ".ico",
 	"image/vnd.microsoft.icon": ".ico",
 }
 
@@ -57,20 +57,22 @@ func (a *App) UploadImage(ctx context.Context, r *http.Request, actor, ip string
 	}
 	ext, ok := allowedImageTypes[ct]
 	if !ok {
-		// 按扩展名兜底
+		// 按扩展名兜底（不含 svg）
 		nameExt := strings.ToLower(filepath.Ext(hdr.Filename))
 		switch nameExt {
-		case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico":
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico":
 			if nameExt == ".jpeg" {
 				ext = ".jpg"
 			} else {
 				ext = nameExt
 			}
 			ok = true
+		case ".svg":
+			return "", apperr.Validation("出于安全考虑不支持 SVG，请使用 PNG / JPEG / WebP / ICO")
 		}
 	}
 	if !ok {
-		return "", apperr.Validation("仅支持 PNG / JPEG / GIF / WebP / SVG / ICO")
+		return "", apperr.Validation("仅支持 PNG / JPEG / GIF / WebP / ICO")
 	}
 
 	dir := filepath.Join(a.DataDir, "uploads")

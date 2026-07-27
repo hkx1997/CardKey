@@ -29,6 +29,7 @@ type App struct {
 	Env          string
 
 	RequireRedeemAPIKey bool
+	MetricsToken        string
 
 	UpdateEnabled      bool
 	UpdateMode         string
@@ -102,8 +103,9 @@ func (a *App) DefaultSettings() domain.Settings {
 		MaskCardErrors:              true,
 		ApiDocsEnabled:              true,
 		ShowApiDocsEntry:            true,
-		ExposePublicRedeemKeyInDocs: true,
-		PublicRedeemApiKey:          "ck_redeem_demo_fixed_key_change_me",
+		// 默认不在公开文档暴露兑换密钥（需管理员显式开启）
+		ExposePublicRedeemKeyInDocs: false,
+		PublicRedeemApiKey:          "",
 		ApiBasePath:                 "/api/v1",
 		ApiPublicBaseUrl:            "",
 	}

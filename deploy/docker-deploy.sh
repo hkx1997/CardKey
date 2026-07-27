@@ -228,8 +228,10 @@ APP_ENV=production
 CORS_ORIGINS=http://localhost:${app_port},http://127.0.0.1:${app_port}
 SECURE_COOKIE=false
 TRUST_PROXY=true
-CSRF_CHECK=false
+CSRF_CHECK=true
+REQUIRE_REDIS=true
 REQUIRE_REDEEM_API_KEY=false
+METRICS_TOKEN=
 # 在线更新（默认启用：docker 模式仅检测 GitHub Release）
 UPDATE_MODE=docker
 UPDATE_GITHUB_OWNER=hkx1997

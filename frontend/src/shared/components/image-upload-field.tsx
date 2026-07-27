@@ -28,7 +28,11 @@ export function ImageUploadField({
 
   async function onFile(file: File | undefined) {
     if (!file) return;
-    if (!file.type.startsWith("image/") && !file.name.match(/\.(ico|svg)$/i)) {
+    if (file.name.match(/\.svg$/i) || file.type === "image/svg+xml") {
+      toast.error("出于安全考虑不支持 SVG，请使用 PNG / JPEG / WebP / ICO");
+      return;
+    }
+    if (!file.type.startsWith("image/") && !file.name.match(/\.ico$/i)) {
       toast.error("请选择图片文件");
       return;
     }
@@ -113,7 +117,7 @@ export function ImageUploadField({
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon,.ico"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/x-icon,.ico"
         className="hidden"
         onChange={(e) => void onFile(e.target.files?.[0])}
       />

@@ -38,10 +38,9 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	if s.SiteFavicon != "" {
 		fav = &s.SiteFavicon
 	}
+	// 仅当「开放文档」且「文档展示固定密钥」同时开启时才下发密钥
 	var pubKey *string
-	if s.ApiDocsEnabled {
-		pubKey = &s.PublicRedeemApiKey
-	} else if s.ExposePublicRedeemKeyInDocs {
+	if s.ApiDocsEnabled && s.ExposePublicRedeemKeyInDocs && s.PublicRedeemApiKey != "" {
 		pubKey = &s.PublicRedeemApiKey
 	}
 	docTitle := strings.TrimSpace(s.DocumentTitle)

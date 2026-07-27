@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -36,17 +37,25 @@ func SecurityHeaders(next http.Handler) http.Handler {
 
 func CORS(origins []string) func(http.Handler) http.Handler {
 	allow := map[string]bool{}
+	wildcard := false
 	for _, o := range origins {
-		allow[strings.TrimSpace(o)] = true
+		o = strings.TrimSpace(o)
+		if o == "*" {
+			// 禁止 * + credentials；忽略通配，仅显式白名单
+			wildcard = true
+			continue
+		}
+		if o != "" {
+			allow[o] = true
+		}
 	}
+	_ = wildcard
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if allow[origin] || allow["*"] {
-				if origin != "" {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Vary", "Origin")
-				}
+			if origin != "" && allow[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 				w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
@@ -85,7 +94,9 @@ func BodyLimit(maxBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
-// CSRFOrigin 对带 Cookie 的写操作校验 Origin/Referer 同源（简单 CSRF 防护）。
+// CSRFOrigin 对带 Cookie 的写操作严格校验 Origin/Referer 同源。
+// - 仅 Bearer（无 Cookie）的机器 API 跳过
+// - 浏览器 Cookie 会话：必须有 Origin 或 Referer，且 host 与请求 Host 精确匹配
 func CSRFOrigin(enabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,33 +104,85 @@ func CSRFOrigin(enabled bool) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			// Bearer 无 Cookie 场景跳过（机器 API）
-			if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-				if _, err := r.Cookie("cardkey_token"); err != nil {
-					next.ServeHTTP(w, r)
-					return
-				}
+			// 纯 Bearer、无会话 Cookie → 跳过（脚本 / API Key 场景）
+			_, hasCookie := r.Cookie("cardkey_token")
+			hasBearer := strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if hasBearer && hasCookie != nil {
+				next.ServeHTTP(w, r)
+				return
 			}
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				if ref := r.Header.Get("Referer"); ref != "" {
-					// 取 scheme://host
-					if i := strings.Index(ref[8:], "/"); i >= 0 && len(ref) > 8 {
-						// keep simple: if referer host matches Host
-					}
-					origin = ref
-				}
+			// 无 Cookie 且无 Bearer 的写操作（如公开 setup/redeem）不强制 CSRF 同源
+			// 但有 Cookie 时必须校验
+			if hasCookie != nil {
+				next.ServeHTTP(w, r)
+				return
 			}
-			if origin != "" {
-				// 允许同源：Origin 包含 Host
-				host := r.Host
-				if !strings.Contains(origin, host) {
-					response.Fail(w, apperr.Forbidden("跨站请求被拒绝"))
-					return
-				}
+
+			src := r.Header.Get("Origin")
+			if src == "" {
+				src = r.Header.Get("Referer")
+			}
+			if src == "" {
+				response.Fail(w, apperr.Forbidden("缺少 Origin/Referer，跨站请求被拒绝"))
+				return
+			}
+			if !sameOriginHost(src, r.Host) {
+				response.Fail(w, apperr.Forbidden("跨站请求被拒绝"))
+				return
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// sameOriginHost 比较 Origin/Referer 的 host 与请求 Host（忽略默认端口差异）。
+func sameOriginHost(originOrRef, reqHost string) bool {
+	u, err := url.Parse(originOrRef)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return normalizeHost(u.Host) == normalizeHost(reqHost)
+}
+
+func normalizeHost(h string) string {
+	h = strings.ToLower(strings.TrimSpace(h))
+	// 去掉默认端口
+	if strings.HasSuffix(h, ":443") && strings.Count(h, ":") == 1 {
+		h = strings.TrimSuffix(h, ":443")
+	}
+	if strings.HasSuffix(h, ":80") && strings.Count(h, ":") == 1 {
+		h = strings.TrimSuffix(h, ":80")
+	}
+	return h
+}
+
+// ProtectMetrics 保护 /metrics：配置了 token 则校验；生产未配置则 404。
+func ProtectMetrics(token string, isProd bool, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tok := strings.TrimSpace(token)
+		if tok == "" {
+			if isProd {
+				http.NotFound(w, r)
+				return
+			}
+			next(w, r)
+			return
+		}
+		got := ""
+		if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
+			got = strings.TrimSpace(strings.TrimPrefix(ah, "Bearer "))
+		}
+		if got == "" {
+			got = r.URL.Query().Get("token")
+		}
+		if got == "" {
+			got = r.Header.Get("X-Metrics-Token")
+		}
+		if got != tok {
+			response.Fail(w, apperr.Unauthorized("metrics 需要有效令牌"))
+			return
+		}
+		next(w, r)
 	}
 }
 
@@ -133,12 +196,18 @@ func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			rw := &statusWriter{ResponseWriter: w, status: 200}
 			next.ServeHTTP(rw, r)
+			reqID := r.Header.Get("X-Request-Id")
+			if reqID == "" {
+				reqID = r.Header.Get("X-Request-ID")
+			}
 			log.Info("http",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rw.status,
 				"ms", time.Since(start).Milliseconds(),
 				"ip", ClientIP(r),
+				"requestId", reqID,
+				"user", Username(r.Context()),
 			)
 		})
 	}
@@ -225,7 +294,8 @@ func ClientIP(r *http.Request) string {
 	if v, ok := r.Context().Value(CtxClientIP).(string); ok && v != "" {
 		return v
 	}
-	return httpx.ClientIP(r, true)
+	// 无中间件上下文时不盲目信任 X-Forwarded-For
+	return httpx.ClientIP(r, false)
 }
 
 func AdminID(ctx context.Context) string {
