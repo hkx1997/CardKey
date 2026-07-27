@@ -102,10 +102,6 @@ export function RedeemPage() {
       toast.error("请输入兑换编码（一行一个）");
       return;
     }
-    if (codes.length > 200) {
-      toast.error("单次最多 200 条，请分批兑换");
-      return;
-    }
 
     clearResults();
 
@@ -284,9 +280,8 @@ export function RedeemPage() {
                   ? codes.length === 1
                     ? "1 条编码"
                     : "请输入编码"
-                  : `${codes.length} 条编码（已去重）`}
+                  : `${codes.length} 条编码（已去重，不限条数）`}
               </span>
-              <span>单次最多 200</span>
             </div>
             {(selected?.slug === "vip" || selected?.slug === "cdk") && (
               <p className="text-center text-[11px] text-muted-foreground">
