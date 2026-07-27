@@ -17,3 +17,5 @@ $null
 scripts/verify-out/
 *.bak
 .docker/
+/dist/
+*.ps1.bak
