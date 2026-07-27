@@ -1,0 +1,1 @@
+fix: install Caddy via GitHub binary to avoid apt hang 

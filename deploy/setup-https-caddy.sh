@@ -78,22 +78,92 @@ if [[ "$MODE" == "origin" ]]; then
   chmod 600 "$KEY" 2>/dev/null || true
 fi
 
-# 安装 Caddy
-if ! command -v caddy >/dev/null 2>&1; then
-  info "安装 Caddy…"
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq
-    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gnupg >/dev/null
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null || true
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-    apt-get update -qq
-    apt-get install -y -qq caddy
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y caddy
-  else
-    red "请手动安装 Caddy: https://caddyserver.com/docs/install"
-    exit 1
+# 安装 Caddy（优先 GitHub 二进制，避免 cloudsmith apt 源卡住）
+install_caddy_binary() {
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) red "不支持的架构: $(uname -m)"; return 1 ;;
+  esac
+  local ver="${CADDY_VERSION:-2.9.1}"
+  local name="caddy_${ver}_linux_${arch}.tar.gz"
+  local url="https://github.com/caddyserver/caddy/releases/download/v${ver}/${name}"
+  local mirror="https://ghfast.top/${url}"
+  local tmp
+  tmp="$(mktemp -d)"
+  info "下载 Caddy 二进制 v${ver} (${arch})…"
+  if ! curl -fL --connect-timeout 15 --max-time 120 -o "$tmp/caddy.tgz" "$url" 2>/dev/null; then
+    yellow "GitHub 直连失败，尝试镜像…"
+    if ! curl -fL --connect-timeout 15 --max-time 120 -o "$tmp/caddy.tgz" "$mirror"; then
+      rm -rf "$tmp"
+      return 1
+    fi
   fi
+  tar -xzf "$tmp/caddy.tgz" -C "$tmp" caddy
+  install -m 755 "$tmp/caddy" /usr/bin/caddy
+  rm -rf "$tmp"
+  # systemd unit（若无包管理安装）
+  if [[ ! -f /etc/systemd/system/caddy.service && ! -f /lib/systemd/system/caddy.service ]]; then
+    id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy 2>/dev/null || true
+    mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy
+    chown -R caddy:caddy /var/lib/caddy /var/log/caddy 2>/dev/null || true
+    cat >/etc/systemd/system/caddy.service <<'UNIT'
+[Unit]
+Description=Caddy
+Documentation=https://caddyserver.com/docs/
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+LimitNPROC=512
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    # 允许读证书
+    mkdir -p /etc/cardkey/tls
+    # caddy 用户读 key：用 group 或 Capability 已够 bind 443；证书给 o+r key 保持 600 则用 root 跑更简单
+    # 若 key 600 且属 root，Caddy 以 caddy 用户读不到 → 改为 root 运行反代更省事
+    sed -i 's/^User=caddy/#User=caddy/' /etc/systemd/system/caddy.service
+    sed -i 's/^Group=caddy/#Group=caddy/' /etc/systemd/system/caddy.service
+    systemctl daemon-reload
+  fi
+  green "Caddy 二进制安装完成: $(caddy version 2>/dev/null | head -1)"
+  return 0
+}
+
+if ! command -v caddy >/dev/null 2>&1; then
+  info "安装 Caddy（优先二进制，避免 apt 源卡住）…"
+  if ! install_caddy_binary; then
+    yellow "二进制安装失败，尝试 apt（可能较慢，Ctrl+C 可中断后手动装）…"
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      timeout 60 apt-get update -qq || true
+      if ! timeout 180 apt-get install -y -qq caddy 2>/dev/null; then
+        red "自动安装 Caddy 失败。"
+        red "请手动执行后重跑本脚本："
+        red "  curl -fL https://github.com/caddyserver/caddy/releases/download/v2.9.1/caddy_2.9.1_linux_amd64.tar.gz -o /tmp/c.tgz"
+        red "  tar -xzf /tmp/c.tgz -C /tmp caddy && install -m 755 /tmp/caddy /usr/bin/caddy"
+        exit 1
+      fi
+    else
+      red "请手动安装 Caddy 后重跑脚本"
+      exit 1
+    fi
+  fi
+else
+  green "已检测到 Caddy: $(caddy version 2>/dev/null | head -1 || echo ok)"
 fi
 
 mkdir -p /etc/caddy
