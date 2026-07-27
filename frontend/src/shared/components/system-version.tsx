@@ -133,12 +133,11 @@ export function SystemVersion({ className }: { className?: string }) {
                     结果来自缓存（约 15 分钟内有效）
                   </p>
                 ) : null}
-                {check.tokenRecommended ? (
-                  <p className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-200/90">
-                    GitHub 接口限流。可选：在服务器{" "}
-                    <code className="font-mono">.env</code> 设置{" "}
+                {check.tokenRecommended && !check.latest ? (
+                  <p className="text-[10px] text-muted-foreground">
+                    可选配置{" "}
                     <code className="font-mono">UPDATE_GITHUB_TOKEN</code>{" "}
-                    后重启（公开仓库检测默认不需要 Token）。
+                    提高检测成功率（默认已走非 API 通道，无需 Token）。
                   </p>
                 ) : null}
                 {check.body ? (

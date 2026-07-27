@@ -37,8 +37,9 @@ type UpdateCheckResult struct {
 	TokenRecommended bool `json:"tokenRecommended,omitempty"`
 }
 
-// 检测结果缓存（降低匿名 API 60 次/小时 限流）
-const updateCheckCacheTTL = 15 * time.Minute
+// 检测结果缓存（对齐 sub2api：长缓存 + 失败用缓存降级，避免反复打 api.github.com）
+const updateCheckCacheTTL = 20 * time.Minute
+const updateRedisCacheKey = "cardkey:update_check_cache"
 
 type updateCheckCache struct {
 	at     time.Time
@@ -83,6 +84,7 @@ func (a *App) setUpdateStatus(s UpdateStatus) {
 }
 
 func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
+	// 对齐 sub2api：检测接口永不因 GitHub 限流返回 5xx；缓存优先 + 多源探测 + 软失败
 	mode := a.UpdateMode
 	if mode == "" {
 		mode = "disabled"
@@ -90,6 +92,7 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 	cur := normalizeVer(version.Version)
 	out := UpdateCheckResult{
 		Current:       cur,
+		Latest:        cur,
 		Mode:          mode,
 		Authenticated: strings.TrimSpace(a.UpdateGitHubToken) != "",
 	}
@@ -102,93 +105,319 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 		return out, nil
 	}
 
-	// 短缓存：同一进程内 15 分钟内重复点击不重复请求 GitHub
 	if cached, ok := a.getUpdateCheckCache(cur, mode); ok {
 		return cached, nil
 	}
 
-	// 1) 优先：GitHub 网页 /releases/latest 302 跳转（不走 api.github.com，不受 60/h 限流）
-	if tag, htmlURL, err := a.fetchLatestTagViaRedirect(ctx); err == nil && tag != "" {
-		latest := normalizeVer(tag)
-		out.Latest = latest
-		out.ReleaseURL = htmlURL
-		out.HasUpdate = semverGreater(latest, cur)
-		if mode == "docker" {
-			out.Message = "Docker 模式：请在宿主机执行 docker compose pull && docker compose up -d"
-		} else if !out.HasUpdate {
-			out.Message = "已是最新版本"
+	// 多源探测（全部避开匿名 api.github.com 限流）：
+	// 1) raw VERSION 文件（最稳，不走 API）
+	// 2) releases.atom
+	// 3) github.com/releases/latest 302
+	// 4) 仅当有 Token 时才调 api.github.com（有额度）
+	var latest string
+	var htmlURL string
+	var src string
+	var lastErr error
+
+	if ver, err := a.fetchVersionFromRaw(ctx); err == nil && ver != "" {
+		latest, src = ver, "raw"
+		htmlURL = fmt.Sprintf("https://github.com/%s/%s", a.UpdateGitHubOwner, a.UpdateGitHubRepo)
+	} else {
+		if err != nil {
+			lastErr = err
 		}
-		// 2) 有 Token 时再补 Release 说明（额度 5000/h，可接受）
-		if out.Authenticated {
-			if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
-				out.Body = rel.Body
-				if !rel.PublishedAt.IsZero() {
-					out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+		if tag, url, err := a.fetchLatestTagFromAtom(ctx); err == nil && tag != "" {
+			latest, htmlURL, src = tag, url, "atom"
+		} else {
+			if err != nil {
+				lastErr = err
+			}
+			if tag, url, err := a.fetchLatestTagViaRedirect(ctx); err == nil && tag != "" {
+				latest, htmlURL, src = tag, url, "redirect"
+			} else {
+				if err != nil {
+					lastErr = err
 				}
-				if rel.HTMLURL != "" {
-					out.ReleaseURL = rel.HTMLURL
+				// 有 Token 才走 API；无 Token 绝不匿名打 api.github.com（必限流）
+				if out.Authenticated {
+					if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
+						latest = normalizeVer(rel.TagName)
+						htmlURL = rel.HTMLURL
+						out.Body = rel.Body
+						if !rel.PublishedAt.IsZero() {
+							out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+						}
+						src = "api"
+					} else if err != nil {
+						lastErr = err
+					}
 				}
 			}
 		}
-		a.setUpdateCheckCache(out)
+	}
+
+	if latest == "" {
+		// 软失败：有旧缓存用旧缓存；否则返回当前版本 + 友好提示（绝不把 403 JSON 抛给前端）
+		if cached, ok := a.getUpdateCheckCacheStale(cur, mode); ok {
+			cached.Message = "远端暂不可达，显示缓存结果"
+			if lastErr != nil {
+				cached.Message += "（" + shortErr(lastErr) + "）"
+			}
+			return cached, nil
+		}
+		out.Message = "暂时无法连接 GitHub 获取版本（已跳过易限流的 API）。可稍后重试，或配置 UPDATE_GITHUB_TOKEN 提高成功率。"
+		if lastErr != nil {
+			out.Message += " 详情：" + shortErr(lastErr)
+		}
+		// 无 Token 且全部失败时才轻提示
+		out.TokenRecommended = !out.Authenticated
 		return out, nil
 	}
 
-	// 3) 回退 API（无 Token 时易 403 限流；正常路径已走 302，多数情况用不到）
-	rel, err := a.fetchLatestRelease(ctx)
-	if err != nil {
-		// 友好提示限流，不把整段 JSON 砸给用户
-		if msg, ok := friendlyGitHubErr(err); ok {
-			out.Message = msg
-			out.TokenRecommended = !out.Authenticated
-			return out, nil
-		}
-		return out, err
-	}
-	latest := normalizeVer(rel.TagName)
+	latest = normalizeVer(latest)
 	out.Latest = latest
-	out.ReleaseURL = rel.HTMLURL
-	out.Body = rel.Body
-	if !rel.PublishedAt.IsZero() {
-		out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
-	}
+	out.ReleaseURL = htmlURL
 	out.HasUpdate = semverGreater(latest, cur)
-	if mode == "docker" {
-		out.Message = "Docker 模式：请在宿主机执行 docker compose pull && docker compose up -d"
-	} else if !out.HasUpdate {
+	switch {
+	case mode == "docker" && out.HasUpdate:
+		out.Message = "发现新版本 · Docker 模式请在宿主机执行：docker compose pull && docker compose up -d"
+	case mode == "docker":
+		out.Message = "已是最新版本"
+	case !out.HasUpdate:
 		out.Message = "已是最新版本"
 	}
+	if src != "" && a.Log != nil {
+		a.Log.Info("update check ok", "source", src, "latest", latest, "current", cur)
+	}
+
+	// 有 Token 时可选补充 Release 说明（失败忽略）
+	if out.Authenticated && out.Body == "" {
+		if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
+			out.Body = rel.Body
+			if !rel.PublishedAt.IsZero() {
+				out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+			}
+			if rel.HTMLURL != "" {
+				out.ReleaseURL = rel.HTMLURL
+			}
+		}
+	}
+
 	a.setUpdateCheckCache(out)
 	return out, nil
 }
 
+func shortErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	// 去掉 GitHub 限流原文 JSON
+	if strings.Contains(strings.ToLower(s), "rate limit") || strings.Contains(s, "API rate limit") {
+		return "GitHub 限流"
+	}
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
+}
+
 func (a *App) getUpdateCheckCache(cur, mode string) (UpdateCheckResult, bool) {
+	// 内存
+	a.updateCheckCacheMu.Lock()
+	c := a.updateCheckCache
+	if c != nil && time.Since(c.at) <= updateCheckCacheTTL && c.result.Current == cur && c.result.Mode == mode && c.result.Latest != "" {
+		out := c.result
+		a.updateCheckCacheMu.Unlock()
+		out.FromCache = true
+		if out.Message == "" {
+			out.Message = "已是最新版本"
+		}
+		if !strings.Contains(out.Message, "缓存") {
+			out.Message = out.Message + " · 缓存"
+		}
+		return out, true
+	}
+	a.updateCheckCacheMu.Unlock()
+
+	// Redis（对齐 sub2api）
+	if a.RDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		raw, err := a.RDB.Get(ctx, updateRedisCacheKey).Result()
+		if err == nil && raw != "" {
+			var out UpdateCheckResult
+			if json.Unmarshal([]byte(raw), &out) == nil && out.Latest != "" && out.Mode == mode {
+				out.Current = cur
+				out.HasUpdate = semverGreater(out.Latest, cur)
+				out.FromCache = true
+				if out.Message == "" {
+					out.Message = "已是最新版本"
+				}
+				if !strings.Contains(out.Message, "缓存") {
+					out.Message += " · 缓存"
+				}
+				// 回填内存
+				a.setUpdateCheckCacheMem(out)
+				return out, true
+			}
+		}
+	}
+	return UpdateCheckResult{}, false
+}
+
+// getUpdateCheckCacheStale 失败降级：允许过期缓存（最多 24h）
+func (a *App) getUpdateCheckCacheStale(cur, mode string) (UpdateCheckResult, bool) {
 	a.updateCheckCacheMu.Lock()
 	defer a.updateCheckCacheMu.Unlock()
 	c := a.updateCheckCache
-	if c == nil || time.Since(c.at) > updateCheckCacheTTL {
+	if c == nil || c.result.Latest == "" || c.result.Mode != mode {
 		return UpdateCheckResult{}, false
 	}
-	// 当前版本变化则缓存失效
-	if c.result.Current != cur || c.result.Mode != mode {
+	if time.Since(c.at) > 24*time.Hour {
 		return UpdateCheckResult{}, false
 	}
 	out := c.result
+	out.Current = cur
+	out.HasUpdate = semverGreater(out.Latest, cur)
 	out.FromCache = true
-	if out.Message == "" {
-		out.Message = "（缓存结果，15 分钟内有效）"
-	} else if !strings.Contains(out.Message, "缓存") {
-		out.Message = out.Message + " · 缓存"
-	}
 	return out, true
 }
 
-func (a *App) setUpdateCheckCache(r UpdateCheckResult) {
+func (a *App) setUpdateCheckCacheMem(r UpdateCheckResult) {
 	a.updateCheckCacheMu.Lock()
 	defer a.updateCheckCacheMu.Unlock()
 	cp := r
 	cp.FromCache = false
 	a.updateCheckCache = &updateCheckCache{at: time.Now(), result: cp}
+}
+
+func (a *App) setUpdateCheckCache(r UpdateCheckResult) {
+	a.setUpdateCheckCacheMem(r)
+	if a.RDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		cp := r
+		cp.FromCache = false
+		if b, err := json.Marshal(cp); err == nil {
+			_ = a.RDB.Set(ctx, updateRedisCacheKey, string(b), updateCheckCacheTTL).Err()
+		}
+	}
+}
+
+// fetchVersionFromRaw 读仓库 main/VERSION（raw.githubusercontent.com，不走 API 限流）
+func (a *App) fetchVersionFromRaw(ctx context.Context) (string, error) {
+	// 依次尝试 main / master
+	refs := []string{"main", "master"}
+	client := &http.Client{Timeout: 12 * time.Second}
+	var last error
+	for _, ref := range refs {
+		u := fmt.Sprintf(
+			"https://raw.githubusercontent.com/%s/%s/%s/VERSION",
+			a.UpdateGitHubOwner, a.UpdateGitHubRepo, ref,
+		)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			last = err
+			continue
+		}
+		req.Header.Set("User-Agent", "CardKey-Updater")
+		req.Header.Set("Accept", "text/plain")
+		resp, err := client.Do(req)
+		if err != nil {
+			last = err
+			continue
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 {
+			last = fmt.Errorf("VERSION HTTP %d", resp.StatusCode)
+			continue
+		}
+		ver := normalizeVer(strings.TrimSpace(string(b)))
+		if ver == "" || strings.Contains(ver, "<") {
+			last = fmt.Errorf("invalid VERSION body")
+			continue
+		}
+		return ver, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("VERSION not found")
+	}
+	return "", last
+}
+
+// fetchLatestTagFromAtom 解析 GitHub releases.atom（不走 REST API）
+func (a *App) fetchLatestTagFromAtom(ctx context.Context) (tag, htmlURL string, err error) {
+	u := fmt.Sprintf("https://github.com/%s/%s/releases.atom", a.UpdateGitHubOwner, a.UpdateGitHubRepo)
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", "CardKey-Updater")
+	req.Header.Set("Accept", "application/atom+xml, application/xml, text/xml, */*")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", "", fmt.Errorf("atom HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", "", err
+	}
+	s := string(body)
+	// 找第一条 entry 的 link href=.../releases/tag/vX
+	const marker = "/releases/tag/"
+	idx := strings.Index(s, marker)
+	if idx < 0 {
+		// 仓库尚无 Release
+		return "", "", fmt.Errorf("no release entries in atom")
+	}
+	// 向前找 href 起始
+	start := idx
+	for start > 0 && s[start] != '"' && s[start] != '\'' {
+		start--
+	}
+	quote := byte('"')
+	if start >= 0 && (s[start] == '"' || s[start] == '\'') {
+		quote = s[start]
+		start++
+	} else {
+		start = idx
+	}
+	end := start
+	for end < len(s) && s[end] != quote && s[end] != ' ' && s[end] != '<' {
+		end++
+	}
+	link := s[start:end]
+	if !strings.HasPrefix(link, "http") {
+		if strings.HasPrefix(link, "/") {
+			link = "https://github.com" + link
+		} else {
+			link = "https://github.com/" + link
+		}
+	}
+	tag = extractReleaseTag(link)
+	if tag == "" {
+		// 尝试从 <title>v0.1.3</title> 在第一个 entry
+		if i := strings.Index(s, "<entry>"); i >= 0 {
+			sub := s[i:]
+			if t1 := strings.Index(sub, "<title>"); t1 >= 0 {
+				t2 := strings.Index(sub[t1+7:], "</title>")
+				if t2 > 0 {
+					tag = normalizeVer(strings.TrimSpace(sub[t1+7 : t1+7+t2]))
+				}
+			}
+		}
+	}
+	if tag == "" {
+		return "", "", fmt.Errorf("cannot parse atom tag")
+	}
+	return tag, link, nil
 }
 
 // fetchLatestTagViaRedirect 利用 github.com/.../releases/latest 的 302，无需 API Token。
@@ -204,8 +433,9 @@ func (a *App) fetchLatestTagViaRedirect(ctx context.Context) (tag, htmlURL strin
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("User-Agent", "CardKey-Updater")
-	req.Header.Set("Accept", "text/html")
+	// 模拟浏览器，减少被当成爬虫拦截
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; CardKey-Updater/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err
@@ -214,14 +444,12 @@ func (a *App) fetchLatestTagViaRedirect(ctx context.Context) (tag, htmlURL strin
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	loc := resp.Header.Get("Location")
-	if loc == "" && (resp.StatusCode == 200 || resp.StatusCode == 304) {
-		// 少数环境不跳转，仍可从 final URL 解析
+	if loc == "" && resp.Request != nil {
 		loc = resp.Request.URL.String()
 	}
 	if loc == "" {
 		return "", "", fmt.Errorf("no redirect from releases/latest (status %d)", resp.StatusCode)
 	}
-	// /owner/repo/releases/tag/v1.2.3 或完整 URL
 	tag = extractReleaseTag(loc)
 	if tag == "" {
 		return "", "", fmt.Errorf("cannot parse tag from %s", loc)
@@ -235,37 +463,17 @@ func (a *App) fetchLatestTagViaRedirect(ctx context.Context) (tag, htmlURL strin
 }
 
 func extractReleaseTag(loc string) string {
-	// .../releases/tag/v1.2.3 或 .../releases/tag/1.2.3
 	const marker = "/releases/tag/"
 	i := strings.Index(loc, marker)
 	if i < 0 {
 		return ""
 	}
 	tag := loc[i+len(marker):]
-	if j := strings.IndexAny(tag, "?#"); j >= 0 {
+	if j := strings.IndexAny(tag, "?#\"'"); j >= 0 {
 		tag = tag[:j]
 	}
 	tag = strings.Trim(tag, "/")
 	return tag
-}
-
-func friendlyGitHubErr(err error) (string, bool) {
-	if err == nil {
-		return "", false
-	}
-	s := err.Error()
-	low := strings.ToLower(s)
-	if strings.Contains(low, "rate limit") ||
-		strings.Contains(s, "API rate limit") ||
-		strings.Contains(s, "GITHUB_RATE_LIMIT") ||
-		strings.Contains(s, "限流") ||
-		(strings.Contains(s, "403") && strings.Contains(low, "github")) {
-		return "GitHub API 访问次数已用尽（匿名约 60 次/小时）。请在服务器 .env 设置 UPDATE_GITHUB_TOKEN（GitHub Personal Access Token），然后 docker compose up -d 重启。检测已改为优先走网页跳转，一般无需 API；配置 Token 后额度约 5000 次/小时。", true
-	}
-	if strings.Contains(s, "GITHUB_FORBIDDEN") || strings.Contains(s, "GitHub API 401") {
-		return "GitHub 拒绝访问。请检查 UPDATE_GITHUB_TOKEN 是否有效，或仓库是否公开。", true
-	}
-	return "", false
 }
 
 func (a *App) ListUpdateHistory() ([]UpdateHistoryItem, error) {
