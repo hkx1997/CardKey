@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Settings } from "@/entities/types";
-import { FormActions } from "@/shared/components/form-actions";
+import { resolveApiBase } from "@/features/docs/api-docs-content";
 import { FormField } from "@/shared/components/form-field";
 import { ImageUploadField } from "@/shared/components/image-upload-field";
 import { LoadingBlock } from "@/shared/components/loading-block";
@@ -15,7 +15,6 @@ import {
   useSettingsQuery,
   useUpdateSettings,
 } from "@/shared/hooks/use-settings";
-import { resolveApiBase } from "@/features/docs/api-docs-content";
 
 export function SettingsPage() {
   const q = useSettingsQuery();
@@ -243,20 +242,6 @@ export function SettingsPage() {
           </div>
         </div>
       </SettingsSection>
-
-      <FormActions>
-        <Button
-          className="interactive-press"
-          disabled={m.isPending}
-          onClick={() =>
-            m.mutate(form, {
-              onSuccess: (data) => setForm(data),
-            })
-          }
-        >
-          保存设置
-        </Button>
-      </FormActions>
     </PageContainer>
   );
 }
