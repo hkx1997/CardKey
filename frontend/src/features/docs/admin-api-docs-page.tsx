@@ -46,7 +46,7 @@ export function AdminApiDocsPage() {
     <PageContainer className="fade-in">
       <PageHeader
         title="API 文档"
-        description="管理端完整文档 · 含 Base URL 与固定兑换密钥"
+        description="公开接口 + 管理端认证/业务接口完整列表 · Base URL 与固定兑换密钥"
         actions={
           cfg.apiDocsEnabled ? (
             <Button variant="outline" size="sm" asChild>
@@ -58,7 +58,7 @@ export function AdminApiDocsPage() {
           ) : null
         }
       />
-      <ApiDocsContent cfg={merged} forceShowKey />
+      <ApiDocsContent cfg={merged} scope="admin" forceShowKey />
     </PageContainer>
   );
 }

@@ -45,10 +45,10 @@ export function ApiDocsPage() {
       <PageContainer narrow className="fade-in">
         <h1 className="text-2xl font-semibold tracking-tight">API 文档</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          公开兑换接口说明 · Base URL 随系统设置动态展示
+          兑换端公开接口完整列表 · 兑换请求示例 · Base URL 随系统设置动态展示
         </p>
         <div className="mt-8">
-          <ApiDocsContent cfg={cfg} />
+          <ApiDocsContent cfg={cfg} scope="public" />
         </div>
       </PageContainer>
     </div>
