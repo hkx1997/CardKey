@@ -29,6 +29,18 @@ type UpdateCheckResult struct {
 	PublishedAt string `json:"publishedAt,omitempty"`
 	Mode        string `json:"mode"`
 	Message     string `json:"message,omitempty"`
+	// FromCache 为 true 表示命中进程内缓存（避免反复打 GitHub）
+	FromCache bool `json:"fromCache,omitempty"`
+	// Authenticated 是否使用了 UPDATE_GITHUB_TOKEN
+	Authenticated bool `json:"authenticated,omitempty"`
+}
+
+// 检测结果缓存（降低匿名 API 60 次/小时 限流）
+const updateCheckCacheTTL = 15 * time.Minute
+
+type updateCheckCache struct {
+	at     time.Time
+	result UpdateCheckResult
 }
 
 type UpdateHistoryItem struct {
@@ -74,7 +86,11 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 		mode = "disabled"
 	}
 	cur := normalizeVer(version.Version)
-	out := UpdateCheckResult{Current: cur, Mode: mode}
+	out := UpdateCheckResult{
+		Current:       cur,
+		Mode:          mode,
+		Authenticated: strings.TrimSpace(a.UpdateGitHubToken) != "",
+	}
 	if mode == "disabled" || !a.UpdateEnabled {
 		out.Message = "在线更新未启用（UPDATE_MODE=disabled）"
 		return out, nil
@@ -83,8 +99,47 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 		out.Message = "未配置 UPDATE_GITHUB_OWNER / UPDATE_GITHUB_REPO"
 		return out, nil
 	}
+
+	// 短缓存：同一进程内 15 分钟内重复点击不重复请求 GitHub
+	if cached, ok := a.getUpdateCheckCache(cur, mode); ok {
+		return cached, nil
+	}
+
+	// 1) 优先：GitHub 网页 /releases/latest 302 跳转（不走 api.github.com，不受 60/h 限流）
+	if tag, htmlURL, err := a.fetchLatestTagViaRedirect(ctx); err == nil && tag != "" {
+		latest := normalizeVer(tag)
+		out.Latest = latest
+		out.ReleaseURL = htmlURL
+		out.HasUpdate = semverGreater(latest, cur)
+		if mode == "docker" {
+			out.Message = "Docker 模式：请在宿主机执行 docker compose pull && docker compose up -d"
+		} else if !out.HasUpdate {
+			out.Message = "已是最新版本"
+		}
+		// 2) 有 Token 时再补 Release 说明（额度 5000/h，可接受）
+		if out.Authenticated {
+			if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
+				out.Body = rel.Body
+				if !rel.PublishedAt.IsZero() {
+					out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+				}
+				if rel.HTMLURL != "" {
+					out.ReleaseURL = rel.HTMLURL
+				}
+			}
+		}
+		a.setUpdateCheckCache(out)
+		return out, nil
+	}
+
+	// 3) 回退 API（无 Token 时易 403 限流）
 	rel, err := a.fetchLatestRelease(ctx)
 	if err != nil {
+		// 友好提示限流，不把整段 JSON 砸给用户
+		if msg, ok := friendlyGitHubErr(err); ok {
+			out.Message = msg
+			return out, nil
+		}
 		return out, err
 	}
 	latest := normalizeVer(rel.TagName)
@@ -97,8 +152,117 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 	out.HasUpdate = semverGreater(latest, cur)
 	if mode == "docker" {
 		out.Message = "Docker 模式：请在宿主机执行 docker compose pull && docker compose up -d"
+	} else if !out.HasUpdate {
+		out.Message = "已是最新版本"
 	}
+	a.setUpdateCheckCache(out)
 	return out, nil
+}
+
+func (a *App) getUpdateCheckCache(cur, mode string) (UpdateCheckResult, bool) {
+	a.updateCheckCacheMu.Lock()
+	defer a.updateCheckCacheMu.Unlock()
+	c := a.updateCheckCache
+	if c == nil || time.Since(c.at) > updateCheckCacheTTL {
+		return UpdateCheckResult{}, false
+	}
+	// 当前版本变化则缓存失效
+	if c.result.Current != cur || c.result.Mode != mode {
+		return UpdateCheckResult{}, false
+	}
+	out := c.result
+	out.FromCache = true
+	if out.Message == "" {
+		out.Message = "（缓存结果，15 分钟内有效）"
+	} else if !strings.Contains(out.Message, "缓存") {
+		out.Message = out.Message + " · 缓存"
+	}
+	return out, true
+}
+
+func (a *App) setUpdateCheckCache(r UpdateCheckResult) {
+	a.updateCheckCacheMu.Lock()
+	defer a.updateCheckCacheMu.Unlock()
+	cp := r
+	cp.FromCache = false
+	a.updateCheckCache = &updateCheckCache{at: time.Now(), result: cp}
+}
+
+// fetchLatestTagViaRedirect 利用 github.com/.../releases/latest 的 302，无需 API Token。
+func (a *App) fetchLatestTagViaRedirect(ctx context.Context) (tag, htmlURL string, err error) {
+	u := fmt.Sprintf("https://github.com/%s/%s/releases/latest", a.UpdateGitHubOwner, a.UpdateGitHubRepo)
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", "CardKey-Updater")
+	req.Header.Set("Accept", "text/html")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+
+	loc := resp.Header.Get("Location")
+	if loc == "" && (resp.StatusCode == 200 || resp.StatusCode == 304) {
+		// 少数环境不跳转，仍可从 final URL 解析
+		loc = resp.Request.URL.String()
+	}
+	if loc == "" {
+		return "", "", fmt.Errorf("no redirect from releases/latest (status %d)", resp.StatusCode)
+	}
+	// /owner/repo/releases/tag/v1.2.3 或完整 URL
+	tag = extractReleaseTag(loc)
+	if tag == "" {
+		return "", "", fmt.Errorf("cannot parse tag from %s", loc)
+	}
+	if strings.HasPrefix(loc, "http") {
+		htmlURL = loc
+	} else {
+		htmlURL = "https://github.com" + loc
+	}
+	return tag, htmlURL, nil
+}
+
+func extractReleaseTag(loc string) string {
+	// .../releases/tag/v1.2.3 或 .../releases/tag/1.2.3
+	const marker = "/releases/tag/"
+	i := strings.Index(loc, marker)
+	if i < 0 {
+		return ""
+	}
+	tag := loc[i+len(marker):]
+	if j := strings.IndexAny(tag, "?#"); j >= 0 {
+		tag = tag[:j]
+	}
+	tag = strings.Trim(tag, "/")
+	return tag
+}
+
+func friendlyGitHubErr(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	s := err.Error()
+	low := strings.ToLower(s)
+	if strings.Contains(low, "rate limit") ||
+		strings.Contains(s, "API rate limit") ||
+		strings.Contains(s, "GITHUB_RATE_LIMIT") ||
+		strings.Contains(s, "限流") ||
+		(strings.Contains(s, "403") && strings.Contains(low, "github")) {
+		return "GitHub API 访问次数已用尽（匿名约 60 次/小时）。请在服务器 .env 设置 UPDATE_GITHUB_TOKEN（GitHub Personal Access Token），然后 docker compose up -d 重启。检测已改为优先走网页跳转，一般无需 API；配置 Token 后额度约 5000 次/小时。", true
+	}
+	if strings.Contains(s, "GITHUB_FORBIDDEN") || strings.Contains(s, "GitHub API 401") {
+		return "GitHub 拒绝访问。请检查 UPDATE_GITHUB_TOKEN 是否有效，或仓库是否公开。", true
+	}
+	return "", false
 }
 
 func (a *App) ListUpdateHistory() ([]UpdateHistoryItem, error) {
@@ -339,27 +503,46 @@ func (a *App) doGitHubJSON(ctx context.Context, url string) (*ghRelease, error) 
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "CardKey-Updater")
-	if a.UpdateGitHubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+a.UpdateGitHubToken)
+	if tok := strings.TrimSpace(a.UpdateGitHubToken); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 25 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, apperr.Internal("请求 GitHub 失败")
+		return nil, apperr.Internal("请求 GitHub 失败: " + err.Error())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
-		return nil, apperr.NotFound("未找到 Release")
+		return nil, apperr.NotFound("未找到 Release（仓库无 Release 或 tag 不存在）")
+	}
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+		msg := string(b)
+		if strings.Contains(strings.ToLower(msg), "rate limit") {
+			return nil, apperr.New(429, "GITHUB_RATE_LIMIT",
+				"GitHub API 限流：请配置 UPDATE_GITHUB_TOKEN 或稍后再试")
+		}
+		return nil, apperr.New(resp.StatusCode, "GITHUB_FORBIDDEN",
+			fmt.Sprintf("GitHub API %d（建议配置 UPDATE_GITHUB_TOKEN）: %s", resp.StatusCode, truncate(msg, 200)))
 	}
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, apperr.Internal(fmt.Sprintf("GitHub API %d: %s", resp.StatusCode, string(b)))
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+		return nil, apperr.Internal(fmt.Sprintf("GitHub API %d: %s", resp.StatusCode, truncate(string(b), 200)))
 	}
 	var rel ghRelease
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return nil, apperr.Internal("解析 Release 失败")
 	}
 	return &rel, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func (a *App) downloadFile(ctx context.Context, url, dest string) error {

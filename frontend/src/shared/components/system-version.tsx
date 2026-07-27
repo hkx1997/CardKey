@@ -106,12 +106,42 @@ export function SystemVersion({ className }: { className?: string }) {
                 {check.hasUpdate ? (
                   <p className="text-amber-600 dark:text-amber-400">
                     发现新版本
+                    {check.releaseUrl ? (
+                      <>
+                        {" · "}
+                        <a
+                          href={check.releaseUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline underline-offset-2"
+                        >
+                          查看 Release
+                        </a>
+                      </>
+                    ) : null}
                   </p>
                 ) : (
                   <p className="text-muted-foreground">
                     {check.message || "已是最新版本"}
                   </p>
                 )}
+                {check.message && check.hasUpdate ? (
+                  <p className="text-muted-foreground">{check.message}</p>
+                ) : null}
+                {check.fromCache ? (
+                  <p className="text-[10px] text-muted-foreground/80">
+                    结果来自缓存（约 15 分钟内有效，避免触发 GitHub 限流）
+                  </p>
+                ) : null}
+                {!check.authenticated ? (
+                  <p className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-200/90">
+                    未配置{" "}
+                    <code className="font-mono">UPDATE_GITHUB_TOKEN</code>
+                    。匿名访问易被限流；建议在服务器{" "}
+                    <code className="font-mono">.env</code> 填写 GitHub PAT
+                    后重启容器。
+                  </p>
+                ) : null}
                 {check.body ? (
                   <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-background/60 p-2 font-sans text-[11px] text-muted-foreground">
                     {check.body.slice(0, 2000)}

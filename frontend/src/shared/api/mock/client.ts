@@ -879,6 +879,8 @@ export const mockClient = {
       hasUpdate: false,
       mode: "docker",
       message: "Mock 模式：在线更新已启用（模拟无新版本）",
+      fromCache: false,
+      authenticated: true,
     };
   },
 

@@ -300,6 +300,8 @@ export const httpClient = {
       publishedAt?: string;
       mode: string;
       message?: string;
+      fromCache?: boolean;
+      authenticated?: boolean;
     }>("/api/v1/admin/updates/check"),
 
   updateHistory: () =>

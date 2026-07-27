@@ -48,6 +48,9 @@ type App struct {
 
 	updateMu     sync.RWMutex
 	updateStatus UpdateStatus
+	// 检测更新结果缓存（进程内）
+	updateCheckCacheMu sync.Mutex
+	updateCheckCache   *updateCheckCache
 }
 
 const settingsTTL = 30 * time.Second
