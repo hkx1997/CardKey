@@ -124,8 +124,9 @@ docker compose ps
 docker compose logs -f cardkey
 docker compose down          # 停服务（保留数据卷）
 # 切勿：docker compose down -v  （删除数据库）
-bash scripts/upgrade.sh      # 推荐升级：只重建 cardkey，不动 postgres 卷
-# 数据说明见 deploy/DATA_SAFETY.md（up --build 挂错空卷也会像「库被清空」）
+bash scripts/upgrade.sh          # 推荐升级：只重建 cardkey，不动 postgres 卷
+bash scripts/recover-volume.sh   # 若像「被重置」：挂回旧 Postgres 卷
+# 数据说明见 deploy/DATA_SAFETY.md（挂错空卷 + 安装向导演示数据 ≠ 删库）
 ```
 
 ### 生产建议
