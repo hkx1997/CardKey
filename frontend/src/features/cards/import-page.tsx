@@ -27,7 +27,10 @@ import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { useImportCards } from "@/shared/hooks/use-cards";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
+import { CARD_TYPE_OPTIONS } from "@/shared/lib/card-content";
 import { fieldErrors, importCardsSchema } from "@/shared/lib/schemas";
+
+const IMPORT_TYPES = CARD_TYPE_OPTIONS.filter((o) => o.kind === "text");
 
 export function ImportPage() {
   const catsQ = useCategoriesQuery();
@@ -93,7 +96,7 @@ export function ImportPage() {
     <PageContainer>
       <PageHeader
         title="批量导入"
-        description="必须指定类别；生成编码使用该类别独立前缀"
+        description="仅文本类（纯文本 / TXT / JSON / 账号）。图片、压缩包、PDF 等请用「新建卡密」单条上传或 API multipart"
       />
 
       <div className="grid gap-4 lg:grid-cols-5">
@@ -121,7 +124,10 @@ export function ImportPage() {
               </Select>
             </FormField>
             <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="类型">
+              <FormField
+                label="类型"
+                hint={IMPORT_TYPES.find((t) => t.id === type)?.hint}
+              >
                 <Select
                   value={type}
                   onValueChange={(v) => setType(v as CardType)}
@@ -130,10 +136,11 @@ export function ImportPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="text">纯文本</SelectItem>
-                    <SelectItem value="txt">TXT</SelectItem>
-                    <SelectItem value="account">账号信息</SelectItem>
-                    <SelectItem value="json">JSON</SelectItem>
+                    {IMPORT_TYPES.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </FormField>

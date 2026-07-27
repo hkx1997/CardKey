@@ -191,6 +191,18 @@ export function ApiDocsContent({
             >
               管理业务 · {ADMIN_API_ENDPOINTS.length}
             </a>
+            <a
+              href="#admin-create-card"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              创建卡密 · 多类型
+            </a>
+            <a
+              href="#redeem-detail"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              兑换详解
+            </a>
             <span className="self-center text-muted-foreground/80">
               合计管理接口 {adminTotal} + 公开 {PUBLIC_ENDPOINTS.length}
             </span>
@@ -267,6 +279,71 @@ export function ApiDocsContent({
               <code className="font-mono">
                 {`{ "success": false, "error": { "code", "message" } }`}
               </code>
+            </p>
+          </section>
+
+          <section
+            id="admin-create-card"
+            className="scroll-mt-20 space-y-3 border-t border-border/60 pt-6"
+          >
+            <h2 className="text-base font-semibold">管理端 · 创建卡密（多类型）</h2>
+            <p className="text-xs text-muted-foreground">
+              POST {apiPrefix}/admin/cards · 需 Cookie JWT 或{" "}
+              <code className="font-mono">admin:api</code> Bearer · 内容 ≤5MB
+            </p>
+            <h3 className="text-sm font-medium">1) JSON · 文本</h3>
+            <CodeBlock
+              lang="bash"
+              heightClass="h-40"
+              code={[
+                `curl -X POST '${baseRoot}${apiPrefix}/admin/cards' \\`,
+                `  -H 'Authorization: Bearer <ADMIN_API_KEY>' \\`,
+                `  -H 'Content-Type: application/json' \\`,
+                `  -d '{`,
+                `    "categoryId": "<uuid>",`,
+                `    "type": "text",`,
+                `    "content": "权益内容",`,
+                `    "contentEncoding": "utf8",`,
+                `    "note": ""`,
+                `  }'`,
+              ].join("\n")}
+            />
+            <h3 className="text-sm font-medium">2) JSON · 文件（Base64）</h3>
+            <CodeBlock
+              lang="bash"
+              heightClass="h-48"
+              code={[
+                `# content 为标准 Base64（不要 data: 前缀）`,
+                `B64=$(base64 -w0 package.zip)  # macOS: base64 -i package.zip`,
+                `curl -X POST '${baseRoot}${apiPrefix}/admin/cards' \\`,
+                `  -H 'Authorization: Bearer <ADMIN_API_KEY>' \\`,
+                `  -H 'Content-Type: application/json' \\`,
+                `  -d "{`,
+                `    \\"categoryId\\": \\"<uuid>\\",`,
+                `    \\"type\\": \\"zip\\",`,
+                `    \\"content\\": \\"$B64\\",`,
+                `    \\"contentEncoding\\": \\"base64\\",`,
+                `    \\"filename\\": \\"package.zip\\",`,
+                `    \\"mime\\": \\"application/zip\\"`,
+                `  }"`,
+              ].join("\n")}
+            />
+            <h3 className="text-sm font-medium">3) multipart · 上传文件（推荐）</h3>
+            <CodeBlock
+              lang="bash"
+              heightClass="h-36"
+              code={[
+                `curl -X POST '${baseRoot}${apiPrefix}/admin/cards' \\`,
+                `  -H 'Authorization: Bearer <ADMIN_API_KEY>' \\`,
+                `  -F 'categoryId=<uuid>' \\`,
+                `  -F 'type=file' \\`,
+                `  -F 'note=发货附件' \\`,
+                `  -F 'file=@./package.zip'`,
+              ].join("\n")}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              type：text | txt | json | account | image | zip | pdf | file。
+              批量导入仅支持文本类；二进制请用本接口单条创建。
             </p>
           </section>
         </>
@@ -349,7 +426,7 @@ export function ApiDocsContent({
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">成功响应</h2>
+        <h2 className="text-sm font-medium">成功响应（文本类）</h2>
         <CodeBlock
           lang="json"
           heightClass="h-56"
@@ -359,14 +436,100 @@ export function ApiDocsContent({
             `  "data": {`,
             `    "status": "success",`,
             `    "category": "${cat}",`,
+            `    "categoryName": "…",`,
             `    "code": "…",`,
             `    "type": "text",`,
-            `    "content": "…",`,
+            `    "content": "卡密明文或 JSON 字符串",`,
+            `    "contentEncoding": "utf8",`,
+            `    "filename": "….txt",`,
+            `    "mime": "text/plain; charset=utf-8",`,
+            `    "size": 12,`,
+            `    "redeemedAt": "2026-01-01T00:00:00Z"`,
+            `  }`,
+            `}`,
+          ].join("\n")}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium">成功响应（二进制：图片 / 压缩包 / PDF / 文件）</h2>
+        <p className="text-[11px] text-muted-foreground">
+          <code className="font-mono">contentEncoding</code> 为{" "}
+          <code className="font-mono">base64</code> 时，
+          <code className="font-mono">content</code>{" "}
+          为 Base64 原文（无 data: 前缀）。客户端解码后按{" "}
+          <code className="font-mono">filename</code> /{" "}
+          <code className="font-mono">mime</code> 保存即可。
+        </p>
+        <CodeBlock
+          lang="json"
+          heightClass="h-64"
+          code={[
+            `{`,
+            `  "success": true,`,
+            `  "data": {`,
+            `    "status": "success",`,
+            `    "category": "${cat}",`,
+            `    "code": "…",`,
+            `    "type": "zip",`,
+            `    "content": "UEsDB…（base64）",`,
+            `    "contentEncoding": "base64",`,
+            `    "filename": "package.zip",`,
+            `    "mime": "application/zip",`,
+            `    "size": 20480,`,
             `    "redeemedAt": "…"`,
             `  }`,
             `}`,
           ].join("\n")}
         />
+        <CodeBlock
+          lang="javascript"
+          heightClass="h-40"
+          code={[
+            `// 浏览器下载示例`,
+            `const { content, contentEncoding, filename, mime } = data;`,
+            `const bin = contentEncoding === "base64"`,
+            `  ? Uint8Array.from(atob(content), c => c.charCodeAt(0))`,
+            `  : new TextEncoder().encode(content);`,
+            `const a = document.createElement("a");`,
+            `a.href = URL.createObjectURL(new Blob([bin], { type: mime }));`,
+            `a.download = filename || "download";`,
+            `a.click();`,
+          ].join("\n")}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium">内容类型 type</h2>
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full min-w-[520px] text-left text-xs">
+            <thead className="bg-secondary/50 text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">type</th>
+                <th className="px-3 py-2 font-medium">encoding</th>
+                <th className="px-3 py-2 font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["text / txt / account", "utf8", "纯文本、账号类"],
+                ["json", "utf8", "合法 JSON 字符串"],
+                ["image", "base64", "图片，可预览"],
+                ["zip", "base64", "压缩包"],
+                ["pdf", "base64", "PDF"],
+                ["file", "base64", "任意文件 ≤5MB"],
+              ].map(([t, enc, msg]) => (
+                <tr key={t} className="border-t border-border/60">
+                  <td className="px-3 py-2 font-mono">{t}</td>
+                  <td className="px-3 py-2 font-mono text-muted-foreground">
+                    {enc}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">{msg}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="space-y-2">

@@ -36,6 +36,10 @@ import { CardContentView } from "@/shared/components/card-content-view";
 import { CategorySelect } from "@/shared/components/category-select";
 import { useConfirm } from "@/shared/components/confirm-dialog";
 import {
+  cardTypeLabel,
+  formatBytes,
+} from "@/shared/lib/card-content";
+import {
   DataTable,
   type DataTableColumn,
 } from "@/shared/components/data-table";
@@ -200,7 +204,19 @@ export function CardsPage() {
         id: "type",
         header: "类型",
         showFrom: "md",
-        cell: (card) => <Badge variant="outline">{card.type}</Badge>,
+        cell: (card) => (
+          <div className="min-w-0 space-y-0.5">
+            <Badge variant="outline">{cardTypeLabel(card.type)}</Badge>
+            {card.filename ? (
+              <p className="max-w-[140px] truncate text-[10px] text-muted-foreground">
+                {card.filename}
+                {card.size != null && card.size > 0
+                  ? ` · ${formatBytes(card.size)}`
+                  : ""}
+              </p>
+            ) : null}
+          </div>
+        ),
       },
       {
         id: "status",
@@ -457,7 +473,9 @@ export function CardsPage() {
             <div className="dialog-body space-y-3 text-sm">
               <div className="flex flex-wrap gap-2">
                 <CardStatusBadge status={detailQ.data.status} />
-                <Badge variant="outline">{detailQ.data.type}</Badge>
+                <Badge variant="outline">
+                  {cardTypeLabel(detailQ.data.type)}
+                </Badge>
                 <Badge variant="secondary">{detailQ.data.categoryName}</Badge>
               </div>
               <div className="grid grid-cols-1 gap-2 text-xs text-muted-foreground sm:grid-cols-2">

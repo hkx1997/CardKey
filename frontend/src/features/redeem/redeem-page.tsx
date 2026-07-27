@@ -29,6 +29,10 @@ import {
   usePublicConfigQuery,
   useRedeemMutation,
 } from "@/shared/hooks/use-public-config";
+import {
+  cardTypeLabel,
+  downloadRedeemContent,
+} from "@/shared/lib/card-content";
 import { CategoryIconView } from "@/shared/lib/category-icons";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -397,27 +401,52 @@ export function RedeemPage() {
               <p className="text-[11px] text-muted-foreground">
                 ZIP 内每个卡密一个结果文件，并含 _summary.txt 汇总
               </p>
-              <ul className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-border/60 p-2">
+              <ul className="max-h-80 space-y-2 overflow-y-auto rounded-xl border border-border/60 p-2">
                 {batchItems.map((item) => (
                   <li
                     key={item.code}
-                    className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-secondary/40"
+                    className="space-y-1.5 rounded-lg px-2 py-1.5 text-xs hover:bg-secondary/40"
                   >
-                    {item.ok ? (
-                      <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                    ) : (
-                      <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-mono">{item.code}</p>
-                      <p className="mt-0.5 text-[11px] text-muted-foreground">
-                        {item.ok
-                          ? item.result?.status === "already_redeemed"
-                            ? "已兑换（可查看内容）"
-                            : "兑换成功"
-                          : item.error}
-                      </p>
+                    <div className="flex items-start gap-2">
+                      {item.ok ? (
+                        <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-mono">{item.code}</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {item.ok
+                            ? item.result?.status === "already_redeemed"
+                              ? `已兑换 · ${cardTypeLabel(item.result?.type)}`
+                              : `兑换成功 · ${cardTypeLabel(item.result?.type)}`
+                            : item.error}
+                        </p>
+                      </div>
+                      {item.ok && item.result ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 shrink-0 px-2"
+                          onClick={() => downloadRedeemContent(item.result!)}
+                        >
+                          <Download className="size-3.5" />
+                          下载
+                        </Button>
+                      ) : null}
                     </div>
+                    {item.ok && item.result ? (
+                      <CardContentView
+                        compact
+                        type={item.result.type}
+                        content={item.result.content}
+                        contentEncoding={item.result.contentEncoding}
+                        filename={item.result.filename}
+                        mime={item.result.mime}
+                        size={item.result.size}
+                      />
+                    ) : null}
                   </li>
                 ))}
               </ul>
