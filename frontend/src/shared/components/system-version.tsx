@@ -130,16 +130,15 @@ export function SystemVersion({ className }: { className?: string }) {
                 ) : null}
                 {check.fromCache ? (
                   <p className="text-[10px] text-muted-foreground/80">
-                    结果来自缓存（约 15 分钟内有效，避免触发 GitHub 限流）
+                    结果来自缓存（约 15 分钟内有效）
                   </p>
                 ) : null}
-                {!check.authenticated ? (
+                {check.tokenRecommended ? (
                   <p className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-200/90">
-                    未配置{" "}
-                    <code className="font-mono">UPDATE_GITHUB_TOKEN</code>
-                    。匿名访问易被限流；建议在服务器{" "}
-                    <code className="font-mono">.env</code> 填写 GitHub PAT
-                    后重启容器。
+                    GitHub 接口限流。可选：在服务器{" "}
+                    <code className="font-mono">.env</code> 设置{" "}
+                    <code className="font-mono">UPDATE_GITHUB_TOKEN</code>{" "}
+                    后重启（公开仓库检测默认不需要 Token）。
                   </p>
                 ) : null}
                 {check.body ? (

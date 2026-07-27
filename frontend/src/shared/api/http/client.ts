@@ -302,6 +302,7 @@ export const httpClient = {
       message?: string;
       fromCache?: boolean;
       authenticated?: boolean;
+      tokenRecommended?: boolean;
     }>("/api/v1/admin/updates/check"),
 
   updateHistory: () =>

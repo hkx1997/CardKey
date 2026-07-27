@@ -31,8 +31,10 @@ type UpdateCheckResult struct {
 	Message     string `json:"message,omitempty"`
 	// FromCache 为 true 表示命中进程内缓存（避免反复打 GitHub）
 	FromCache bool `json:"fromCache,omitempty"`
-	// Authenticated 是否使用了 UPDATE_GITHUB_TOKEN
+	// Authenticated 是否使用了 UPDATE_GITHUB_TOKEN（可选，检测默认不依赖）
 	Authenticated bool `json:"authenticated,omitempty"`
+	// TokenRecommended 仅在限流/需 API 失败时为 true，前端再提示配置 Token
+	TokenRecommended bool `json:"tokenRecommended,omitempty"`
 }
 
 // 检测结果缓存（降低匿名 API 60 次/小时 限流）
@@ -132,12 +134,13 @@ func (a *App) CheckUpdates(ctx context.Context) (UpdateCheckResult, error) {
 		return out, nil
 	}
 
-	// 3) 回退 API（无 Token 时易 403 限流）
+	// 3) 回退 API（无 Token 时易 403 限流；正常路径已走 302，多数情况用不到）
 	rel, err := a.fetchLatestRelease(ctx)
 	if err != nil {
 		// 友好提示限流，不把整段 JSON 砸给用户
 		if msg, ok := friendlyGitHubErr(err); ok {
 			out.Message = msg
+			out.TokenRecommended = !out.Authenticated
 			return out, nil
 		}
 		return out, err
