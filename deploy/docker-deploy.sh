@@ -230,7 +230,11 @@ SECURE_COOKIE=false
 TRUST_PROXY=true
 CSRF_CHECK=false
 REQUIRE_REDEEM_API_KEY=false
-UPDATE_MODE=disabled
+# 在线更新（默认启用：docker 模式仅检测 GitHub Release）
+UPDATE_MODE=docker
+UPDATE_GITHUB_OWNER=hkx1997
+UPDATE_GITHUB_REPO=CardKey
+UPDATE_GITHUB_TOKEN=
 EOF
   chmod 600 .env 2>/dev/null || true
 }

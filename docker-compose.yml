@@ -49,9 +49,10 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-true}
       CSRF_CHECK: ${CSRF_CHECK:-false}
       REQUIRE_REDEEM_API_KEY: ${REQUIRE_REDEEM_API_KEY:-false}
-      UPDATE_MODE: ${UPDATE_MODE:-disabled}
-      UPDATE_GITHUB_OWNER: ${UPDATE_GITHUB_OWNER:-}
-      UPDATE_GITHUB_REPO: ${UPDATE_GITHUB_REPO:-}
+      # docker 模式：默认启用检测更新；一键应用请用 compose pull
+      UPDATE_MODE: ${UPDATE_MODE:-docker}
+      UPDATE_GITHUB_OWNER: ${UPDATE_GITHUB_OWNER:-hkx1997}
+      UPDATE_GITHUB_REPO: ${UPDATE_GITHUB_REPO:-CardKey}
       UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
       MIGRATIONS_DIR: /app/migrations
       STATIC_DIR: /app/static

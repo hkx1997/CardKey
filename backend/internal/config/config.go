@@ -48,13 +48,14 @@ func Load() Config {
 	if !prod {
 		csrfDefault = "false"
 	}
-	updateMode := getenv("UPDATE_MODE", "")
+	// 默认启用在线更新：binary（裸机）/ docker（容器内仅检测）/ disabled
+	// UPDATE_ENABLED=false 可强制关闭；UPDATE_MODE 可显式覆盖。
+	updateMode := strings.ToLower(strings.TrimSpace(getenv("UPDATE_MODE", "binary")))
 	if updateMode == "" {
-		if getenv("UPDATE_ENABLED", "") == "true" {
-			updateMode = "binary"
-		} else {
-			updateMode = "disabled"
-		}
+		updateMode = "binary"
+	}
+	if strings.EqualFold(getenv("UPDATE_ENABLED", "true"), "false") {
+		updateMode = "disabled"
 	}
 	return Config{
 		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
@@ -75,10 +76,10 @@ func Load() Config {
 		DBMinConns:          int32(EnvInt("DB_MIN_CONNS", 2)),
 		RequireRedeemAPIKey: strings.EqualFold(getenv("REQUIRE_REDEEM_API_KEY", "false"), "true"),
 		CSRFCheck:           strings.EqualFold(getenv("CSRF_CHECK", csrfDefault), "true"),
-		UpdateEnabled:       updateMode != "disabled" && updateMode != "",
+		UpdateEnabled:       updateMode != "disabled",
 		UpdateMode:          updateMode,
-		UpdateGitHubOwner:   getenv("UPDATE_GITHUB_OWNER", ""),
-		UpdateGitHubRepo:    getenv("UPDATE_GITHUB_REPO", ""),
+		UpdateGitHubOwner:   getenv("UPDATE_GITHUB_OWNER", "hkx1997"),
+		UpdateGitHubRepo:    getenv("UPDATE_GITHUB_REPO", "CardKey"),
 		UpdateGitHubToken:   getenv("UPDATE_GITHUB_TOKEN", ""),
 		UpdateReleasesDir:   getenv("UPDATE_RELEASES_DIR", "/opt/cardkey/releases"),
 		UpdateBinaryPath:    getenv("UPDATE_BINARY_PATH", "/opt/cardkey/cardkey"),

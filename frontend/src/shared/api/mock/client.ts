@@ -863,7 +863,7 @@ export const mockClient = {
       goVersion: "mock",
       goos: "browser",
       goarch: "wasm",
-      updateMode: "disabled",
+      updateMode: "docker",
       startedAt: new Date().toISOString(),
       uptimeSec: 0,
     };
@@ -876,8 +876,8 @@ export const mockClient = {
       current: "0.1.0-mock",
       latest: "0.1.0-mock",
       hasUpdate: false,
-      mode: "disabled",
-      message: "Mock 模式无在线更新",
+      mode: "docker",
+      message: "Mock 模式：在线更新已启用（模拟无新版本）",
     };
   },
 
