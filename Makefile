@@ -23,7 +23,6 @@ test: frontend-test backend-test
 dev-frontend:
 	cd frontend && pnpm install && pnpm dev
 
-# 正式发版：bash scripts/release.sh [version]
-# 例：make release   或  bash scripts/release.sh 0.1.5
+# 正式发版（仅 tag + Release 说明，无多平台包）：bash scripts/release.sh [version]
 release:
 	bash scripts/release.sh

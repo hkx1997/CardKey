@@ -669,7 +669,7 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 
 	a.setUpdateStatus(UpdateStatus{State: "downloading", Message: "下载 " + assetName, Progress: 15})
 	if err := a.downloadFile(ctx, assetURL, partial); err != nil {
-		// 再试 API 解析（匿名可能限流，但资产 URL 有时仍可用）
+		// 再试 API 解析（仅当 Release 仍挂有资产时；默认发版已不再附带多平台包）
 		if rel == nil {
 			if r, e2 := a.fetchReleaseByTag(ctx, targetVer); e2 == nil {
 				rel = r
@@ -687,12 +687,12 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 					return apperr.Internal("下载更新失败: " + err.Error())
 				}
 			} else {
-				a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-				return apperr.Internal("下载更新失败: " + err.Error() + "；且 Release 无匹配平台资产")
+				a.setUpdateStatus(UpdateStatus{State: "failed", Error: "release has no assets"})
+				return apperr.Validation("该版本 Release 未附带二进制。Docker 请在服务器执行：bash scripts/upgrade.sh（或 git pull && docker compose up -d --build）")
 			}
 		} else {
 			a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
-			return apperr.Internal("下载更新失败: " + err.Error() + "。请确认 GitHub 已发布 v" + targetVer + " 及对应平台资产")
+			return apperr.Validation("无法下载更新包（发版默认不附带多平台二进制）。请执行：bash scripts/upgrade.sh")
 		}
 	}
 

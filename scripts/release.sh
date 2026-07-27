@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# 正式发版：校验 VERSION → 打 tag → 构建多平台二进制 → 创建 GitHub Release
+# 正式发版（轻量）：校验 VERSION → 推送 main → 打 tag → 创建 GitHub Release 说明
+# 不构建、不上传各平台二进制（Docker 部署用源码/镜像升级即可）
+#
 # 用法：
 #   bash scripts/release.sh           # 按 VERSION 文件发版
-#   bash scripts/release.sh 0.1.5     # 先写入 VERSION 再发版
+#   bash scripts/release.sh 0.1.7     # 先写入 VERSION 再发版
 #   bash scripts/release.sh --dry-run
 set -euo pipefail
 
@@ -34,16 +36,11 @@ if ! command -v gh >/dev/null 2>&1; then
   echo "需要 GitHub CLI: https://cli.github.com/" >&2
   exit 1
 fi
-if ! command -v go >/dev/null 2>&1; then
-  echo "需要 Go toolchain" >&2
-  exit 1
-fi
 
-# 工作区须干净（允许仅 VERSION 待提交时由本脚本提交）
-if [[ -n "$(git status --porcelain | grep -v '^ M VERSION$' | grep -v '^M  VERSION$' | grep -v '^M VERSION$' || true)" ]]; then
-  # 若只有 VERSION 变更可继续；有其他改动则中止
-  dirty="$(git status --porcelain)"
-  if echo "$dirty" | grep -vE '^[ M][ M] VERSION$' | grep -q .; then
+dirty="$(git status --porcelain)"
+if [[ -n "$dirty" ]]; then
+  # 允许仅 VERSION 未提交；其它改动须先提交
+  if echo "$dirty" | grep -vE '^[ MARC][ MD] VERSION$|^[MARC]  VERSION$|^ M VERSION$|^M  VERSION$|^M VERSION$' | grep -q .; then
     echo "工作区有未提交改动，请先提交再发版：" >&2
     git status --short >&2
     exit 1
@@ -54,85 +51,42 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
   echo "本地 tag $TAG 已存在" >&2
   exit 1
 fi
-if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+if git ls-remote --tags origin "refs/tags/$TAG" 2>/dev/null | grep -q .; then
   echo "远端 tag $TAG 已存在" >&2
   exit 1
 fi
 
-echo "==> 版本 $VERSION  tag $TAG"
+echo "==> 版本 $VERSION  tag $TAG（无二进制资产）"
 
-# 确保 VERSION 已提交
 if ! git diff --quiet VERSION 2>/dev/null || ! git diff --cached --quiet VERSION 2>/dev/null; then
   git add VERSION
   git commit -m "chore: bump version to $VERSION" || true
 fi
 
-# 同步 README 无要求；记录 CHANGELOG 片段
 NOTES="$(mktemp)"
 {
   echo "## CardKey $TAG"
   echo ""
-  echo "### 安装 / 升级"
+  echo "### 升级（Docker 推荐）"
   echo ""
   echo '```bash'
+  echo "cd /path/to/CardKey"
   echo "git fetch --tags && git checkout $TAG"
-  echo "# 或 Docker："
-  echo "git pull && docker compose up -d --build"
+  echo "docker compose up -d --build"
+  echo "# 或：bash scripts/upgrade.sh"
   echo '```'
   echo ""
-  echo "### 变更"
+  echo "本 Release **不附带**各平台二进制包；数据卷请勿使用 \`docker compose down -v\`。"
   echo ""
-  git log -15 --pretty=format:'- %s (%h)' "$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~20)"..HEAD 2>/dev/null || git log -10 --pretty=format:'- %s (%h)'
+  echo "### 变更摘要"
   echo ""
+  git log -12 --pretty=format:'- %s (%h)' "$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~15)"..HEAD 2>/dev/null \
+    || git log -8 --pretty=format:'- %s (%h)'
   echo ""
-  echo "### 校验"
-  echo ""
-  echo "下载后请核对 checksums.txt 中的 SHA256。"
 } >"$NOTES"
 
-DIST="$ROOT/dist/release-$VERSION"
-rm -rf "$DIST"
-mkdir -p "$DIST"
-
-build_one() {
-  local goos="$1" goarch="$2" out="$3"
-  echo "  build $out"
-  (
-    cd backend
-    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
-      -ldflags="-s -w -X github.com/cardkey/cardkey/internal/version.Version=${VERSION} -X github.com/cardkey/cardkey/internal/version.Commit=$(git rev-parse --short HEAD) -X github.com/cardkey/cardkey/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%MZ)" \
-      -o "$DIST/$out" ./cmd/cardkey
-  )
-}
-
-echo "==> 构建二进制"
-build_one linux amd64 "cardkey-linux-amd64"
-build_one linux arm64 "cardkey-linux-arm64"
-build_one darwin amd64 "cardkey-darwin-amd64"
-build_one darwin arm64 "cardkey-darwin-arm64"
-build_one windows amd64 "cardkey-windows-amd64.exe"
-
-echo "==> checksums"
-(
-  cd "$DIST"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum cardkey-* > checksums.txt
-  else
-    # Windows Git Bash / macOS
-    for f in cardkey-*; do
-      if command -v shasum >/dev/null 2>&1; then
-        echo "$(shasum -a 256 "$f" | awk '{print $1}')  $f"
-      else
-        echo "$(certutil -hashfile "$f" SHA256 2>/dev/null | awk 'NR==2 {print tolower($0)}')  $f"
-      fi
-    done > checksums.txt
-  fi
-  cat checksums.txt
-)
-
 if [[ "$DRY" == "1" ]]; then
-  echo "[dry-run] 跳过 push/tag/release"
-  echo "产物目录: $DIST"
+  echo "[dry-run] 将创建 tag $TAG，不构建二进制"
   cat "$NOTES"
   rm -f "$NOTES"
   exit 0
@@ -145,16 +99,10 @@ echo "==> tag $TAG"
 git tag -a "$TAG" -m "CardKey $TAG"
 git push origin "$TAG"
 
-echo "==> GitHub Release"
+echo "==> GitHub Release（仅说明，无 assets）"
 gh release create "$TAG" \
   --title "CardKey $TAG" \
-  --notes-file "$NOTES" \
-  "$DIST"/cardkey-linux-amd64 \
-  "$DIST"/cardkey-linux-arm64 \
-  "$DIST"/cardkey-darwin-amd64 \
-  "$DIST"/cardkey-darwin-arm64 \
-  "$DIST"/cardkey-windows-amd64.exe \
-  "$DIST"/checksums.txt
+  --notes-file "$NOTES"
 
 rm -f "$NOTES"
 echo ""

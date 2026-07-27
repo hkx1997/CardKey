@@ -145,44 +145,55 @@ export function SystemVersion({ className }: { className?: string }) {
                     {check.body.slice(0, 2000)}
                   </pre>
                 ) : null}
-                {check.hasUpdate &&
-                (check.mode === "binary" || check.mode === "docker") ? (
-                  <Button
-                    size="sm"
-                    className="w-full"
-                    loading={applyM.isPending}
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: `更新到 v${check.latest}`,
-                        description:
-                          check.mode === "docker"
-                            ? "将从 GitHub Release 下载二进制，替换容器内程序并自动重启（约数秒中断，数据卷不受影响）。确认继续？"
-                            : "将下载二进制并重启服务（约数秒中断）。确认继续？",
-                        confirmLabel: "立即更新",
-                        destructive: true,
-                      });
-                      if (!ok) return;
-                      applyM.mutate(check.latest, {
-                        onSuccess: () =>
-                          toast.message(
-                            "更新已提交，服务即将重启…请稍候刷新页面",
-                          ),
-                      });
-                    }}
-                  >
-                    <ArrowUpCircle className="size-3.5" />
-                    一键更新并重启
-                  </Button>
+                {check.hasUpdate ? (
+                  <div className="space-y-2">
+                    {(check.mode === "binary" || check.mode === "docker") && (
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        loading={applyM.isPending}
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: `更新到 v${check.latest}`,
+                            description:
+                              "若 Release 带有对应平台二进制则在线替换并重启；否则请用服务器升级命令（不删数据卷）。",
+                            confirmLabel: "尝试一键更新",
+                            destructive: true,
+                          });
+                          if (!ok) return;
+                          applyM.mutate(check.latest, {
+                            onSuccess: () =>
+                              toast.message(
+                                "更新已提交，服务即将重启…请稍候刷新页面",
+                              ),
+                          });
+                        }}
+                      >
+                        <ArrowUpCircle className="size-3.5" />
+                        尝试一键更新
+                      </Button>
+                    )}
+                    <div className="rounded-lg border border-border/70 bg-background/80 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+                      <p className="mb-1 font-sans text-[10px] font-medium text-foreground">
+                        推荐（Docker，与发版一致）
+                      </p>
+                      bash scripts/upgrade.sh
+                      <br />
+                      # 或 git fetch --tags && git checkout v
+                      {check.latest}
+                      <br /># docker compose up -d --build
+                    </div>
+                  </div>
                 ) : null}
                 {check.mode === "docker" ? (
                   <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    Docker 模式与 sub2api 类似：在线替换容器内二进制并由{" "}
-                    <code className="font-mono">restart</code>{" "}
-                    策略拉起。也可用宿主机{" "}
+                    发版默认<strong>不附带</strong>各平台二进制包。升级请在宿主机拉
+                    tag 后{" "}
                     <code className="font-mono">
-                      git pull && docker compose up -d --build
-                    </code>{" "}
-                    重建镜像。
+                      docker compose up -d --build
+                    </code>
+                    ，勿使用{" "}
+                    <code className="font-mono">down -v</code>。
                   </p>
                 ) : null}
               </div>
