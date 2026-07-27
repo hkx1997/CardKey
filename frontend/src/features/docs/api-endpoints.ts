@@ -242,7 +242,14 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "PUT",
     path: "{prefix}/admin/settings",
     auth: "管理员",
-    desc: "更新系统设置（含 apiPublicBaseUrl、Logo 等）",
+    desc: "更新系统设置（含 SMTP / 邮件预警开关）",
+  },
+  {
+    method: "POST",
+    path: "{prefix}/admin/settings/mail/test",
+    auth: "管理员",
+    desc: "测试 SMTP（to 空=连通；有 to=发测试信）",
+    body: '{ "to"?: "a@b.com" }',
   },
   {
     method: "POST",

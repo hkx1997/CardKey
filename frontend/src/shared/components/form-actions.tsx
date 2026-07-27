@@ -16,7 +16,7 @@ export function FormActions({
   return (
     <div
       className={cn(
-        "flex w-full flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end",
+        "flex w-full min-w-0 max-w-full flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end",
         className,
       )}
     >
