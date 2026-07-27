@@ -112,7 +112,7 @@ export function SettingsPage() {
             <ImageUploadField
               value={form.siteLogo}
               onChange={(v) => set("siteLogo", v)}
-              hint="支持 PNG/JPEG/WebP/SVG/ICO，最大 2MB；也可填外链 URL"
+              hint="支持 PNG/JPEG/WebP/ICO，最大 2MB；也可填外链 URL（不支持 SVG）"
             />
           </FormField>
           <FormField label="Favicon" className="sm:col-span-2">
