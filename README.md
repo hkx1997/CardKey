@@ -20,6 +20,7 @@
 - **首次安装向导**：对齐 sub2api，Web 端创建管理员
 - **运维**：健康检查、受保护指标、**默认启用在线更新**（Docker 检测 / 可选 Token 防 GitHub 限流）
 - **安全**：生产密钥校验、CSRF 同源、安装 advisory lock、默认不暴露兑换密钥、禁止 SVG 上传
+- **发版**：改 `VERSION` → `bash scripts/release.sh`（打 tag + 多平台二进制 + GitHub Release）；推 `v*` tag 也会触发 Actions 发版
 
 ## 技术栈
 

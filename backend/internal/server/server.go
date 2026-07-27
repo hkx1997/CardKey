@@ -15,8 +15,6 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
-// ensure chi.URLParam available for /uploads/*
-
 func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	h := &handler.Handler{App: a}
 	r := chi.NewRouter()
