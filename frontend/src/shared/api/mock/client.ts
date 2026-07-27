@@ -67,6 +67,7 @@ export const mockClient = {
       siteLogo: s.siteLogo || null,
       siteFavicon: s.siteFavicon || null,
       footerText: s.footerText || "",
+      documentTitle: s.documentTitle || s.siteName || "CardKey",
       redeemTitle: s.redeemTitle,
       redeemSubtitle: s.redeemSubtitle,
       redeemSuccessHint: s.redeemSuccessHint || "兑换成功",

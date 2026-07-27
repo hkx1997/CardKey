@@ -62,19 +62,7 @@ export function RedeemPage() {
 
   const codes = useMemo(() => parseRedeemCodes(raw), [raw]);
 
-  useEffect(() => {
-    const title = cfg?.siteName || "CardKey";
-    document.title = title;
-    if (cfg?.siteFavicon) {
-      let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-      if (!link) {
-        link = document.createElement("link");
-        link.rel = "icon";
-        document.head.appendChild(link);
-      }
-      link.href = cfg.siteFavicon;
-    }
-  }, [cfg?.siteName, cfg?.siteFavicon]);
+  // 标题 / Favicon 由全局 DocumentMeta 统一处理
 
   useEffect(() => {
     if (!categories.length) return;

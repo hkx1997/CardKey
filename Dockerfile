@@ -6,6 +6,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json frontend/tsconfig.app.json frontend/tsconfig.node.json frontend/vitest.config.ts ./
 COPY frontend/src ./src
+COPY frontend/public ./public
 ARG APP_VERSION=0.1.0
 ENV VITE_API_MODE=http
 ENV VITE_APP_VERSION=$APP_VERSION

@@ -6,6 +6,7 @@ import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/shared/auth/auth-context";
 import { ConfirmProvider } from "@/shared/components/confirm-dialog";
+import { DocumentMeta } from "@/shared/components/document-meta";
 import { createAppQueryClient } from "@/shared/lib/query-client";
 import { ThemeProvider, useTheme } from "@/shared/theme/theme-provider";
 
@@ -34,6 +35,7 @@ export function Providers({ children }: { children: ReactNode }) {
           <BrowserRouter>
             <AuthProvider>
               <ConfirmProvider>
+                <DocumentMeta />
                 {children}
                 <ThemedToaster />
               </ConfirmProvider>

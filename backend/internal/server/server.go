@@ -35,12 +35,27 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	r.Get("/readyz", h.Ready)
 	r.Get("/metrics", app.MetricsHandler(a))
 
-	// 公开上传静态资源
+	// 公开上传静态资源（Logo / Favicon 等）
 	if a.DataDir != "" {
 		up := filepath.Join(a.DataDir, "uploads")
 		_ = os.MkdirAll(up, 0o755)
 		fs := http.StripPrefix("/uploads/", http.FileServer(http.Dir(up)))
 		r.Handle("/uploads/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// 显式 MIME，避免 .ico / .svg 被当成 application/octet-stream 导致浏览器不用作 favicon
+			switch strings.ToLower(filepath.Ext(req.URL.Path)) {
+			case ".ico":
+				w.Header().Set("Content-Type", "image/x-icon")
+			case ".svg":
+				w.Header().Set("Content-Type", "image/svg+xml")
+			case ".png":
+				w.Header().Set("Content-Type", "image/png")
+			case ".jpg", ".jpeg":
+				w.Header().Set("Content-Type", "image/jpeg")
+			case ".webp":
+				w.Header().Set("Content-Type", "image/webp")
+			case ".gif":
+				w.Header().Set("Content-Type", "image/gif")
+			}
 			w.Header().Set("Cache-Control", "public, max-age=86400")
 			fs.ServeHTTP(w, req)
 		}))

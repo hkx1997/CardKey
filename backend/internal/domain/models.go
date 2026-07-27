@@ -161,6 +161,8 @@ type PublicConfig struct {
 	SiteLogo              *string          `json:"siteLogo"`
 	SiteFavicon           *string          `json:"siteFavicon"`
 	FooterText            string           `json:"footerText"`
+	// DocumentTitle 浏览器标签标题；空则前端回退 siteName
+	DocumentTitle         string           `json:"documentTitle"`
 	RedeemTitle           string           `json:"redeemTitle"`
 	RedeemSubtitle        string           `json:"redeemSubtitle"`
 	RedeemSuccessHint     string           `json:"redeemSuccessHint"`

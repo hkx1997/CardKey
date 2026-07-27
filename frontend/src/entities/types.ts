@@ -47,6 +47,8 @@ export interface PublicConfig {
   siteLogo: string | null;
   siteFavicon: string | null;
   footerText: string;
+  /** 浏览器标签标题；空则用 siteName */
+  documentTitle?: string;
   redeemTitle: string;
   redeemSubtitle: string;
   redeemSuccessHint: string;

@@ -44,8 +44,13 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	} else if s.ExposePublicRedeemKeyInDocs {
 		pubKey = &s.PublicRedeemApiKey
 	}
+	docTitle := strings.TrimSpace(s.DocumentTitle)
+	if docTitle == "" {
+		docTitle = s.SiteName
+	}
 	return domain.PublicConfig{
 		SiteName: s.SiteName, SiteLogo: logo, SiteFavicon: fav, FooterText: s.FooterText,
+		DocumentTitle: docTitle,
 		RedeemTitle: s.RedeemTitle, RedeemSubtitle: s.RedeemSubtitle, RedeemSuccessHint: s.RedeemSuccessHint,
 		RedeemPlaceholder: s.RedeemPlaceholder, RedeemButtonText: s.RedeemButtonText,
 		CaptchaEnabled: s.CaptchaEnabled, RedeemTabVisibleCount: s.RedeemTabVisibleCount,
