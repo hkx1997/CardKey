@@ -600,11 +600,24 @@ input[type="checkbox"]:disabled {
   opacity: 0.5;
 }
 
-/* contentEditable 空态占位 */
+/* contentEditable 空态占位 + 防撑破布局 */
 .rich-text-editor:empty:before {
   color: var(--muted-foreground);
   content: attr(data-placeholder);
   pointer-events: none;
+}
+.rich-text-editor {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.rich-text-editor img,
+.rich-text-editor pre,
+.rich-text-editor code,
+.rich-text-editor a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* 代码块：强制等宽 + 保留缩进（空格/Tab 不折叠） */

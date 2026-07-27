@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS categories (
   enabled BOOLEAN NOT NULL DEFAULT true,
   sort_order INT NOT NULL DEFAULT 0,
   icon_kind VARCHAR(16) NOT NULL DEFAULT 'lucide',
-  icon_value VARCHAR(128) NOT NULL DEFAULT 'ticket',
+  icon_value TEXT NOT NULL DEFAULT 'ticket',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -899,7 +899,7 @@ export const mockClient = {
     };
   },
 
-  async checkUpdates() {
+  async checkUpdates(_force?: boolean) {
     await delay(200);
     mockStore.requireSession();
     return {
@@ -907,7 +907,7 @@ export const mockClient = {
       latest: "0.1.0-mock",
       hasUpdate: false,
       mode: "docker",
-      message: "Mock 模式：在线更新已启用（模拟无新版本）",
+      message: "已是最新版本",
       fromCache: false,
       authenticated: false,
       tokenRecommended: false,

@@ -21,6 +21,9 @@ const (
 	CtxUsername ctxKey = "username"
 	CtxClientIP ctxKey = "clientIP"
 	CtxJWTRaw   ctxKey = "jwtRaw"
+	// CtxAuthKind: "jwt" | "apikey"
+	CtxAuthKind ctxKey = "authKind"
+	CtxAPIKeyID ctxKey = "apiKeyId"
 )
 
 func SecurityHeaders(next http.Handler) http.Handler {
@@ -228,26 +231,80 @@ func RequireAdmin(a *app.App) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := cookieOrBearer(r)
 			if token == "" {
-				response.Fail(w, apperr.Unauthorized("未登录"))
+				response.Fail(w, apperr.Unauthorized("未登录或缺少 API Key（Authorization: Bearer …）"))
 				return
 			}
-			claims, err := a.ParseJWT(r.Context(), token)
+
+			// 1) 形似 JWT → 先验会话；失败再回退 API Key（避免 API Key 被误报「会话过期」）
+			var jwtErr error
+			if isLikelyJWT(token) {
+				claims, err := a.ParseJWT(r.Context(), token)
+				if err == nil {
+					ctx := context.WithValue(r.Context(), CtxAdminID, claims.AdminID)
+					ctx = context.WithValue(ctx, CtxUsername, claims.Username)
+					ctx = context.WithValue(ctx, CtxJWTRaw, token)
+					ctx = context.WithValue(ctx, CtxAuthKind, "jwt")
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+				jwtErr = err
+			}
+
+			// 2) API Key（需 admin:api；脚本 / OpenAPI 拉类别等）
+			ident, err := a.AuthenticateAPIKeyIdentity(r.Context(), token, "admin:api")
 			if err != nil {
+				// 非 ck_ 且未判为 JWT 时，再试一次 JWT（兼容边界 token）
+				if jwtErr == nil && !isLikelyJWT(token) {
+					if claims, jerr := a.ParseJWT(r.Context(), token); jerr == nil {
+						ctx := context.WithValue(r.Context(), CtxAdminID, claims.AdminID)
+						ctx = context.WithValue(ctx, CtxUsername, claims.Username)
+						ctx = context.WithValue(ctx, CtxJWTRaw, token)
+						ctx = context.WithValue(ctx, CtxAuthKind, "jwt")
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
+				}
+				// JWT 形态失败时保留会话错误；否则返回 API Key 错误（旧版会把 Key 误报成会话过期）
+				if jwtErr != nil && !strings.HasPrefix(token, "ck_") {
+					response.Fail(w, jwtErr)
+					return
+				}
 				response.Fail(w, err)
 				return
 			}
-			ctx := context.WithValue(r.Context(), CtxAdminID, claims.AdminID)
-			ctx = context.WithValue(ctx, CtxUsername, claims.Username)
-			ctx = context.WithValue(ctx, CtxJWTRaw, token)
+			label := ident.Name
+			if label == "" {
+				label = ident.Prefix
+			}
+			ctx := context.WithValue(r.Context(), CtxAdminID, "")
+			ctx = context.WithValue(ctx, CtxUsername, "apikey:"+label)
+			ctx = context.WithValue(ctx, CtxAuthKind, "apikey")
+			ctx = context.WithValue(ctx, CtxAPIKeyID, ident.ID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// RequirePasswordChanged 强制改密：除改密/登出/me 外拦截。
+func isLikelyJWT(s string) bool {
+	// header.payload.sig
+	if strings.Count(s, ".") != 2 {
+		return false
+	}
+	// API Key 常见 ck_ 前缀（即使含「.」也不当 JWT）
+	if strings.HasPrefix(s, "ck_") {
+		return false
+	}
+	return true
+}
+
+// RequirePasswordChanged 强制改密：除改密/登出/me 外拦截。API Key 鉴权跳过。
 func RequirePasswordChanged(a *app.App) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if AuthKind(r.Context()) == "apikey" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			path := r.URL.Path
 			if strings.HasSuffix(path, "/auth/change-password") ||
 				strings.HasSuffix(path, "/auth/logout") ||
@@ -271,13 +328,17 @@ func RequirePasswordChanged(a *app.App) func(http.Handler) http.Handler {
 	}
 }
 
+// cookieOrBearer 优先 Authorization Bearer（API Key / 显式 JWT），否则用会话 Cookie。
+// 避免浏览器残留过期 Cookie 盖住脚本传来的有效 API Key。
 func cookieOrBearer(r *http.Request) string {
-	if c, err := r.Cookie("cardkey_token"); err == nil && c.Value != "" {
-		return c.Value
-	}
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		if t := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")); t != "" {
+			return t
+		}
+	}
+	if c, err := r.Cookie("cardkey_token"); err == nil && c.Value != "" {
+		return c.Value
 	}
 	return ""
 }
@@ -310,5 +371,15 @@ func Username(ctx context.Context) string {
 
 func JWTRaw(ctx context.Context) string {
 	v, _ := ctx.Value(CtxJWTRaw).(string)
+	return v
+}
+
+func AuthKind(ctx context.Context) string {
+	v, _ := ctx.Value(CtxAuthKind).(string)
+	return v
+}
+
+func APIKeyID(ctx context.Context) string {
+	v, _ := ctx.Value(CtxAPIKeyID).(string)
 	return v
 }

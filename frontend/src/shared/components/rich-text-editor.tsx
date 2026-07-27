@@ -93,7 +93,8 @@ export function RichTextEditor({
         aria-multiline
         data-placeholder={placeholder}
         className={cn(
-          "rich-text-editor min-h-[120px] max-h-[240px] overflow-y-auto px-3 py-2 text-sm outline-none",
+          "rich-text-editor min-h-[120px] max-h-[240px] max-w-full overflow-x-hidden overflow-y-auto break-words px-3 py-2 text-sm outline-none",
+          "[&_*]:max-w-full [&_*]:break-words",
           "empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)]",
         )}
         onInput={emit}

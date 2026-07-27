@@ -223,15 +223,30 @@ export function ApiDocsContent({
           />
           <EndpointTable
             id="endpoints-admin-api"
-            title="管理端 · 业务接口（需登录 Cookie / Bearer JWT）"
+            title="管理端 · 业务接口（JWT 会话 或 admin:api 密钥）"
             items={ADMIN_API_ENDPOINTS}
             prefix={apiPrefix}
           />
           <section className="space-y-1 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2 text-[11px] text-muted-foreground">
             <p className="font-medium text-foreground">鉴权说明</p>
             <p>
-              · 管理接口：浏览器使用 Cookie{" "}
-              <code className="font-mono">cardkey_token</code>；脚本可用{" "}
+              · 管理接口（浏览器）：Cookie{" "}
+              <code className="font-mono">cardkey_token</code>
+            </p>
+            <p>
+              · 管理接口（脚本 / API Key）：创建密钥时勾选{" "}
+              <code className="font-mono">admin:api</code>，请求头{" "}
+              <code className="font-mono">
+                Authorization: Bearer &lt;API_KEY&gt;
+              </code>
+              。示例：{" "}
+              <code className="font-mono break-all">
+                curl -H &quot;Authorization: Bearer ck_xxx&quot;{" "}
+                {apiPrefix}/admin/categories
+              </code>
+            </p>
+            <p>
+              · 亦可用登录后的 JWT：{" "}
               <code className="font-mono">
                 Authorization: Bearer &lt;JWT&gt;
               </code>

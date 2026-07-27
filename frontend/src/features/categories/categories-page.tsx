@@ -340,7 +340,7 @@ export function CategoriesPage() {
           else setOpen(true);
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-md overflow-x-hidden overflow-y-auto">
           <DialogHeader>
             <DialogTitle>新建类别</DialogTitle>
             <DialogDescription>
@@ -410,7 +410,7 @@ export function CategoriesPage() {
           if (!v) setEdit(null);
         }}
       >
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-md overflow-x-hidden overflow-y-auto">
           <DialogHeader>
             <DialogTitle>编辑类别</DialogTitle>
             <DialogDescription className="font-mono text-xs">

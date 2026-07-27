@@ -99,44 +99,44 @@ export const ADMIN_AUTH_ENDPOINTS: ApiEndpoint[] = [
   },
 ];
 
-/** 管理端业务 API（需登录且已改密） */
+/** 管理端业务 API（Cookie JWT，或 Bearer API Key 且 scope 含 admin:api） */
 export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
   {
     method: "GET",
     path: "{prefix}/admin/dashboard/stats",
-    auth: "管理员",
+    auth: "JWT / admin:api",
     desc: "仪表盘统计",
     query: "category?",
   },
   {
     method: "GET",
     path: "{prefix}/admin/dashboard/runtime",
-    auth: "管理员",
+    auth: "JWT / admin:api",
     desc: "运行时流量/并发/延迟/连接池（短轮询）",
   },
   {
     method: "GET",
     path: "{prefix}/admin/categories",
-    auth: "管理员",
+    auth: "JWT / admin:api",
     desc: "类别列表",
   },
   {
     method: "POST",
     path: "{prefix}/admin/categories",
-    auth: "管理员",
+    auth: "JWT / admin:api",
     desc: "创建类别",
     body: '{ "name", "slug", "codePrefix", "description?", "icon?" }',
   },
   {
     method: "PATCH",
     path: "{prefix}/admin/categories/{id}",
-    auth: "管理员",
+    auth: "JWT / admin:api",
     desc: "更新类别（名称/描述/启用/图标等）",
   },
   {
     method: "DELETE",
     path: "{prefix}/admin/categories/{id}",
-    auth: "管理员",
+    auth: "JWT / admin:api",
     desc: "删除类别（无兑换记录时）",
   },
   {
