@@ -84,13 +84,19 @@ func (a *App) Bootstrap(ctx context.Context, user, pass, publicRedeemKey string)
 		}
 	}
 
-	// 类别种子：仅有管理员时自动种（避免向导前污染）；无管理员时留给 setup 的 seedDemoCategories
+	// 绝不在启动时自动写入演示数据。
+	// 演示类别/卡密仅在 Web 安装向导勾选 seedDemoCategories 时写入，
+	// 避免「挂上新空卷 / 类别表为空」后每次重启又出现示例数据，看起来像被重置。
 	var cn, an int
 	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM categories`).Scan(&cn)
 	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admins`).Scan(&an)
-	if cn == 0 && an > 0 {
-		if err := a.seedDemo(ctx); err != nil {
-			return adminUser, adminPass, err
+	if a.Log != nil {
+		a.Log.Info("db state",
+			slog.Int("admins", an),
+			slog.Int("categories", cn),
+		)
+		if an == 0 {
+			a.Log.Warn("database has no admin — open /admin/setup (if unexpected: wrong/empty volume, see deploy/DATA_SAFETY.md)")
 		}
 	}
 	return adminUser, adminPass, nil

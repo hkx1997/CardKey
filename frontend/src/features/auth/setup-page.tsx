@@ -29,7 +29,7 @@ export function SetupPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [siteName, setSiteName] = useState("CardKey");
-  const [seedDemo, setSeedDemo] = useState(true);
+  const [seedDemo, setSeedDemo] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState(0);
@@ -183,9 +183,9 @@ export function SetupPage() {
               </FormField>
               <div className="flex items-center justify-between rounded-lg border border-border/70 px-3 py-2.5">
                 <div className="pr-3">
-                  <p className="text-xs font-medium">安装演示类别与卡密</p>
+                  <p className="text-xs font-medium">安装演示类别与卡密（可选）</p>
                   <p className="text-[11px] text-muted-foreground">
-                    VIP / CDK 示例，便于立即体验兑换
+                    默认关闭。勾选后写入 VIP / CDK 示例；生产请保持关闭
                   </p>
                 </div>
                 <Switch checked={seedDemo} onCheckedChange={setSeedDemo} />

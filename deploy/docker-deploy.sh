@@ -377,8 +377,22 @@ get_env() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
 APP_PORT="$(get_env APP_PORT)"; APP_PORT="${APP_PORT:-18080}"
 
 echo ""
+# 多个 postgres 卷时强烈提示，避免再次「假重置」
+pg_vols="$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -i postgres || true)"
+pg_n=0
+if [[ -n "$pg_vols" ]]; then
+  pg_n="$(printf '%s\n' "$pg_vols" | grep -c . || true)"
+fi
+if [[ "${pg_n:-0}" -gt 1 ]]; then
+  yellow "⚠ 检测到多个 Postgres 卷，请确认 .env 的 POSTGRES_VOLUME_NAME 指向有数据的那一个："
+  printf '%s\n' "$pg_vols" | sed 's/^/    /'
+  yellow "  恢复旧数据: bash scripts/recover-volume.sh"
+  yellow "  详见 deploy/DATA_SAFETY.md"
+fi
+
 info "拉取镜像并启动服务（首次构建可能较久）…"
 compose pull 2>/dev/null || true
+# 禁止 down -v；仅 up --build
 compose up -d --build
 
 echo ""

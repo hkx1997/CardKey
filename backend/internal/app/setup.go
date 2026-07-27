@@ -182,8 +182,8 @@ func (a *App) CompleteSetup(ctx context.Context, in SetupInput, ip string) (doma
 	a.settingsAt = time.Now()
 	a.settingsMu.Unlock()
 
-	// 演示类别（可选，默认 true）—— 安装成功后执行，失败不回滚管理员
-	seed := true
+	// 演示类别：仅当安装向导显式勾选（seedDemoCategories=true）时写入；默认不种，避免生产误装示例
+	seed := false
 	if in.SeedDemoCategories != nil {
 		seed = *in.SeedDemoCategories
 	}
