@@ -37,6 +37,13 @@ func MetricsHandler(a *App) http.HandlerFunc {
 		_, _ = fmt.Fprintf(w, "# HELP cardkey_logins_total Admin logins\n")
 		_, _ = fmt.Fprintf(w, "# TYPE cardkey_logins_total counter\n")
 		_, _ = fmt.Fprintf(w, "cardkey_logins_total %d\n", metricLoginsTotal.Load())
+		_, _ = fmt.Fprintf(w, "# HELP cardkey_http_in_flight Current in-flight HTTP requests\n")
+		_, _ = fmt.Fprintf(w, "# TYPE cardkey_http_in_flight gauge\n")
+		_, _ = fmt.Fprintf(w, "cardkey_http_in_flight %d\n", httpInFlight.Load())
+		_, _ = fmt.Fprintf(w, "# HELP cardkey_http_requests_total HTTP requests\n")
+		_, _ = fmt.Fprintf(w, "# TYPE cardkey_http_requests_total counter\n")
+		_, _ = fmt.Fprintf(w, "cardkey_http_requests_total %d\n", httpTotal.Load())
+		_, _ = fmt.Fprintf(w, "cardkey_http_errors_5xx_total %d\n", httpErrors5xx.Load())
 		if a.Pool != nil {
 			st := a.Pool.Stat()
 			_, _ = fmt.Fprintf(w, "# HELP cardkey_db_pool_acquired\n")

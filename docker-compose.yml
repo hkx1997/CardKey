@@ -82,6 +82,9 @@ services:
       - "${FRONTEND_PORT:-5173}:80"
     restart: unless-stopped
 
+# 固定卷名：避免因目录改名 / project name 变化产生新空卷导致「数据丢失」假象
 volumes:
   postgres_data:
+    name: cardkey_postgres_data
   cardkey_data:
+    name: cardkey_app_data

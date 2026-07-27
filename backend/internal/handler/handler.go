@@ -200,6 +200,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, s)
 }
 
+func (h *Handler) RuntimeMetrics(w http.ResponseWriter, r *http.Request) {
+	response.OK(w, h.App.RuntimeMetrics(r.Context()))
+}
+
 func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
 	list, err := h.App.ListCategories(r.Context())
 	if err != nil {

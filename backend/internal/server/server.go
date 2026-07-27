@@ -25,6 +25,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.BodyLimit(4 << 20))
 	r.Use(middleware.ClientIPMiddleware(a.TrustProxy))
+	r.Use(middleware.HTTPMetrics)
 	r.Use(middleware.CSRFOrigin(a.CSRFCheck))
 	if a.Log != nil {
 		r.Use(middleware.AccessLog(a.Log))
@@ -108,6 +109,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Use(middleware.RequirePasswordChanged(a))
 
 					r.Get("/dashboard/stats", h.Dashboard)
+					r.Get("/dashboard/runtime", h.RuntimeMetrics)
 
 					r.Get("/categories", h.ListCategories)
 					r.Post("/categories", h.CreateCategory)

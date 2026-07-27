@@ -1,12 +1,18 @@
 import {
   Activity,
   CheckCircle2,
+  Cpu,
+  Database,
   FolderTree,
+  Gauge,
   KeyRound,
   Percent,
+  Server,
   Ticket,
+  Timer,
   TrendingDown,
   TrendingUp,
+  Zap,
 } from "lucide-react";
 import { useMemo } from "react";
 
@@ -20,13 +26,17 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { RedeemRecord } from "@/entities/types";
+import { CountTo } from "@/shared/components/count-to";
 import {
   DataTable,
   type DataTableColumn,
 } from "@/shared/components/data-table";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
-import { useDashboardQuery } from "@/shared/hooks/use-dashboard";
+import {
+  useDashboardQuery,
+  useRuntimeMetricsQuery,
+} from "@/shared/hooks/use-dashboard";
 import { CategoryIconView } from "@/shared/lib/category-icons";
 import { cn } from "@/shared/lib/cn";
 import { formatDateTime, formatRelative } from "@/shared/lib/format";
@@ -34,8 +44,10 @@ import { CardStatusBadge } from "@/shared/lib/status";
 
 export function DashboardPage() {
   const q = useDashboardQuery();
+  const rtQ = useRuntimeMetricsQuery(true);
 
   const stats = q.data;
+  const rt = rtQ.data;
   const maxTrend = Math.max(1, ...(stats?.trend.map((t) => t.count) ?? [1]));
   const delta =
     stats != null
@@ -115,6 +127,113 @@ export function DashboardPage() {
           hint={`禁用 ${stats?.disabledCards ?? 0} · 过期 ${stats?.expiredCards ?? 0}`}
         />
       </div>
+
+      {/* 运行时监控（类似 sub2api 运维面板精简版） */}
+      <Card className="fade-in-delay-1 overflow-hidden">
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Gauge className="size-4 text-muted-foreground" />
+                流量与运行时
+              </CardTitle>
+              <CardDescription className="text-xs">
+                并发 · 近 1 分钟 QPS · 延迟分位 · 依赖健康（约 5s 刷新）
+              </CardDescription>
+            </div>
+            {rt ? (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-[10px]",
+                  rt.redisOk ? "text-emerald-600" : "text-destructive",
+                )}
+              >
+                Redis {rt.redisOk ? "正常" : "异常"} · 运行{" "}
+                {formatUptime(rt.uptimeSec)}
+              </Badge>
+            ) : null}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricTile
+              label="当前并发"
+              icon={Zap}
+              loading={rtQ.isLoading && !rt}
+              value={rt?.inFlight}
+              hint="处理中的 HTTP 请求"
+            />
+            <MetricTile
+              label="近 1 分钟请求"
+              icon={Activity}
+              loading={rtQ.isLoading && !rt}
+              value={rt?.requests1m}
+              hint={`累计 ${rt?.requestsTotal ?? 0}`}
+            />
+            <MetricTile
+              label="P95 延迟"
+              icon={Timer}
+              loading={rtQ.isLoading && !rt}
+              value={rt?.latencyP95Ms}
+              decimals={1}
+              suffix="ms"
+              hint={`P50 ${rt?.latencyP50Ms?.toFixed(1) ?? "—"} · P99 ${rt?.latencyP99Ms?.toFixed(1) ?? "—"}`}
+            />
+            <MetricTile
+              label="错误率"
+              icon={Server}
+              loading={rtQ.isLoading && !rt}
+              value={rt?.errorRatePct}
+              decimals={2}
+              suffix="%"
+              hint={`4xx ${rt?.errors4xx ?? 0} · 5xx ${rt?.errors5xx ?? 0}`}
+            />
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <ServicePill
+              icon={Database}
+              name="PostgreSQL 连接池"
+              loading={rtQ.isLoading && !rt}
+              ok={(rt?.dbPoolMax ?? 0) > 0}
+              detail={
+                rt
+                  ? `使用 ${rt.dbPoolAcquired}/${rt.dbPoolMax} · 空闲 ${rt.dbPoolIdle}`
+                  : "—"
+              }
+            />
+            <ServicePill
+              icon={Cpu}
+              name="Go 运行时"
+              loading={rtQ.isLoading && !rt}
+              ok
+              detail={
+                rt
+                  ? `协程 ${rt.goRoutines} · 内存 ${rt.memAllocMB.toFixed(1)} MB`
+                  : "—"
+              }
+            />
+            <ServicePill
+              icon={Ticket}
+              name="兑换吞吐"
+              loading={rtQ.isLoading && !rt}
+              ok
+              detail={
+                rt
+                  ? `成功 ${rt.redeemsTotal} · 失败 ${rt.redeemErrors}`
+                  : "—"
+              }
+            />
+            <ServicePill
+              icon={KeyRound}
+              name="管理登录"
+              loading={rtQ.isLoading && !rt}
+              ok
+              detail={rt ? `累计 ${rt.loginsTotal} 次` : "—"}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <MiniStat
@@ -336,13 +455,8 @@ function StatCard({
           {loading ? (
             <Skeleton className="mt-2 h-7 w-16" />
           ) : (
-            <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight">
-              {value ?? 0}
-              {suffix ? (
-                <span className="ml-0.5 text-sm font-medium text-muted-foreground">
-                  {suffix}
-                </span>
-              ) : null}
+            <p className="mt-1 text-2xl font-semibold tracking-tight">
+              <CountTo value={value ?? 0} suffix={suffix} />
             </p>
           )}
           {hint ? (
@@ -363,6 +477,90 @@ function StatCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function formatUptime(sec: number) {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
+}
+
+function MetricTile({
+  label,
+  value,
+  decimals,
+  suffix,
+  icon: Icon,
+  loading,
+  hint,
+}: {
+  label: string;
+  value?: number;
+  decimals?: number;
+  suffix?: string;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  loading?: boolean;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-secondary/25 px-3 py-3 transition-colors hover:bg-secondary/40">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <Icon className="size-3.5 text-muted-foreground" strokeWidth={1.8} />
+      </div>
+      {loading ? (
+        <Skeleton className="mt-2 h-6 w-14" />
+      ) : (
+        <p className="mt-1 text-xl font-semibold tracking-tight">
+          <CountTo
+            value={value ?? 0}
+            decimals={decimals ?? 0}
+            suffix={suffix}
+            duration={700}
+          />
+        </p>
+      )}
+      {hint ? (
+        <p className="mt-1 text-[10px] text-muted-foreground">{hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function ServicePill({
+  icon: Icon,
+  name,
+  detail,
+  ok,
+  loading,
+}: {
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  name: string;
+  detail: string;
+  ok?: boolean;
+  loading?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-border/50 bg-background/60 px-3 py-2.5">
+      <div
+        className={cn(
+          "mt-0.5 rounded-md p-1.5",
+          ok === false ? "bg-destructive/10 text-destructive" : "bg-secondary text-muted-foreground",
+        )}
+      >
+        <Icon className="size-3.5" strokeWidth={1.8} />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium">{name}</p>
+        {loading ? (
+          <Skeleton className="mt-1 h-3 w-24" />
+        ) : (
+          <p className="mt-0.5 text-[10px] text-muted-foreground">{detail}</p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -97,6 +97,33 @@ export const httpClient = {
     );
   },
 
+  runtimeMetrics: () =>
+    request<{
+      inFlight: number;
+      requestsTotal: number;
+      requests1m: number;
+      errors4xx: number;
+      errors5xx: number;
+      errorRatePct: number;
+      latencyP50Ms: number;
+      latencyP95Ms: number;
+      latencyP99Ms: number;
+      redeemsTotal: number;
+      redeemErrors: number;
+      loginsTotal: number;
+      dbPoolAcquired: number;
+      dbPoolIdle: number;
+      dbPoolTotal: number;
+      dbPoolMax: number;
+      redisOk: boolean;
+      uptimeSec: number;
+      goRoutines: number;
+      memAllocMB: number;
+      version: string;
+      updateMode: string;
+      checkedAt: string;
+    }>("/api/v1/admin/dashboard/runtime"),
+
   listCategories: () => request<Category[]>("/api/v1/admin/categories"),
 
   createCategory: (input: {

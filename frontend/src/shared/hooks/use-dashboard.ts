@@ -9,3 +9,14 @@ export function useDashboardQuery(categorySlug?: string) {
     queryFn: () => api.dashboardStats(categorySlug),
   });
 }
+
+/** 运行时流量 / 并发 / 延迟，短轮询 */
+export function useRuntimeMetricsQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runtimeMetrics,
+    queryFn: () => api.runtimeMetrics(),
+    enabled,
+    refetchInterval: 5_000,
+    staleTime: 2_000,
+  });
+}

@@ -869,6 +869,36 @@ export const mockClient = {
     };
   },
 
+  async runtimeMetrics() {
+    await delay(40);
+    mockStore.requireSession();
+    return {
+      inFlight: 1,
+      requestsTotal: 1280,
+      requests1m: 24,
+      errors4xx: 3,
+      errors5xx: 0,
+      errorRatePct: 0.23,
+      latencyP50Ms: 12.5,
+      latencyP95Ms: 48.2,
+      latencyP99Ms: 96.0,
+      redeemsTotal: 420,
+      redeemErrors: 8,
+      loginsTotal: 15,
+      dbPoolAcquired: 2,
+      dbPoolIdle: 3,
+      dbPoolTotal: 5,
+      dbPoolMax: 20,
+      redisOk: true,
+      uptimeSec: 3600,
+      goRoutines: 18,
+      memAllocMB: 32.5,
+      version: "0.1.0-mock",
+      updateMode: "docker",
+      checkedAt: new Date().toISOString(),
+    };
+  },
+
   async checkUpdates() {
     await delay(200);
     mockStore.requireSession();

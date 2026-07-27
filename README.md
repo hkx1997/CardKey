@@ -122,8 +122,10 @@ docker compose up -d --build
 ```bash
 docker compose ps
 docker compose logs -f cardkey
-docker compose down          # 停服务
-docker compose down -v       # 停服务并清空数据卷（慎用）
+docker compose down          # 停服务（保留数据卷）
+# 切勿日常使用：docker compose down -v  （会删除数据库卷）
+bash scripts/upgrade.sh      # 安全升级：pull + build，不删卷
+# 数据说明见 deploy/DATA_SAFETY.md
 ```
 
 ### 生产建议

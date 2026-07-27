@@ -3,6 +3,7 @@ export const queryKeys = {
   publicConfig: ["public-config"] as const,
   settings: ["settings"] as const,
   dashboard: ["dashboard"] as const,
+  runtimeMetrics: ["runtime-metrics"] as const,
   categories: ["categories"] as const,
   cards: (params?: unknown) =>
     params === undefined ? (["cards"] as const) : (["cards", params] as const),

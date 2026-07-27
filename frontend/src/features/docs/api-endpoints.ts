@@ -110,6 +110,12 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
   },
   {
     method: "GET",
+    path: "{prefix}/admin/dashboard/runtime",
+    auth: "管理员",
+    desc: "运行时流量/并发/延迟/连接池（短轮询）",
+  },
+  {
+    method: "GET",
     path: "{prefix}/admin/categories",
     auth: "管理员",
     desc: "类别列表",

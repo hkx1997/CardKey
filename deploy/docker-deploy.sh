@@ -254,6 +254,7 @@ if [[ ! -f .env ]]; then
 elif [[ "$FORCE_RECONFIG" == "1" ]]; then
   NEED_CONFIG=1
   yellow "将重新生成 .env（旧文件会备份为 .env.bak）"
+  yellow "注意：重新生成密钥不会自动清空 Postgres 卷；但勿执行 docker compose down -v"
 elif [[ "$NONINTERACTIVE" != "1" ]]; then
   ask "检测到已有 .env，是否重新配置？(y/N)" "N"
   if [[ "${REPLY,,}" == "y" || "${REPLY,,}" == "yes" ]]; then
