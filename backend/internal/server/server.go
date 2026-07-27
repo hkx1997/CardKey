@@ -15,6 +15,8 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
+// ensure chi.URLParam available for /uploads/*
+
 func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	h := &handler.Handler{App: a}
 	r := chi.NewRouter()
@@ -36,14 +38,38 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	isProd := a.Env == "production"
 	r.Get("/metrics", middleware.ProtectMetrics(a.MetricsToken, isProd, app.MetricsHandler(a)))
 
+	// 浏览器默认会请求 /favicon.ico —— 按系统设置跳转上传图标
+	r.Get("/favicon.ico", h.FaviconRedirect)
+
 	// 公开上传静态资源（Logo / Favicon 等）
 	if a.DataDir != "" {
 		up := filepath.Join(a.DataDir, "uploads")
 		_ = os.MkdirAll(up, 0o755)
-		fs := http.StripPrefix("/uploads/", http.FileServer(http.Dir(up)))
-		r.Handle("/uploads/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			// 显式 MIME，避免 .ico / .svg 被当成 application/octet-stream 导致浏览器不用作 favicon
-			switch strings.ToLower(filepath.Ext(req.URL.Path)) {
+		// 使用 Get + 显式路径，避免与 SPA /* 抢路由或 FileServer 前缀问题
+		r.Get("/uploads/*", func(w http.ResponseWriter, req *http.Request) {
+			name := chi.URLParam(req, "*")
+			if name == "" {
+				// 兼容无 URLParam 的情况
+				name = strings.TrimPrefix(req.URL.Path, "/uploads/")
+			}
+			name = filepath.Clean("/" + name)
+			name = strings.TrimPrefix(name, "/")
+			if name == "" || name == "." || strings.HasPrefix(name, "..") {
+				http.NotFound(w, req)
+				return
+			}
+			full := filepath.Join(up, name)
+			// 防目录穿越
+			upClean := filepath.Clean(up) + string(os.PathSeparator)
+			if full != filepath.Clean(up) && !strings.HasPrefix(full, upClean) {
+				http.NotFound(w, req)
+				return
+			}
+			if st, err := os.Stat(full); err != nil || st.IsDir() {
+				http.NotFound(w, req)
+				return
+			}
+			switch strings.ToLower(filepath.Ext(full)) {
 			case ".ico":
 				w.Header().Set("Content-Type", "image/x-icon")
 			case ".svg":
@@ -58,8 +84,8 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 				w.Header().Set("Content-Type", "image/gif")
 			}
 			w.Header().Set("Cache-Control", "public, max-age=86400")
-			fs.ServeHTTP(w, req)
-		}))
+			http.ServeFile(w, req, full)
+		})
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -133,11 +159,13 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 
 func fileServer(r chi.Router, dir string) {
 	r.Get("/*", func(w http.ResponseWriter, req *http.Request) {
-		if strings.HasPrefix(req.URL.Path, "/api/") {
+		p := req.URL.Path
+		// 绝不能把 /uploads、/api 回退成 SPA index.html（否则 favicon 会变成 HTML）
+		if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/uploads/") {
 			http.NotFound(w, req)
 			return
 		}
-		path := filepath.Join(dir, filepath.Clean("/"+req.URL.Path))
+		path := filepath.Join(dir, filepath.Clean("/"+p))
 		if !strings.HasPrefix(path, filepath.Clean(dir)+string(os.PathSeparator)) && path != filepath.Clean(dir) {
 			http.NotFound(w, req)
 			return
@@ -150,6 +178,16 @@ func fileServer(r chi.Router, dir string) {
 			}
 			http.ServeFile(w, req, path)
 			return
+		}
+		// /favicon.ico 无静态文件时回退到内置 svg（自定义图标由前端 link 注入）
+		if p == "/favicon.ico" {
+			svg := filepath.Join(dir, "favicon.svg")
+			if _, err := os.Stat(svg); err == nil {
+				w.Header().Set("Content-Type", "image/svg+xml")
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+				http.ServeFile(w, req, svg)
+				return
+			}
 		}
 		index := filepath.Join(dir, "index.html")
 		if _, err := os.Stat(index); err == nil {

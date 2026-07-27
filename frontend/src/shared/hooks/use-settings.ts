@@ -7,11 +7,12 @@ import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { toastApiError } from "@/shared/lib/api-toast";
 import { queryKeys } from "@/shared/lib/query-keys";
 
-export function useSettingsQuery() {
+export function useSettingsQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => api.getSettings(),
     staleTime: 60_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 
@@ -22,6 +23,15 @@ export function useUpdateSettings() {
     onSuccess: (data) => {
       toast.success("已保存");
       inv.settings();
+      // 立刻把 favicon/标题刷到标签栏，不等 public config 回流
+      void import("@/shared/lib/document-meta").then(({ applyDocumentMeta }) => {
+        applyDocumentMeta({
+          documentTitle: data.documentTitle,
+          siteName: data.siteName,
+          siteFavicon: data.siteFavicon || null,
+          faviconVersion: data.siteFavicon || String(Date.now()),
+        });
+      });
       return data;
     },
     onError: (e) => toastApiError(e, "保存失败"),

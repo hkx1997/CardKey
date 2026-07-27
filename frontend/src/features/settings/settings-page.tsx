@@ -119,7 +119,7 @@ export function SettingsPage() {
             <ImageUploadField
               value={form.siteFavicon}
               onChange={(v) => set("siteFavicon", v)}
-              hint="浏览器标签图标，建议正方形 PNG/ICO（不支持 SVG）"
+              hint="浏览器标签图标，建议正方形 PNG/ICO；上传后点右上角「保存」才会生效"
             />
           </FormField>
           <FormField label="页脚" className="sm:col-span-2">

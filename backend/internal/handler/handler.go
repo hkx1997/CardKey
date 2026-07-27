@@ -58,6 +58,23 @@ func (h *Handler) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, cfg)
 }
 
+// FaviconRedirect 浏览器默认请求 /favicon.ico 时跳转到系统设置中的图标。
+func (h *Handler) FaviconRedirect(w http.ResponseWriter, r *http.Request) {
+	s, err := h.App.GetSettings(r.Context())
+	target := "/favicon.svg"
+	if err == nil {
+		fav := strings.TrimSpace(s.SiteFavicon)
+		if fav != "" {
+			// data URL 无法作为 Location；回退 svg
+			if !strings.HasPrefix(fav, "data:") {
+				target = fav
+			}
+		}
+	}
+	// 相对路径保持同源
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
 func (h *Handler) SetupStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := h.App.GetSetupStatus(r.Context())
 	if err != nil {
