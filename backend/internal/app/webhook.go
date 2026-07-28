@@ -157,16 +157,24 @@ func (a *App) ProcessWebhookOutboxByID(ctx context.Context, id string) (WebhookD
 	return out, nil
 }
 
-// ProcessDueWebhooks 处理后台到期的失败/待投递条目，返回处理条数。
+// ProcessDueWebhooks 处理后台到期的失败/待投递条目（FOR UPDATE SKIP LOCKED，多实例安全）。
 func (a *App) ProcessDueWebhooks(ctx context.Context, limit int) (int, error) {
 	if limit < 1 {
 		limit = 20
 	}
+	// 认领：把 next_attempt_at 推后 2 分钟作为处理锁，避免多 worker 抢同一条
 	rows, err := a.Pool.Query(ctx, `
-		SELECT id::text FROM webhook_outbox
-		WHERE status IN ('pending','failed') AND next_attempt_at <= now()
-		ORDER BY next_attempt_at
-		LIMIT $1`, limit)
+		WITH cte AS (
+			SELECT id FROM webhook_outbox
+			WHERE status IN ('pending','failed') AND next_attempt_at <= now()
+			ORDER BY next_attempt_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		UPDATE webhook_outbox w
+		SET next_attempt_at = now() + interval '2 minutes', updated_at = now()
+		FROM cte WHERE w.id = cte.id
+		RETURNING w.id::text`, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -179,9 +187,22 @@ func (a *App) ProcessDueWebhooks(ctx context.Context, limit int) (int, error) {
 		}
 		ids = append(ids, id)
 	}
-	n := 0
+	// 并行投递（有界）
+	type res struct{ ok bool }
+	ch := make(chan res, len(ids))
+	sem := make(chan struct{}, 8)
 	for _, id := range ids {
-		if _, err := a.ProcessWebhookOutboxByID(ctx, id); err == nil {
+		id := id
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			_, err := a.ProcessWebhookOutboxByID(ctx, id)
+			ch <- res{ok: err == nil}
+		}()
+	}
+	n := 0
+	for range ids {
+		if (<-ch).ok {
 			n++
 		}
 	}

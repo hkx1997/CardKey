@@ -732,15 +732,32 @@ export const mockClient = {
     return { codes, total: codes.length };
   },
 
-  async listBatches(categorySlug?: string): Promise<Batch[]> {
+  async listBatches(params?: {
+    categorySlug?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<PageResult<Batch>> {
     await delay();
     mockStore.requireSession();
     let list = [...mockStore.getDb().batches];
+    const categorySlug = params?.categorySlug;
     if (categorySlug) {
       const cat = mockStore.findCategoryBySlug(categorySlug);
       if (cat) list = list.filter((b) => b.categoryId === cat.id);
     }
-    return list;
+    const page = params?.page ?? 1;
+    const pageSize = params?.pageSize ?? 20;
+    const total = list.length;
+    const start = (page - 1) * pageSize;
+    const items = list.slice(start, start + pageSize);
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      totalExact: true,
+      hasMore: start + pageSize < total,
+    };
   },
 
   async exportBatch(

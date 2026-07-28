@@ -433,7 +433,8 @@ func (h *Handler) ListCards(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	ps, _ := strconv.Atoi(q.Get("page_size"))
-	res, err := h.App.ListCards(r.Context(), page, ps, q.Get("status"), q.Get("q"), q.Get("category"), q.Get("batch_id"), q.Get("cursor"))
+	wantExact := q.Get("exact_total") == "1" || q.Get("exact") == "1"
+	res, err := h.App.ListCards(r.Context(), page, ps, q.Get("status"), q.Get("q"), q.Get("category"), q.Get("batch_id"), q.Get("cursor"), wantExact)
 	if err != nil {
 		response.Fail(w, err)
 		return
@@ -679,12 +680,19 @@ func (h *Handler) ExportCards(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListBatches(w http.ResponseWriter, r *http.Request) {
-	list, err := h.App.ListBatches(r.Context(), r.URL.Query().Get("category"))
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	ps, _ := strconv.Atoi(q.Get("page_size"))
+	// 兼容旧客户端：无 page 参数时返回第一页较大窗口
+	if page < 1 && q.Get("page") == "" && q.Get("page_size") == "" {
+		page, ps = 1, 100
+	}
+	res, err := h.App.ListBatches(r.Context(), q.Get("category"), page, ps)
 	if err != nil {
 		response.Fail(w, err)
 		return
 	}
-	response.OK(w, list)
+	response.OK(w, res)
 }
 
 func (h *Handler) ExportBatch(w http.ResponseWriter, r *http.Request) {
@@ -716,7 +724,8 @@ func (h *Handler) ListRedeems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	ps, _ := strconv.Atoi(q.Get("page_size"))
-	res, err := h.App.ListRedeems(r.Context(), page, ps, q.Get("q"), q.Get("category"), q.Get("cursor"))
+	wantExact := q.Get("exact_total") == "1" || q.Get("exact") == "1"
+	res, err := h.App.ListRedeems(r.Context(), page, ps, q.Get("q"), q.Get("category"), q.Get("cursor"), wantExact)
 	if err != nil {
 		response.Fail(w, err)
 		return

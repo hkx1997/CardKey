@@ -37,8 +37,13 @@ export function PaginationBar({
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
       <span className="tabular-nums">
-        {totalExact === false ? "约 " : "共 "}
-        {total.toLocaleString()} 条
+        {totalExact === false && total <= 0
+          ? hasMore
+            ? "更多…"
+            : "本页"
+          : totalExact === false
+            ? `约 ${total.toLocaleString()} 条`
+            : `共 ${total.toLocaleString()} 条`}
       </span>
       <div className="flex flex-wrap items-center gap-2">
         {onPageSizeChange ? (

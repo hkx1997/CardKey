@@ -16,7 +16,8 @@ import (
 )
 
 // ListCards 支持 page/OFFSET 与 keyset cursor（cursor 优先，避免深翻页扫 OFFSET）。
-func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, categorySlug, batchID, cursor string) (domain.PageResult[domain.Card], error) {
+// wantExact=true 时强制精确 COUNT；筛选条件下默认跳过 COUNT 仅用 hasMore。
+func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, categorySlug, batchID, cursor string, wantExact bool) (domain.PageResult[domain.Card], error) {
 	page, pageSize = paging.Normalize(page, pageSize, 10, 100)
 	where := []string{"1=1"}
 	args := []any{}
@@ -95,29 +96,37 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 		listArgs = append(append([]any{}, args...), fetchN, paging.Offset(page, pageSize))
 	}
 
+	// 筛选列表默认不做精确 COUNT（大表 + ILIKE 很贵）；无筛选或 wantExact 才算
+	doCount := unfiltered || wantExact
+
 	var total int
-	var totalExact bool = true
+	totalExact := true
 	var items []domain.Card
 	var itemTimes []time.Time
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		n, exact, err := a.smartCount(gctx, "cards", filterKey(status, q, categorySlug, batchID), unfiltered, 8000, func() (int, error) {
-			var countSQL string
-			if needCatJoin {
-				countSQL = `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + countWhere
-			} else {
-				countSQL = `SELECT COUNT(*) FROM cards WHERE ` + countWhere
+	if doCount {
+		g.Go(func() error {
+			n, exact, err := a.smartCount(gctx, "cards", filterKey(status, q, categorySlug, batchID), unfiltered, 8000, func() (int, error) {
+				var countSQL string
+				if needCatJoin {
+					countSQL = `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + countWhere
+				} else {
+					countSQL = `SELECT COUNT(*) FROM cards WHERE ` + countWhere
+				}
+				var n int
+				err := a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&n)
+				return n, err
+			})
+			if err != nil {
+				return err
 			}
-			var n int
-			err := a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&n)
-			return n, err
+			total, totalExact = n, exact
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-		total, totalExact = n, exact
-		return nil
-	})
+	} else {
+		totalExact = false
+		total = 0
+	}
 	g.Go(func() error {
 		var sql string
 		if useKeyset {
@@ -383,10 +392,10 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 		batchID = &batch.ID
 	}
 
-	// 分批提交：无 job 时每 500 行；异步 job 每 50 行提交并回写进度（chunk 中段可细）
+	// 分批：预生成编码（一次 ANY 查重）+ CopyFrom 批量入库
 	chunk := 500
 	if jobID != "" {
-		chunk = 50
+		chunk = 100
 	}
 	codes := make([]string, 0, len(lines))
 	reportProgress := func(done int) {
@@ -397,65 +406,50 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 			UPDATE import_jobs SET done_lines=$2, success_count=$2, updated_at=now()
 			WHERE id=$1::uuid AND status='running'`, jobID, done)
 	}
+	mime := defaultMimeForType(typ)
 	for i := 0; i < len(lines); i += chunk {
 		end := i + chunk
 		if end > len(lines) {
 			end = len(lines)
 		}
-		tx, err := a.Pool.Begin(ctx)
+		chunkLines := lines[i:end]
+		need := len(chunkLines)
+		genCodes, err := a.allocateUniqueCodes(ctx, categoryID, cat.CodePrefix, need)
 		if err != nil {
 			return nil, err
 		}
-		// 预生成编码 + 批量 INSERT，减少往返
-		type row struct {
-			code, content string
-			enc, nonce    []byte
-			fn, mime      string
-			sz            int64
-		}
-		chunkLines := lines[i:end]
-		rowsBuf := make([]row, 0, len(chunkLines))
-		for _, content := range chunkLines {
-			code, err := a.uniqueCodeTx(ctx, tx, categoryID, cat.CodePrefix)
-			if err != nil {
-				_ = tx.Rollback(ctx)
-				return nil, err
-			}
+		// 加密并组行
+		rows := make([][]any, 0, need)
+		for j, content := range chunkLines {
+			code := genCodes[j]
 			enc, nonce, err := a.EncryptContent(content)
 			if err != nil {
-				_ = tx.Rollback(ctx)
 				return nil, err
 			}
-			rowsBuf = append(rowsBuf, row{
-				code: code, content: content, enc: enc, nonce: nonce,
-				fn: defaultFilename(typ, code), mime: defaultMimeForType(typ), sz: int64(len(content)),
+			fn := defaultFilename(typ, code)
+			sz := int64(len(content))
+			var bid any
+			if batchID != nil {
+				bid = *batchID
+			}
+			rows = append(rows, []any{
+				categoryID, code, enc, nonce, string(typ), bid, "unused", note, fn, mime, sz,
 			})
+			codes = append(codes, code)
 		}
-		b := &pgx.Batch{}
-		for _, r := range rowsBuf {
-			b.Queue(`
-				INSERT INTO cards(category_id, code, content_enc, content_nonce, type, batch_id, status, note,
-				                  content_filename, content_mime, content_size)
-				VALUES($1,$2,$3,$4,$5,$6,'unused',$7,$8,$9,$10)`,
-				categoryID, r.code, r.enc, r.nonce, typ, batchID, note, r.fn, r.mime, r.sz)
-		}
-		br := tx.SendBatch(ctx, b)
-		for range rowsBuf {
-			if _, err := br.Exec(); err != nil {
-				_ = br.Close()
-				_ = tx.Rollback(ctx)
-				return nil, err
+		// COPY 一次写入（失败则 Batch 回退）
+		_, err = a.Pool.CopyFrom(ctx,
+			pgx.Identifier{"cards"},
+			[]string{
+				"category_id", "code", "content_enc", "content_nonce", "type", "batch_id",
+				"status", "note", "content_filename", "content_mime", "content_size",
+			},
+			pgx.CopyFromRows(rows),
+		)
+		if err != nil {
+			if err2 := a.insertCardsBatch(ctx, categoryID, typ, batchID, note, chunkLines, genCodes); err2 != nil {
+				return nil, fmt.Errorf("import copy: %w; batch fallback: %v", err, err2)
 			}
-		}
-		if err := br.Close(); err != nil {
-			_ = tx.Rollback(ctx)
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		for _, r := range rowsBuf {
-			codes = append(codes, r.code)
 		}
 		reportProgress(len(codes))
 	}
@@ -467,6 +461,95 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 		"total":    len(codes),
 		"category": cat,
 	}, nil
+}
+
+// allocateUniqueCodes 内存生成 + 一次 ANY 查重，避免逐行 EXISTS。
+func (a *App) allocateUniqueCodes(ctx context.Context, categoryID, prefix string, n int) ([]string, error) {
+	if n < 1 {
+		return nil, nil
+	}
+	out := make([]string, 0, n)
+	local := make(map[string]struct{}, n*2)
+	for attempt := 0; attempt < 20 && len(out) < n; attempt++ {
+		need := n - len(out)
+		// 多生成一些候选，降低冲突轮次
+		candN := need*2 + 8
+		cands := make([]string, 0, candN)
+		for len(cands) < candN {
+			code, err := crypto.GenerateCode(prefix)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := local[code]; ok {
+				continue
+			}
+			local[code] = struct{}{}
+			cands = append(cands, code)
+		}
+		// 一次查库：已存在的编码
+		rows, err := a.Pool.Query(ctx, `
+			SELECT code FROM cards WHERE category_id=$1 AND code = ANY($2)`, categoryID, cands)
+		if err != nil {
+			return nil, err
+		}
+		exist := map[string]struct{}{}
+		for rows.Next() {
+			var c string
+			if rows.Scan(&c) == nil {
+				exist[c] = struct{}{}
+			}
+		}
+		rows.Close()
+		for _, c := range cands {
+			if _, bad := exist[c]; bad {
+				continue
+			}
+			out = append(out, c)
+			if len(out) >= n {
+				break
+			}
+		}
+	}
+	if len(out) < n {
+		return nil, apperr.Internal("编码生成冲突过多，请重试")
+	}
+	return out[:n], nil
+}
+
+// insertCardsBatch CopyFrom 失败时的 Batch 回退；codes 与 contents 等长。
+func (a *App) insertCardsBatch(ctx context.Context, categoryID string, typ domain.CardType, batchID *string, note string, contents, codes []string) error {
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	b := &pgx.Batch{}
+	mime := defaultMimeForType(typ)
+	for i, content := range contents {
+		code := codes[i]
+		enc, nonce, err := a.EncryptContent(content)
+		if err != nil {
+			return err
+		}
+		fn := defaultFilename(typ, code)
+		sz := int64(len(content))
+		b.Queue(`
+			INSERT INTO cards(category_id, code, content_enc, content_nonce, type, batch_id, status, note,
+			                  content_filename, content_mime, content_size)
+			VALUES($1,$2,$3,$4,$5,$6,'unused',$7,$8,$9,$10)`,
+			categoryID, code, enc, nonce, typ, batchID, note, fn, mime, sz)
+	}
+	br := tx.SendBatch(ctx, b)
+	for range contents {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
+			return err
+		}
+	}
+	if err := br.Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (a *App) uniqueCodeTx(ctx context.Context, tx pgx.Tx, categoryID, prefix string) (string, error) {
@@ -828,38 +911,50 @@ func (a *App) ExportBatchCardCodes(ctx context.Context, batchID, actor, ip strin
 	return codes, batchName, nil
 }
 
-func (a *App) ListBatches(ctx context.Context, categorySlug string) ([]domain.Batch, error) {
-	// 先截断最近 100 批，再对这批做 cards 聚合，避免全表 JOIN 再 LIMIT
+// ListBatches 服务端分页；先取页内批次再聚合卡数。
+func (a *App) ListBatches(ctx context.Context, categorySlug string, page, pageSize int) (domain.PageResult[domain.Batch], error) {
+	page, pageSize = paging.Normalize(page, pageSize, 10, 100)
 	args := []any{}
 	filter := ""
 	if categorySlug != "" {
 		filter = ` AND cat.slug=$1`
 		args = append(args, categorySlug)
 	}
-	sql := `
-		WITH recent AS (
+	var total int
+	countSQL := `
+		SELECT COUNT(*) FROM batches b
+		JOIN categories cat ON cat.id=b.category_id
+		WHERE 1=1` + filter
+	_ = a.Pool.QueryRow(ctx, countSQL, args...).Scan(&total)
+
+	listArgs := append(append([]any{}, args...), pageSize+1, paging.Offset(page, pageSize))
+	// $ for limit: if category filter then $2 $3 else $1 $2
+	limIdx := len(args) + 1
+	offIdx := len(args) + 2
+	sql := fmt.Sprintf(`
+		WITH page AS (
 			SELECT b.id, b.category_id, cat.name AS category_name, b.name, b.note, b.created_at
 			FROM batches b
 			JOIN categories cat ON cat.id=b.category_id
-			WHERE 1=1` + filter + `
+			WHERE 1=1%s
 			ORDER BY b.created_at DESC
-			LIMIT 100
+			LIMIT $%d OFFSET $%d
 		)
-		SELECT r.id, r.category_id, r.category_name, r.name, r.note, r.created_at,
+		SELECT p.id, p.category_id, p.category_name, p.name, p.note, p.created_at,
 		       COALESCE(agg.card_count, 0), COALESCE(agg.unused_count, 0)
-		FROM recent r
+		FROM page p
 		LEFT JOIN (
 			SELECT c.batch_id,
 			       COUNT(*)::int AS card_count,
 			       COUNT(*) FILTER (WHERE c.status='unused')::int AS unused_count
 			FROM cards c
-			WHERE c.batch_id IN (SELECT id FROM recent)
+			WHERE c.batch_id IN (SELECT id FROM page)
 			GROUP BY c.batch_id
-		) agg ON agg.batch_id = r.id
-		ORDER BY r.created_at DESC`
-	rows, err := a.Pool.Query(ctx, sql, args...)
+		) agg ON agg.batch_id = p.id
+		ORDER BY p.created_at DESC`, filter, limIdx, offIdx)
+	rows, err := a.Pool.Query(ctx, sql, listArgs...)
 	if err != nil {
-		return nil, err
+		return domain.PageResult[domain.Batch]{}, err
 	}
 	defer rows.Close()
 	out := []domain.Batch{}
@@ -867,10 +962,20 @@ func (a *App) ListBatches(ctx context.Context, categorySlug string) ([]domain.Ba
 		var b domain.Batch
 		var created time.Time
 		if err := rows.Scan(&b.ID, &b.CategoryID, &b.CategoryName, &b.Name, &b.Note, &created, &b.CardCount, &b.UnusedCount); err != nil {
-			return nil, err
+			return domain.PageResult[domain.Batch]{}, err
 		}
 		b.CreatedAt = formatTS(created)
 		out = append(out, b)
 	}
-	return out, nil
+	hasMore := len(out) > pageSize
+	if hasMore {
+		out = out[:pageSize]
+	}
+	if !hasMore && total > page*pageSize {
+		hasMore = page*pageSize < total
+	}
+	return domain.PageResult[domain.Batch]{
+		Items: out, Total: total, Page: page, PageSize: pageSize,
+		TotalExact: true, HasMore: hasMore,
+	}, nil
 }

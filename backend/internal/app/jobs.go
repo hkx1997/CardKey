@@ -63,6 +63,28 @@ func (a *App) MarkExpiredCards(ctx context.Context) (int64, error) {
 
 // StartBackgroundJobs 启动周期任务（过期清理、库存对账、邮件预警等）。
 func (a *App) StartBackgroundJobs(ctx context.Context) {
+	a.StartAuditWorker(ctx)
+	// Webhook 更勤：30s 一轮 SKIP LOCKED
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				wctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+				if wn, werr := a.ProcessDueWebhooks(wctx, 40); werr != nil {
+					if a.Log != nil {
+						a.Log.Warn("webhook worker failed", "err", werr)
+					}
+				} else if wn > 0 && a.Log != nil {
+					a.Log.Info("webhook worker processed", "count", wn)
+				}
+				cancel()
+			}
+		}
+	}()
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -92,17 +114,6 @@ func (a *App) StartBackgroundJobs(ctx context.Context) {
 			// 异步导入
 			a.ProcessPendingImportJobs(sctx, 3)
 			scancel()
-
-			// Webhook 可靠投递
-			wctx, wcancel := context.WithTimeout(context.Background(), 45*time.Second)
-			if wn, werr := a.ProcessDueWebhooks(wctx, 50); werr != nil {
-				if a.Log != nil {
-					a.Log.Warn("webhook outbox job failed", "err", werr)
-				}
-			} else if wn > 0 && a.Log != nil {
-				a.Log.Info("webhook outbox processed", "count", wn)
-			}
-			wcancel()
 
 			// 邮件预警
 			mctx, mcancel := context.WithTimeout(context.Background(), 45*time.Second)

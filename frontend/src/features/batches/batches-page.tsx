@@ -34,18 +34,14 @@ import { formatDateTime } from "@/shared/lib/format";
 
 export function BatchesPage() {
   const confirm = useConfirm();
-  const q = useBatchesQuery();
+  const [page, setPage] = useState(1);
+  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
+  const q = useBatchesQuery({ page, pageSize });
   const deleteM = useDeleteBatch();
   const exportM = useExportBatch();
   const [exportingId, setExportingId] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
 
-  const allBatches = q.data ?? [];
-  const pageRows = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return allBatches.slice(start, start + pageSize);
-  }, [allBatches, page, pageSize]);
+  const pageRows = q.data?.items ?? [];
 
   async function handleDelete(b: Batch) {
     const usedLike = b.cardCount - b.unusedCount;
@@ -194,7 +190,9 @@ export function BatchesPage() {
             pagination={{
               page,
               pageSize,
-              total: allBatches.length,
+              total: q.data?.total ?? 0,
+              totalExact: q.data?.totalExact,
+              hasMore: q.data?.hasMore,
               onPageChange: setPage,
               onPageSizeChange: (n) => {
                 setPageSize(n);

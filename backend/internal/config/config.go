@@ -112,8 +112,9 @@ func Load() Config {
 		Env:                 env,
 		SecureCookie:        secure,
 		TrustProxy:          trust,
-		DBMaxConns:          int32(EnvInt("DB_MAX_CONNS", 20)),
-		DBMinConns:          int32(EnvInt("DB_MIN_CONNS", 2)),
+		// 默认提高并发：兑换 + 管理列表 + 导入/Webhook worker
+		DBMaxConns:          int32(EnvInt("DB_MAX_CONNS", 40)),
+		DBMinConns:          int32(EnvInt("DB_MIN_CONNS", 4)),
 		RequireRedeemAPIKey: strings.EqualFold(getenv("REQUIRE_REDEEM_API_KEY", "false"), "true"),
 		CSRFCheck:           csrf,
 		RequireRedis:        strings.EqualFold(getenv("REQUIRE_REDIS", requireRedisDefault), "true"),

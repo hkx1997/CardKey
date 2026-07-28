@@ -274,33 +274,9 @@ export function CardsPage() {
     );
   }
 
-  const columns = useMemo<DataTableColumn<CardEntity>[]>(
+  // 业务列稳定（不因勾选重建）；仅 select 列随 selected 更新
+  const dataColumns = useMemo<DataTableColumn<CardEntity>[]>(
     () => [
-      {
-        id: "select",
-        header: (
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={allPageSelected}
-            onChange={toggleAllPage}
-            disabled={selectableOnPage.length === 0}
-            aria-label="全选本页"
-          />
-        ),
-        headClassName: "w-10",
-        mobile: false,
-        cell: (card) => (
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={selected.has(card.id)}
-            onChange={() => toggle(card.id)}
-            disabled={!isSelectable(card)}
-            aria-label={`选择 ${card.code}`}
-          />
-        ),
-      },
       {
         id: "code",
         header: "编码",
@@ -388,7 +364,45 @@ export function CardsPage() {
         ),
       },
     ],
-    [selected, allPageSelected, selectableOnPage.length],
+    [],
+  );
+
+  const columns = useMemo<DataTableColumn<CardEntity>[]>(
+    () => [
+      {
+        id: "select",
+        header: (
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={allPageSelected}
+            onChange={toggleAllPage}
+            disabled={selectableOnPage.length === 0}
+            aria-label="全选本页"
+          />
+        ),
+        headClassName: "w-10",
+        mobile: false,
+        cell: (card) => (
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={selected.has(card.id)}
+            onChange={() => toggle(card.id)}
+            disabled={!isSelectable(card)}
+            aria-label={`选择 ${card.code}`}
+          />
+        ),
+      },
+      ...dataColumns,
+    ],
+    [
+      allPageSelected,
+      selectableOnPage.length,
+      selected,
+      dataColumns,
+      // toggle/toggleAllPage 稳定于组件内声明
+    ],
   );
 
   return (

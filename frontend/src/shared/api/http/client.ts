@@ -395,11 +395,17 @@ export const httpClient = {
     return { codes, total: codes.length };
   },
 
-  listBatches: (categorySlug?: string) => {
+  listBatches: (params?: {
+    categorySlug?: string;
+    page?: number;
+    pageSize?: number;
+  }) => {
     const sp = new URLSearchParams();
-    if (categorySlug) sp.set("category", categorySlug);
+    if (params?.categorySlug) sp.set("category", params.categorySlug);
+    if (params?.page) sp.set("page", String(params.page));
+    if (params?.pageSize) sp.set("page_size", String(params.pageSize));
     const q = sp.toString();
-    return request<Batch[]>(`/api/v1/admin/batches${q ? `?${q}` : ""}`);
+    return request<PageResult<Batch>>(`/api/v1/admin/batches${q ? `?${q}` : ""}`);
   },
 
   exportBatch: (id: string) =>

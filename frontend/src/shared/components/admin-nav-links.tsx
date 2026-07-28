@@ -57,8 +57,8 @@ function useNavPrefetch() {
     if (p.endsWith("/batches")) {
       void import("@/features/batches/batches-page");
       void qc.prefetchQuery({
-        queryKey: [...queryKeys.batches, "all"],
-        queryFn: () => api.listBatches(),
+        queryKey: [...queryKeys.batches, "all", 1, pageSize],
+        queryFn: () => api.listBatches({ page: 1, pageSize }),
         staleTime: 45_000,
       });
       return;

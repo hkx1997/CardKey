@@ -14,7 +14,7 @@ import (
 )
 
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
-	return ConnectWithPool(ctx, url, 20, 2)
+	return ConnectWithPool(ctx, url, 40, 4)
 }
 
 func ConnectWithPool(ctx context.Context, url string, maxConns, minConns int32) (*pgxpool.Pool, error) {
@@ -23,7 +23,7 @@ func ConnectWithPool(ctx context.Context, url string, maxConns, minConns int32) 
 		return nil, err
 	}
 	if maxConns < 1 {
-		maxConns = 20
+		maxConns = 40
 	}
 	if minConns < 0 {
 		minConns = 0
@@ -33,9 +33,13 @@ func ConnectWithPool(ctx context.Context, url string, maxConns, minConns int32) 
 	}
 	cfg.MaxConns = maxConns
 	cfg.MinConns = minConns
-	cfg.MaxConnLifetime = time.Hour
-	cfg.MaxConnIdleTime = 15 * time.Minute
-	cfg.HealthCheckPeriod = time.Minute
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnIdleTime = 10 * time.Minute
+	cfg.HealthCheckPeriod = 30 * time.Second
+	// 单连接语句超时由上下文控制；池等待过久时快速失败
+	if cfg.ConnConfig != nil {
+		cfg.ConnConfig.ConnectTimeout = 5 * time.Second
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err

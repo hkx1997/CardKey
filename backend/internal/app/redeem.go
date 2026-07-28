@@ -337,7 +337,7 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 	return result, nil
 }
 
-func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySlug, cursor string) (domain.PageResult[domain.RedeemRecord], error) {
+func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySlug, cursor string, wantExact bool) (domain.PageResult[domain.RedeemRecord], error) {
 	if page < 1 {
 		page = 1
 	}
@@ -399,31 +399,37 @@ func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySl
 	}
 
 	unfiltered := q == "" && categorySlug == ""
+	doCount := unfiltered || wantExact
 	var total int
 	totalExact := true
 	var items []domain.RedeemRecord
 	var times []time.Time
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		n, exact, err := a.smartCount(gctx, "redeem_records", filterKey(q, categorySlug), unfiltered, 5000, func() (int, error) {
-			var countSQL string
-			if needCat {
-				countSQL = `SELECT COUNT(*) FROM redeem_records r JOIN categories cat ON cat.id=r.category_id WHERE ` + countWhere
-			} else if q != "" {
-				countSQL = `SELECT COUNT(*) FROM redeem_records r WHERE ` + countWhere
-			} else {
-				countSQL = `SELECT COUNT(*) FROM redeem_records`
+	if doCount {
+		g.Go(func() error {
+			n, exact, err := a.smartCount(gctx, "redeem_records", filterKey(q, categorySlug), unfiltered, 5000, func() (int, error) {
+				var countSQL string
+				if needCat {
+					countSQL = `SELECT COUNT(*) FROM redeem_records r JOIN categories cat ON cat.id=r.category_id WHERE ` + countWhere
+				} else if q != "" {
+					countSQL = `SELECT COUNT(*) FROM redeem_records r WHERE ` + countWhere
+				} else {
+					countSQL = `SELECT COUNT(*) FROM redeem_records`
+				}
+				var n int
+				err := a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&n)
+				return n, err
+			})
+			if err != nil {
+				return err
 			}
-			var n int
-			err := a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&n)
-			return n, err
+			total, totalExact = n, exact
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-		total, totalExact = n, exact
-		return nil
-	})
+	} else {
+		totalExact = false
+		total = 0
+	}
 	g.Go(func() error {
 		var sql string
 		if useKeyset {

@@ -63,18 +63,7 @@ type App struct {
 
 const settingsTTL = 30 * time.Second
 
-func (a *App) Audit(ctx context.Context, actorType, actorLabel, action, resource, detail, ip string) {
-	// 审计不应被请求取消中断；独立短超时
-	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
-	_, err := a.Pool.Exec(actx, `
-		INSERT INTO audit_logs(actor_type, actor_label, action, resource, detail, ip)
-		VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::inet)`,
-		actorType, actorLabel, action, resource, detail, ip)
-	if err != nil {
-		a.Log.Warn("audit write failed", "err", err)
-	}
-}
+// Audit 见 audit_async.go（异步批量写）
 
 // Ready 检查依赖可用性。
 func (a *App) Ready(ctx context.Context) error {

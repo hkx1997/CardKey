@@ -206,7 +206,10 @@ export function DataTable<T>({
 
               {!loading &&
                 items.map((row) => (
-                  <TableRow key={rowKey(row)}>
+                  <TableRow
+                    key={rowKey(row)}
+                    className="[content-visibility:auto] [contain-intrinsic-size:auto_48px]"
+                  >
                     {columns.map((col) => (
                       <TableCell
                         key={col.id}
