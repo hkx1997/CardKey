@@ -13,14 +13,15 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
+        /**
+         * 禁止把 React / Radix / Query 拆成多 chunk。
+         * 0.1.55 曾拆出 radix-*.js，运行时 React 为 undefined → forwardRef 崩溃。
+         * 仅拆「按需动态 import」的重库。
+         */
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          if (id.includes("react-dom") || id.includes("/react/")) return "react-vendor";
-          if (id.includes("@tanstack")) return "query";
-          if (id.includes("@radix-ui")) return "radix";
-          if (id.includes("react-markdown") || id.includes("remark")) return "markdown";
-          if (id.includes("highlight.js")) return "highlight";
           if (id.includes("jszip")) return "jszip";
+          if (id.includes("highlight.js")) return "highlight";
         },
       },
     },
