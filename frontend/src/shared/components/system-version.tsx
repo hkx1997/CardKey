@@ -1,5 +1,5 @@
 import { ArrowUpCircle, History, Loader2, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,10 @@ import {
 } from "@/shared/hooks/use-system";
 import { cn } from "@/shared/lib/cn";
 import { formatDateTime } from "@/shared/lib/format";
+import {
+  waitForRestartAndReload,
+  type RestartWaitState,
+} from "@/shared/lib/wait-for-restart";
 
 /** 侧栏底部版本号 + 更新面板 */
 export function SystemVersion({ className }: { className?: string }) {
@@ -33,9 +37,33 @@ export function SystemVersion({ className }: { className?: string }) {
   const applyM = useApplyUpdate();
   const rollbackM = useRollbackUpdate();
   const confirm = useConfirm();
+  const [restartWait, setRestartWait] = useState<RestartWaitState | null>(
+    null,
+  );
 
   const check = checkM.data;
   const hasUpdate = !!check?.hasUpdate;
+  const waitingRestart = !!restartWait && restartWait.phase !== "timeout";
+
+  const startAutoReload = useCallback(
+    async (opts: { targetVersion?: string; label: string }) => {
+      toast.message(`${opts.label}，将自动检测恢复并刷新页面…`);
+      const ok = await waitForRestartAndReload({
+        targetVersion: opts.targetVersion,
+        previousVersion: infoQ.data?.version,
+        onStatus: setRestartWait,
+      });
+      if (!ok) {
+        setRestartWait({
+          phase: "timeout",
+          attempt: 0,
+          message: "等待超时，请手动刷新页面（Ctrl+Shift+R）",
+        });
+        toast.error("自动刷新超时，请手动刷新页面");
+      }
+    },
+    [infoQ.data?.version],
+  );
 
   return (
     <>
@@ -58,7 +86,14 @@ export function SystemVersion({ className }: { className?: string }) {
         <RefreshCw className="ml-auto size-3 opacity-50 group-hover:opacity-100" />
       </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          // 等待重启时禁止误关
+          if (!v && waitingRestart) return;
+          setOpen(v);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex min-w-0 flex-wrap items-center gap-2">
@@ -95,6 +130,7 @@ export function SystemVersion({ className }: { className?: string }) {
                 size="sm"
                 variant="secondary"
                 loading={checkM.isPending}
+                disabled={waitingRestart}
                 onClick={() => checkM.mutate()}
               >
                 {checkM.isPending ? (
@@ -107,6 +143,25 @@ export function SystemVersion({ className }: { className?: string }) {
                 )}
               </Button>
             </div>
+
+            {restartWait ? (
+              <TaskProgress
+                active={restartWait.phase !== "timeout" && restartWait.phase !== "ready"}
+                percent={
+                  restartWait.phase === "ready"
+                    ? 100
+                    : restartWait.phase === "timeout"
+                      ? undefined
+                      : undefined
+                }
+                label={restartWait.message}
+                detail={
+                  restartWait.version
+                    ? `探测 v${restartWait.version} · 第 ${restartWait.attempt} 次`
+                    : `第 ${restartWait.attempt} 次探测`
+                }
+              />
+            ) : null}
 
             {check ? (
               <div className="rounded-lg border border-border/70 bg-secondary/30 p-3 text-xs space-y-2">
@@ -181,22 +236,28 @@ export function SystemVersion({ className }: { className?: string }) {
                       <Button
                         size="sm"
                         className="w-full"
-                        loading={applyM.isPending}
-                        disabled={applyM.isPending || rollbackM.isPending}
+                        loading={applyM.isPending || waitingRestart}
+                        disabled={
+                          applyM.isPending ||
+                          rollbackM.isPending ||
+                          waitingRestart
+                        }
                         onClick={async () => {
                           const ok = await confirm({
                             title: `更新到 v${check.latest}`,
                             description:
-                              "将下载 Linux 二进制（含内嵌数据库迁移），替换当前进程并自动重启；启动时执行未应用的 SQL。Postgres 数据卷不会删除。",
+                              "将下载 Linux 二进制（含内嵌数据库迁移），替换当前进程并自动重启；启动时执行未应用的 SQL。恢复后页面会自动刷新。",
                             confirmLabel: "一键更新并重启",
                             destructive: true,
                           });
                           if (!ok) return;
                           applyM.mutate(check.latest, {
-                            onSuccess: () =>
-                              toast.message(
-                                "更新已提交，即将重启并自动执行数据库迁移…请稍候刷新",
-                              ),
+                            onSuccess: () => {
+                              void startAutoReload({
+                                targetVersion: check.latest,
+                                label: "更新已提交",
+                              });
+                            },
                           });
                         }}
                       >
@@ -253,19 +314,23 @@ export function SystemVersion({ className }: { className?: string }) {
                           size="sm"
                           variant="ghost"
                           className="h-7 text-[11px]"
-                          disabled={rollbackM.isPending}
+                          disabled={rollbackM.isPending || waitingRestart}
                           onClick={async () => {
                             const ok = await confirm({
                               title: `回滚到 v${h.version}`,
                               description:
-                                "将切换到该版本并重启。若数据库迁移不可逆，请谨慎操作。",
+                                "将切换到该版本并重启。恢复后页面会自动刷新。若数据库迁移不可逆，请谨慎操作。",
                               confirmLabel: "回滚",
                               destructive: true,
                             });
                             if (!ok) return;
                             rollbackM.mutate(h.version, {
-                              onSuccess: () =>
-                                toast.message("回滚已提交，服务即将重启…"),
+                              onSuccess: () => {
+                                void startAutoReload({
+                                  targetVersion: h.version,
+                                  label: "回滚已提交",
+                                });
+                              },
                             });
                           }}
                         >
@@ -287,16 +352,21 @@ export function SystemVersion({ className }: { className?: string }) {
                   size="sm"
                   variant="outline"
                   className="mt-2 w-full"
-                  disabled={rollbackM.isPending}
+                  disabled={rollbackM.isPending || waitingRestart}
                   onClick={async () => {
                     const ok = await confirm({
                       title: "回滚到上一备份",
-                      description: "使用 .bak 替换当前二进制并重启。",
+                      description:
+                        "使用 .bak 替换当前二进制并重启；恢复后页面会自动刷新。",
                       confirmLabel: "回滚",
                       destructive: true,
                     });
                     if (!ok) return;
-                    rollbackM.mutate("previous");
+                    rollbackM.mutate("previous", {
+                      onSuccess: () => {
+                        void startAutoReload({ label: "回滚已提交" });
+                      },
+                    });
                   }}
                 >
                   回滚到 .bak

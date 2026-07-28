@@ -43,7 +43,7 @@ export function useApplyUpdate() {
   return useMutation({
     mutationFn: (version?: string) => api.applyUpdate(version),
     onSuccess: () => {
-      toast.message("更新已提交，服务即将重启…");
+      // 具体文案与自动刷新由 SystemVersion 面板处理
       inv.system();
     },
     onError: (e) => toastApiError(e, "更新失败"),
@@ -55,7 +55,6 @@ export function useRollbackUpdate() {
   return useMutation({
     mutationFn: (version?: string) => api.rollbackUpdate(version),
     onSuccess: () => {
-      toast.message("回滚已提交，服务即将重启…");
       inv.system();
     },
     onError: (e) => toastApiError(e, "回滚失败"),
