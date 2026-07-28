@@ -33,23 +33,20 @@ func TestValidateProduction_SkipsNonProd(t *testing.T) {
 	}
 }
 
-func TestValidateProduction_RequiresMetricsAndCSRF(t *testing.T) {
+func TestValidateProduction_RequiresCSRF(t *testing.T) {
 	c := Config{
 		Env:           "production",
 		JWTSecret:     "this-is-a-strong-enough-jwt-secret-value-32+",
 		ContentKeyHex: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
 		CSRFCheck:     false,
-		RequireRedis:  true,
-		SecureCookie:  true,
-		MetricsToken:  "x",
-		DatabaseURL:   "postgres://u:p@localhost/db?sslmode=require",
+		DatabaseURL:   "postgres://u:p@localhost/db?sslmode=disable",
 	}
 	if err := c.ValidateProduction(); err == nil {
 		t.Fatal("expected csrf error")
 	}
 	c.CSRFCheck = true
-	c.MetricsToken = ""
-	if err := c.ValidateProduction(); err == nil {
-		t.Fatal("expected metrics token error")
+	// Docker 内 sslmode=disable + 空 METRICS_TOKEN 应可启动（避免 502）
+	if err := c.ValidateProduction(); err != nil {
+		t.Fatalf("unexpected: %v", err)
 	}
 }

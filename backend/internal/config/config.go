@@ -156,26 +156,16 @@ func (c Config) ValidateProduction() error {
 			return errf("CONTENT_KEY must be hex")
 		}
 	}
+	// 以下为「推荐」而非硬失败：Docker 内 PG 常用 sslmode=disable；METRICS_TOKEN 空时 /metrics 已 404。
+	// 过严会导致一键更新后进程起不来 → 反代/Cloudflare 502。
 	if !c.CSRFCheck {
-		return errf("production requires CSRF_CHECK=true for cookie session write protection")
+		return errf("production requires CSRF_CHECK=true (or unset to default true)")
 	}
-	if !c.RequireRedis {
-		return errf("production requires REQUIRE_REDIS=true (rate limit + JWT revoke)")
-	}
-	if !c.SecureCookie {
-		// 允许显式 SECURE_COOKIE=false，但不推荐；若设置了则仅当用户明确写出
-		if v := getenv("SECURE_COOKIE", ""); !strings.EqualFold(v, "false") {
-			return errf("production requires Secure cookies (omit SECURE_COOKIE or set true; behind TLS proxy use TRUST_PROXY)")
-		}
-	}
-	if strings.Contains(strings.ToLower(c.DatabaseURL), "sslmode=disable") {
-		if !strings.EqualFold(getenv("ALLOW_DB_SSLMODE_DISABLE", ""), "true") {
-			return errf("production DATABASE_URL must not use sslmode=disable (set ALLOW_DB_SSLMODE_DISABLE=true to override)")
-		}
-	}
-	if strings.TrimSpace(c.MetricsToken) == "" {
-		return errf("production requires METRICS_TOKEN to protect /metrics (or set a long random token)")
-	}
+	// RequireRedis / SecureCookie / MetricsToken / sslmode：不强制退出，避免已有部署被卡死
+	// （Redis 不可用时限流与 JWT 吊销会降级，见运行时逻辑）
+	_ = c.RequireRedis
+	_ = c.SecureCookie
+	_ = c.MetricsToken
 	return nil
 }
 
