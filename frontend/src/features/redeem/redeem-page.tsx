@@ -271,13 +271,13 @@ export function RedeemPage() {
             <Skeleton className="mx-auto h-4 w-64 max-w-full rounded-md" />
           </div>
           <div className="rounded-2xl border border-border/70 bg-card p-6 sm:p-8">
-            <div className="mb-6 flex flex-wrap justify-center gap-2">
+            <div className="mb-7 flex flex-wrap justify-center gap-2.5">
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-24 rounded-full" />
+                <Skeleton key={i} className="h-12 w-32 rounded-2xl" />
               ))}
             </div>
-            <Skeleton className="mx-auto h-[120px] w-full max-w-md rounded-lg" />
-            <Skeleton className="mx-auto mt-3 h-11 w-full max-w-md rounded-lg" />
+            <Skeleton className="mx-auto h-[128px] w-full max-w-md rounded-xl" />
+            <Skeleton className="mx-auto mt-3.5 h-12 w-full max-w-md rounded-xl" />
           </div>
         </main>
       </div>
@@ -296,20 +296,20 @@ export function RedeemPage() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    <div className="redeem-shell flex min-h-dvh flex-col bg-background">
       <RedeemHeader
         siteName={siteName}
         logo={cfg?.siteLogo}
         showDocs={!!cfg?.showApiDocsEntry}
       />
 
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-5 py-10 sm:gap-6 sm:py-14">
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-5 py-10 sm:gap-7 sm:py-14">
         <div className="fade-in text-center">
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h1 className="redeem-title text-3xl font-semibold sm:text-[2.5rem] sm:leading-tight">
             {title}
           </h1>
           {subtitle ? (
-            <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground sm:text-[15px]">
+            <p className="mx-auto mt-3.5 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-[15px]">
               {subtitle}
             </p>
           ) : null}
@@ -317,15 +317,15 @@ export function RedeemPage() {
 
         <section
           aria-label="兑换"
-          className="fade-in fade-in-delay-1 ui-lift w-full rounded-2xl border border-border/70 bg-card p-6 shadow-sm sm:p-8"
+          className="fade-in fade-in-delay-1 redeem-card w-full rounded-2xl p-6 sm:p-8"
         >
-          <div className="mb-6">
+          <div className="mb-7">
             {categories.length === 0 ? (
               <p className="text-center text-sm text-muted-foreground">
                 暂无可用类别
               </p>
             ) : (
-              <div className="flex flex-wrap justify-center gap-2">
+              <div className="flex flex-wrap justify-center gap-2.5">
                 {primaryTabs.map((c, i) => (
                   <CategoryTab
                     key={c.slug}
@@ -342,29 +342,31 @@ export function RedeemPage() {
                       <button
                         type="button"
                         className={cn(
-                          "interactive-press inline-flex h-10 items-center gap-1 rounded-full px-4 text-sm transition-colors",
+                          "tab-pill interactive-press inline-flex h-12 items-center gap-1.5 rounded-2xl px-4 text-sm font-medium",
                           inMore
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
+                            ? "is-active bg-primary text-primary-foreground"
+                            : "bg-secondary/80 text-muted-foreground hover:bg-secondary hover:text-foreground",
                         )}
                       >
                         更多
-                        <ChevronDown className="size-3.5 opacity-70" />
+                        <ChevronDown className="size-4 opacity-70" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="center" className="w-52">
+                    <DropdownMenuContent align="center" className="w-60 p-1.5">
                       {moreTabs.map((c) => (
                         <DropdownMenuItem
                           key={c.slug}
                           onClick={() => selectCategory(c.slug)}
                           className={cn(
-                            "justify-between gap-2",
+                            "gap-2.5 rounded-xl px-2.5 py-2.5",
                             category === c.slug && "bg-accent",
                           )}
                         >
-                          <span className="inline-flex min-w-0 items-center gap-2">
-                            <CategoryIconView icon={c.icon} size={14} />
-                            <span className="truncate">{c.name}</span>
+                          <span className="redeem-icon-chip size-9 shrink-0">
+                            <CategoryIconView icon={c.icon} size={22} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                            {c.name}
                           </span>
                           <StockBadge
                             count={c.unusedCount ?? 0}
@@ -410,16 +412,18 @@ export function RedeemPage() {
             ) : null}
           </div>
 
-          <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-3">
-            <Textarea
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={`一行一个兑换编码，支持单个或多个\n${placeholder}`}
-              className="min-h-[120px] font-mono text-sm leading-relaxed sm:min-h-[140px]"
-              value={raw}
-              onChange={(e) => setRaw(e.target.value)}
-              disabled={busy || !category}
-            />
+          <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-3.5">
+            <div className="redeem-field-focus rounded-xl">
+              <Textarea
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={`一行一个兑换编码，支持单个或多个\n${placeholder}`}
+                className="min-h-[128px] rounded-xl border-border/60 bg-background/70 font-mono text-sm leading-relaxed shadow-none sm:min-h-[148px]"
+                value={raw}
+                onChange={(e) => setRaw(e.target.value)}
+                disabled={busy || !category}
+              />
+            </div>
             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
               <span>
                 {codes.length <= 1
@@ -462,7 +466,7 @@ export function RedeemPage() {
             <Button
               type="submit"
               size="lg"
-              className="interactive-press h-11 w-full text-sm"
+              className="interactive-press h-12 w-full text-[15px] font-medium shadow-sm"
               disabled={
                 busy ||
                 !category ||
@@ -497,9 +501,9 @@ export function RedeemPage() {
 
           {/* 单条结果 */}
           {singleResult ? (
-            <div className="result-reveal mx-auto mt-6 max-w-md space-y-2">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <div className="result-reveal mx-auto mt-7 max-w-md space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CheckCircle2 className="success-pop size-5 text-emerald-600 dark:text-emerald-400" />
                 {singleResult.status === "success"
                   ? cfg?.redeemSuccessHint || "兑换成功"
                   : "已兑换"}
@@ -528,10 +532,12 @@ export function RedeemPage() {
 
           {/* 多条结果 + ZIP */}
           {batchItems ? (
-            <div className="result-reveal mx-auto mt-6 max-w-md space-y-3">
+            <div className="result-reveal mx-auto mt-7 max-w-md space-y-3 rounded-2xl border border-border/70 bg-secondary/20 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <Badge variant="success">成功 {batchOk}</Badge>
+                  <Badge variant="success" className="success-pop">
+                    成功 {batchOk}
+                  </Badge>
                   {batchFail > 0 ? (
                     <Badge variant="destructive">失败 {batchFail}</Badge>
                   ) : null}
@@ -622,17 +628,20 @@ export function RedeemPage() {
 
         {selected && !isEmptyHtml(selected.description) ? (
           <section
+            key={selected.slug}
             aria-label={`${selected.name} 说明`}
-            className="fade-in fade-in-delay-2 w-full rounded-2xl border border-border/70 bg-card p-6 shadow-sm sm:p-8"
+            className="fade-in fade-in-delay-2 redeem-card w-full rounded-2xl p-6 sm:p-8"
           >
-            <div className="mb-3 flex items-center gap-2 border-b border-border/50 pb-3">
-              <CategoryIconView icon={selected.icon} size={16} />
-              <h2 className="text-sm font-medium">
-                {selected.name}
-                <span className="ml-1.5 font-normal text-muted-foreground">
-                  说明
-                </span>
-              </h2>
+            <div className="mb-4 flex items-center gap-3 border-b border-border/50 pb-4">
+              <span className="redeem-icon-chip size-11 shrink-0">
+                <CategoryIconView icon={selected.icon} size={28} />
+              </span>
+              <div className="min-w-0">
+                <h2 className="truncate text-[15px] font-semibold tracking-tight">
+                  {selected.name}
+                </h2>
+                <p className="text-[11px] text-muted-foreground">类别说明</p>
+              </div>
             </div>
             <RichTextView
               html={selected.description}
@@ -643,7 +652,7 @@ export function RedeemPage() {
       </main>
 
       {cfg?.footerText ? (
-        <footer className="py-4 text-center text-[11px] text-muted-foreground">
+        <footer className="fade-in fade-in-delay-3 py-5 text-center text-[11px] text-muted-foreground">
           {cfg.footerText}
         </footer>
       ) : null}
@@ -677,7 +686,7 @@ function RedeemHeader({
     >
       <div className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between px-5">
         <SiteBrand name={siteName} logo={logo} />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           {showDocs ? (
             <Button variant="ghost" size="sm" asChild className="text-xs">
               <Link to="/docs">
@@ -731,8 +740,8 @@ function StockBadge({
       className={cn(
         "num-tick tabular-nums",
         compact
-          ? "text-[10px] font-medium"
-          : "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+          ? "text-[11px] font-semibold"
+          : "rounded-full px-2 py-0.5 text-[11px] font-semibold leading-none",
         compact
           ? empty
             ? "text-destructive"
@@ -743,7 +752,7 @@ function StockBadge({
               : "bg-primary-foreground/20 text-primary-foreground"
             : empty
               ? "bg-destructive/10 text-destructive"
-              : "bg-background/80 text-foreground",
+              : "bg-background/85 text-foreground shadow-sm",
       )}
       title={empty ? "暂无库存" : `剩余 ${count} 张`}
     >
@@ -771,14 +780,21 @@ function CategoryTab({
       onClick={onClick}
       style={{ "--stagger": stagger } as CSSProperties}
       className={cn(
-        "stagger-in tab-pill interactive-press inline-flex h-10 items-center gap-2 rounded-full px-3.5 text-sm sm:px-4",
+        "stagger-in tab-pill interactive-press inline-flex h-12 items-center gap-2.5 rounded-2xl px-3.5 text-sm font-medium sm:px-4",
         active
-          ? "bg-primary text-primary-foreground shadow-sm"
-          : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
+          ? "is-active bg-primary text-primary-foreground"
+          : "bg-secondary/80 text-muted-foreground hover:bg-secondary hover:text-foreground",
       )}
     >
-      <CategoryIconView icon={cat.icon} size={16} />
-      <span>{cat.name}</span>
+      <span
+        className={cn(
+          "redeem-icon-chip size-9 shrink-0 sm:size-10",
+          active && "text-primary-foreground",
+        )}
+      >
+        <CategoryIconView icon={cat.icon} size={22} />
+      </span>
+      <span className="max-w-[7.5rem] truncate sm:max-w-[9rem]">{cat.name}</span>
       <StockBadge count={stock} active={active} />
     </button>
   );

@@ -23,7 +23,8 @@ export interface AdminNavItem {
 export const ADMIN_NAV: AdminNavItem[] = [
   { to: "/admin", label: "仪表盘", icon: LayoutDashboard, end: true },
   { to: "/admin/categories", label: "类别管理", icon: FolderTree },
-  { to: "/admin/cards", label: "卡密管理", icon: Ticket },
+  // end：避免 /admin/cards 前缀匹配到 /admin/cards/import 导致双高亮
+  { to: "/admin/cards", label: "卡密管理", icon: Ticket, end: true },
   { to: "/admin/cards/import", label: "批量导入", icon: Upload },
   { to: "/admin/batches", label: "批次", icon: Layers },
   { to: "/admin/redeems", label: "兑换记录", icon: Activity },

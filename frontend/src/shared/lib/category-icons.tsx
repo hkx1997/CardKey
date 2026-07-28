@@ -44,6 +44,7 @@ export function CategoryIconView({
   size?: number;
 }) {
   // 兼容 icon 缺失 / 自定义图 value 被截断为空 → 回退默认 lucide
+  const radius = size >= 22 ? "rounded-lg" : size >= 18 ? "rounded-md" : "rounded";
   if (icon?.kind === "image" && icon.value) {
     return (
       <img
@@ -51,8 +52,13 @@ export function CategoryIconView({
         alt=""
         width={size}
         height={size}
-        className={cn("shrink-0 rounded object-cover", className)}
+        className={cn(
+          "shrink-0 object-cover ring-1 ring-black/5 dark:ring-white/10",
+          radius,
+          className,
+        )}
         style={{ width: size, height: size }}
+        draggable={false}
       />
     );
   }
@@ -63,7 +69,7 @@ export function CategoryIconView({
     <Icon
       className={cn("shrink-0", className)}
       size={size}
-      strokeWidth={1.8}
+      strokeWidth={size >= 22 ? 1.7 : 1.8}
     />
   );
 }
