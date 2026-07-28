@@ -24,3 +24,10 @@ export function useDeleteBatch() {
     onError: (e) => toastApiError(e, "删除失败"),
   });
 }
+
+export function useExportBatch() {
+  return useMutation({
+    mutationFn: (id: string) => api.exportBatch(id),
+    onError: (e) => toastApiError(e, "导出失败"),
+  });
+}

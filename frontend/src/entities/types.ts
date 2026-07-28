@@ -48,6 +48,19 @@ export interface PublicCategory {
   /** 富文本 HTML */
   description: string;
   icon: CategoryIcon;
+  /** 可兑换库存（未使用且未过期） */
+  unusedCount?: number;
+}
+
+/** 兑换端轮询用的轻量库存 */
+export interface PublicCategoryStockItem {
+  slug: string;
+  unusedCount: number;
+}
+
+export interface PublicStock {
+  categories: PublicCategoryStockItem[];
+  updatedAt: string;
 }
 
 /** 公开端可读配置（由系统设置投影） */

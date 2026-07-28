@@ -90,3 +90,16 @@ export function useImportCards() {
     onError: (e) => toastApiError(e, "导入失败"),
   });
 }
+
+export function useExportCards() {
+  return useMutation({
+    mutationFn: (params: {
+      ids?: string[];
+      status?: CardStatus | "all";
+      q?: string;
+      categorySlug?: string;
+      batchId?: string;
+    }) => api.exportCards(params),
+    onError: (e) => toastApiError(e, "导出失败"),
+  });
+}

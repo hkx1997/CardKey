@@ -33,7 +33,13 @@ export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "{prefix}/public/config",
     auth: "无",
-    desc: "公开站点配置、类别列表、限流等",
+    desc: "公开站点配置、类别列表（含 unusedCount 可兑库存）、限流等",
+  },
+  {
+    method: "GET",
+    path: "{prefix}/public/category-stock",
+    auth: "无",
+    desc: "轻量类别库存快照（兑换端轮询）；data.categories[].unusedCount",
   },
   {
     method: "GET",
@@ -176,10 +182,30 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
   },
   {
     method: "GET",
+    path: "{prefix}/admin/cards/export",
+    auth: "JWT / admin:api",
+    desc: "按筛选导出卡密编码（data.codes 一行一个下载）",
+    query: "status?, q?, category?, batch_id?, ids?",
+  },
+  {
+    method: "POST",
+    path: "{prefix}/admin/cards/export",
+    auth: "JWT / admin:api",
+    desc: "导出卡密编码；可传 ids 导出已选，或 status/q/category/batchId 筛选",
+    body: '{ "ids"?: [], "status"?, "q"?, "category"?, "batchId"? }',
+  },
+  {
+    method: "GET",
     path: "{prefix}/admin/batches",
     auth: "管理员",
     desc: "批次列表",
     query: "category?",
+  },
+  {
+    method: "GET",
+    path: "{prefix}/admin/batches/{id}/export",
+    auth: "JWT / admin:api",
+    desc: "按批次导出全部卡密编码（data.codes 一行一个）",
   },
   {
     method: "DELETE",

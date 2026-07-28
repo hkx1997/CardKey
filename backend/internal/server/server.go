@@ -92,6 +92,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/public", func(r chi.Router) {
 			r.Get("/config", h.GetPublicConfig)
+			r.Get("/category-stock", h.GetPublicCategoryStock)
 			r.Get("/setup-status", h.SetupStatus)
 			r.Post("/setup", h.CompleteSetup)
 			r.Post("/redeem", h.Redeem)
@@ -119,12 +120,16 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Delete("/categories/{id}", h.DeleteCategory)
 
 					r.Get("/cards", h.ListCards)
+					// export 必须在 {id} 之前注册
+					r.Get("/cards/export", h.ExportCards)
+					r.Post("/cards/export", h.ExportCards)
 					r.Get("/cards/{id}", h.GetCard)
 					r.Post("/cards", h.CreateCard)
 					r.Post("/cards/import", h.ImportCards)
 					r.Post("/cards/batch-action", h.BatchAction)
 
 					r.Get("/batches", h.ListBatches)
+					r.Get("/batches/{id}/export", h.ExportBatch)
 					r.Delete("/batches/{id}", h.DeleteBatch)
 					r.Get("/redeems", h.ListRedeems)
 

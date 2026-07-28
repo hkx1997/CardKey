@@ -61,6 +61,17 @@ func (h *Handler) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, cfg)
 }
 
+func (h *Handler) GetPublicCategoryStock(w http.ResponseWriter, r *http.Request) {
+	stock, err := h.App.PublicCategoryStock(r.Context())
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	// 允许短缓存，减轻轮询压力；浏览器/CDN 仍可 no-store 时以服务端为准
+	w.Header().Set("Cache-Control", "public, max-age=5")
+	response.OK(w, stock)
+}
+
 // FaviconRedirect 浏览器默认请求 /favicon.ico 时跳转到系统设置中的图标。
 func (h *Handler) FaviconRedirect(w http.ResponseWriter, r *http.Request) {
 	s, err := h.App.GetSettings(r.Context())
@@ -459,6 +470,47 @@ func (h *Handler) BatchAction(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, n)
 }
 
+// ExportCards 导出卡密编码（一行一个）。
+// GET：按 query 筛选；POST：可带 ids 导出已选，或与 GET 相同筛选字段。
+func (h *Handler) ExportCards(w http.ResponseWriter, r *http.Request) {
+	var ids []string
+	status, q, category, batchID := "", "", "", ""
+	if r.Method == http.MethodPost {
+		var in struct {
+			IDs      []string `json:"ids"`
+			Status   string   `json:"status"`
+			Q        string   `json:"q"`
+			Category string   `json:"category"`
+			BatchID  string   `json:"batchId"`
+		}
+		if err := h.decode(r, &in); err != nil {
+			response.Fail(w, err)
+			return
+		}
+		ids = in.IDs
+		status, q, category, batchID = in.Status, in.Q, in.Category, in.BatchID
+	} else {
+		qq := r.URL.Query()
+		status = qq.Get("status")
+		q = qq.Get("q")
+		category = qq.Get("category")
+		batchID = qq.Get("batch_id")
+		if raw := strings.TrimSpace(qq.Get("ids")); raw != "" {
+			ids = strings.Split(raw, ",")
+		}
+	}
+	codes, err := h.App.ExportCardCodes(r.Context(), status, q, category, batchID, ids,
+		middleware.Username(r.Context()), middleware.ClientIP(r))
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]any{
+		"codes": codes,
+		"total": len(codes),
+	})
+}
+
 func (h *Handler) ListBatches(w http.ResponseWriter, r *http.Request) {
 	list, err := h.App.ListBatches(r.Context(), r.URL.Query().Get("category"))
 	if err != nil {
@@ -466,6 +518,22 @@ func (h *Handler) ListBatches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, list)
+}
+
+func (h *Handler) ExportBatch(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	codes, name, err := h.App.ExportBatchCardCodes(r.Context(), id,
+		middleware.Username(r.Context()), middleware.ClientIP(r))
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]any{
+		"codes":     codes,
+		"total":     len(codes),
+		"batchId":   id,
+		"batchName": name,
+	})
 }
 
 func (h *Handler) DeleteBatch(w http.ResponseWriter, r *http.Request) {

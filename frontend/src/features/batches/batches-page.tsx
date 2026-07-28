@@ -1,6 +1,7 @@
-import { Trash2 } from "lucide-react";
-import { useMemo } from "react";
+import { Download, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -18,13 +19,23 @@ import {
 } from "@/shared/components/data-table";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
-import { useBatchesQuery, useDeleteBatch } from "@/shared/hooks/use-batches";
+import {
+  useBatchesQuery,
+  useDeleteBatch,
+  useExportBatch,
+} from "@/shared/hooks/use-batches";
+import {
+  downloadCodesTxt,
+  exportFilename,
+} from "@/shared/lib/export-codes";
 import { formatDateTime } from "@/shared/lib/format";
 
 export function BatchesPage() {
   const confirm = useConfirm();
   const q = useBatchesQuery();
   const deleteM = useDeleteBatch();
+  const exportM = useExportBatch();
+  const [exportingId, setExportingId] = useState<string | null>(null);
 
   async function handleDelete(b: Batch) {
     const usedLike = b.cardCount - b.unusedCount;
@@ -42,6 +53,28 @@ export function BatchesPage() {
     });
     if (!ok) return;
     deleteM.mutate(b.id);
+  }
+
+  function handleExport(b: Batch) {
+    if (b.cardCount === 0) {
+      toast.message("该批次没有卡密可导出");
+      return;
+    }
+    setExportingId(b.id);
+    exportM.mutate(b.id, {
+      onSuccess: (res) => {
+        const safeName = (res.batchName || b.name || "batch").replace(
+          /[\\/:*?"<>|]+/g,
+          "_",
+        );
+        downloadCodesTxt(
+          res.codes,
+          exportFilename(`batch-${safeName}`, res.total),
+        );
+        toast.success(`已导出批次「${res.batchName}」共 ${res.total} 个编码`);
+      },
+      onSettled: () => setExportingId(null),
+    });
   }
 
   const columns = useMemo<DataTableColumn<Batch>[]>(
@@ -90,6 +123,15 @@ export function BatchesPage() {
         align: "right",
         cell: (b) => (
           <div className="flex items-center justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={b.cardCount === 0 || exportingId === b.id}
+              onClick={() => handleExport(b)}
+            >
+              <Download />
+              <span className="hidden sm:inline">导出</span>
+            </Button>
             <Button variant="ghost" size="sm" asChild>
               <Link to={`/admin/cards?batch=${b.id}`}>查看卡密</Link>
             </Button>
@@ -108,21 +150,21 @@ export function BatchesPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deleteM.isPending],
+    [deleteM.isPending, exportingId],
   );
 
   return (
     <PageContainer>
       <PageHeader
         title="批次"
-        description="按导入批次管理库存；无已兑卡密时可删除批次"
+        description="按导入批次管理库存；可按批次导出编码（一行一个）"
       />
 
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">批次列表</CardTitle>
           <CardDescription className="text-xs">
-            新建批次请在批量导入时填写批次名
+            新建批次请在批量导入时填写批次名；导出为 .txt（一行一个编码）
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -131,7 +173,7 @@ export function BatchesPage() {
             rows={q.data}
             rowKey={(b) => b.id}
             loading={q.isLoading}
-            minWidth={560}
+            minWidth={640}
             mobileCard={(b) => (
               <div className="rounded-xl border border-border/70 p-3">
                 <div className="flex items-start justify-between gap-2">
@@ -147,14 +189,24 @@ export function BatchesPage() {
                       <p className="text-success">{b.unusedCount} 未用</p>
                       <p className="text-muted-foreground">共 {b.cardCount}</p>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => void handleDelete(b)}
-                    >
-                      <Trash2 />
-                    </Button>
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={b.cardCount === 0 || exportingId === b.id}
+                        onClick={() => handleExport(b)}
+                      >
+                        <Download />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        onClick={() => void handleDelete(b)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

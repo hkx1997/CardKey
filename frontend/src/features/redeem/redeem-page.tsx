@@ -26,6 +26,7 @@ import { SiteBrand } from "@/shared/components/site-brand";
 import { ThemeToggleButton } from "@/shared/components/theme-toggle-button";
 import {
   useBatchRedeemMutation,
+  usePublicCategoryStockQuery,
   usePublicConfigQuery,
   useRedeemMutation,
 } from "@/shared/hooks/use-public-config";
@@ -55,11 +56,32 @@ export function RedeemPage() {
   const [exporting, setExporting] = useState(false);
 
   const configQ = usePublicConfigQuery();
+  const stockQ = usePublicCategoryStockQuery({ intervalMs: 15_000 });
   const redeemM = useRedeemMutation();
   const batchM = useBatchRedeemMutation();
 
   const cfg = configQ.data;
-  const categories = cfg?.categories ?? [];
+  const stockMap = useMemo(() => {
+    const m = new Map<string, number>();
+    // 配置首屏库存
+    for (const c of cfg?.categories ?? []) {
+      if (typeof c.unusedCount === "number") m.set(c.slug, c.unusedCount);
+    }
+    // 轮询结果覆盖
+    for (const c of stockQ.data?.categories ?? []) {
+      m.set(c.slug, c.unusedCount);
+    }
+    return m;
+  }, [cfg?.categories, stockQ.data?.categories]);
+
+  const categories = useMemo(() => {
+    const list = cfg?.categories ?? [];
+    return list.map((c) => ({
+      ...c,
+      unusedCount: stockMap.get(c.slug) ?? c.unusedCount ?? 0,
+    }));
+  }, [cfg?.categories, stockMap]);
+
   const tabCount = Math.max(1, cfg?.redeemTabVisibleCount ?? 4);
   const primaryTabs = categories.slice(0, tabCount);
   const moreTabs = categories.slice(tabCount);
@@ -230,6 +252,7 @@ export function RedeemPage() {
                   <CategoryTab
                     key={c.slug}
                     cat={c}
+                    stock={c.unusedCount ?? 0}
                     active={category === c.slug}
                     onClick={() => selectCategory(c.slug)}
                   />
@@ -250,15 +273,25 @@ export function RedeemPage() {
                         <ChevronDown className="size-3.5 opacity-70" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="center" className="w-48">
+                    <DropdownMenuContent align="center" className="w-52">
                       {moreTabs.map((c) => (
                         <DropdownMenuItem
                           key={c.slug}
                           onClick={() => selectCategory(c.slug)}
-                          className={cn(category === c.slug && "bg-accent")}
+                          className={cn(
+                            "justify-between gap-2",
+                            category === c.slug && "bg-accent",
+                          )}
                         >
-                          <CategoryIconView icon={c.icon} size={14} />
-                          {c.name}
+                          <span className="inline-flex min-w-0 items-center gap-2">
+                            <CategoryIconView icon={c.icon} size={14} />
+                            <span className="truncate">{c.name}</span>
+                          </span>
+                          <StockBadge
+                            count={c.unusedCount ?? 0}
+                            active={category === c.slug}
+                            compact
+                          />
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
@@ -266,6 +299,35 @@ export function RedeemPage() {
                 )}
               </div>
             )}
+            {categories.length > 0 ? (
+              <p className="mt-3 text-center text-[11px] text-muted-foreground">
+                {selected ? (
+                  <>
+                    当前「{selected.name}」剩余{" "}
+                    <span
+                      className={cn(
+                        "font-medium tabular-nums",
+                        (selected.unusedCount ?? 0) <= 0
+                          ? "text-destructive"
+                          : "text-foreground",
+                      )}
+                    >
+                      {selected.unusedCount ?? 0}
+                    </span>{" "}
+                    张
+                  </>
+                ) : (
+                  "选择类别查看库存"
+                )}
+                <span className="mx-1.5 opacity-40">·</span>
+                约 15 秒自动刷新
+                {stockQ.isFetching && !stockQ.isLoading ? (
+                  <span className="ml-1 inline-flex items-center gap-0.5 opacity-70">
+                    <Loader2 className="size-3 animate-spin" />
+                  </span>
+                ) : null}
+              </p>
+            ) : null}
           </div>
 
           <form onSubmit={onSubmit} className="mx-auto max-w-md space-y-3">
@@ -495,12 +557,50 @@ export function RedeemPage() {
   );
 }
 
+function StockBadge({
+  count,
+  active,
+  compact,
+}: {
+  count: number;
+  active?: boolean;
+  compact?: boolean;
+}) {
+  const empty = count <= 0;
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        compact
+          ? "text-[10px] font-medium"
+          : "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+        compact
+          ? empty
+            ? "text-destructive"
+            : "text-muted-foreground"
+          : active
+            ? empty
+              ? "bg-primary-foreground/15 text-primary-foreground"
+              : "bg-primary-foreground/20 text-primary-foreground"
+            : empty
+              ? "bg-destructive/10 text-destructive"
+              : "bg-background/80 text-foreground",
+      )}
+      title={empty ? "暂无库存" : `剩余 ${count} 张`}
+    >
+      {empty ? "售罄" : compact ? count : `剩 ${count}`}
+    </span>
+  );
+}
+
 function CategoryTab({
   cat,
+  stock,
   active,
   onClick,
 }: {
   cat: PublicCategory;
+  stock: number;
   active: boolean;
   onClick: () => void;
 }) {
@@ -509,7 +609,7 @@ function CategoryTab({
       type="button"
       onClick={onClick}
       className={cn(
-        "interactive-press inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm transition-colors",
+        "interactive-press inline-flex h-10 items-center gap-2 rounded-full px-3.5 text-sm transition-colors sm:px-4",
         active
           ? "bg-primary text-primary-foreground shadow-sm"
           : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -517,6 +617,7 @@ function CategoryTab({
     >
       <CategoryIconView icon={cat.icon} size={16} />
       <span>{cat.name}</span>
+      <StockBadge count={stock} active={active} />
     </button>
   );
 }

@@ -142,11 +142,17 @@ interface MockDb {
   rateBuckets: Record<string, RateBucket>;
 }
 
+function isAvailableUnused(card: Card) {
+  if (card.status !== "unused") return false;
+  if (!card.expiresAt) return true;
+  return new Date(card.expiresAt).getTime() > Date.now();
+}
+
 function recomputeCounts(db: MockDb) {
   for (const c of db.categories) {
     const list = db.cards.filter((x) => x.categoryId === c.id);
     c.cardCount = list.length;
-    c.unusedCount = list.filter((x) => x.status === "unused").length;
+    c.unusedCount = list.filter((x) => isAvailableUnused(x)).length;
     c.usedCount = list.filter((x) => x.status === "used").length;
   }
   for (const b of db.batches) {
@@ -517,6 +523,12 @@ export const mockStore = {
   generateCode,
   randId,
   checkRateLimit,
+  /** 类别可兑换库存（unused 且未过期） */
+  availableStock(categoryId: string) {
+    return getDb().cards.filter(
+      (c) => c.categoryId === categoryId && isAvailableUnused(c),
+    ).length;
+  },
   requireSession(): AdminUser {
     const db = getDb();
     if (!db.session) {

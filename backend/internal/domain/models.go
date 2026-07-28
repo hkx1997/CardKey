@@ -74,6 +74,19 @@ type PublicCategory struct {
 	CodePrefix  string       `json:"codePrefix"`
 	Description string       `json:"description"`
 	Icon        CategoryIcon `json:"icon"`
+	// UnusedCount 可兑换库存（status=unused 且未过期）
+	UnusedCount int `json:"unusedCount"`
+}
+
+// PublicCategoryStock 轻量库存快照（兑换端轮询）
+type PublicCategoryStock struct {
+	Slug        string `json:"slug"`
+	UnusedCount int    `json:"unusedCount"`
+}
+
+type PublicStock struct {
+	Categories []PublicCategoryStock `json:"categories"`
+	UpdatedAt  string                `json:"updatedAt"`
 }
 
 type Card struct {

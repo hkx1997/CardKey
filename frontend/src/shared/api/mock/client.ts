@@ -10,6 +10,7 @@ import type {
   DashboardStats,
   PageResult,
   PublicConfig,
+  PublicStock,
   RedeemRecord,
   RedeemResult,
   Settings,
@@ -95,7 +96,23 @@ export const mockClient = {
           codePrefix: c.codePrefix,
           description: c.description,
           icon: c.icon,
+          unusedCount: mockStore.availableStock(c.id),
         })),
+    };
+  },
+
+  async getPublicCategoryStock(): Promise<PublicStock> {
+    await delay(60);
+    const db = mockStore.getDb();
+    return {
+      categories: db.categories
+        .filter((c) => c.enabled)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .map((c) => ({
+          slug: c.slug,
+          unusedCount: mockStore.availableStock(c.id),
+        })),
+      updatedAt: new Date().toISOString(),
     };
   },
 
@@ -580,6 +597,49 @@ export const mockClient = {
     return n;
   },
 
+  async exportCards(params: {
+    ids?: string[];
+    status?: CardStatus | "all";
+    q?: string;
+    batchId?: string;
+    categorySlug?: string;
+  }): Promise<{ codes: string[]; total: number }> {
+    await delay();
+    mockStore.requireSession();
+    const db = mockStore.getDb();
+    let items = [...db.cards];
+    if (params.ids && params.ids.length > 0) {
+      const set = new Set(params.ids);
+      items = items.filter((c) => set.has(c.id));
+    } else {
+      if (params.categorySlug) {
+        const cat = mockStore.findCategoryBySlug(params.categorySlug);
+        if (cat) items = items.filter((c) => c.categoryId === cat.id);
+      }
+      if (params.status && params.status !== "all") {
+        items = items.filter((c) => c.status === params.status);
+      }
+      if (params.batchId) {
+        items = items.filter((c) => c.batchId === params.batchId);
+      }
+      if (params.q) {
+        const q = params.q.toUpperCase();
+        items = items.filter(
+          (c) =>
+            c.code.includes(q) ||
+            c.note.toLowerCase().includes(params.q!.toLowerCase()),
+        );
+      }
+    }
+    items.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    if (items.length === 0) err(400, "VALIDATION_ERROR", "没有可导出的卡密");
+    const codes = items.map((c) => c.code);
+    return { codes, total: codes.length };
+  },
+
   async listBatches(categorySlug?: string): Promise<Batch[]> {
     await delay();
     mockStore.requireSession();
@@ -589,6 +649,35 @@ export const mockClient = {
       if (cat) list = list.filter((b) => b.categoryId === cat.id);
     }
     return list;
+  },
+
+  async exportBatch(
+    id: string,
+  ): Promise<{
+    codes: string[];
+    total: number;
+    batchId: string;
+    batchName: string;
+  }> {
+    await delay();
+    mockStore.requireSession();
+    const db = mockStore.getDb();
+    const batch = db.batches.find((b) => b.id === id);
+    if (!batch) err(404, "NOT_FOUND", "批次不存在");
+    const items = db.cards
+      .filter((c) => c.batchId === id)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+    if (items.length === 0) err(400, "VALIDATION_ERROR", "没有可导出的卡密");
+    const codes = items.map((c) => c.code);
+    return {
+      codes,
+      total: codes.length,
+      batchId: id,
+      batchName: batch.name,
+    };
   },
 
   async deleteBatch(id: string): Promise<void> {

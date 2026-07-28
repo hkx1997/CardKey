@@ -1,6 +1,7 @@
 /** React Query 键单一真源，避免字符串散落 */
 export const queryKeys = {
   publicConfig: ["public-config"] as const,
+  publicCategoryStock: ["public-category-stock"] as const,
   settings: ["settings"] as const,
   dashboard: ["dashboard"] as const,
   runtimeMetrics: ["runtime-metrics"] as const,

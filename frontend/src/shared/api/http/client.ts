@@ -10,6 +10,7 @@ import type {
   DashboardStats,
   PageResult,
   PublicConfig,
+  PublicStock,
   RedeemRecord,
   RedeemResult,
   Settings,
@@ -40,6 +41,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 /** 真实 HTTP 适配器：契约与 mock 一致 */
 export const httpClient = {
   getPublicConfig: () => request<PublicConfig>("/api/v1/public/config"),
+
+  getPublicCategoryStock: () =>
+    request<PublicStock>("/api/v1/public/category-stock"),
 
   setupStatus: () =>
     request<{
@@ -211,12 +215,39 @@ export const httpClient = {
       body: JSON.stringify({ ids, action }),
     }),
 
+  /** 导出卡密编码（一行一个）；ids 优先，否则按筛选 */
+  exportCards: (params: {
+    ids?: string[];
+    status?: CardStatus | "all";
+    q?: string;
+    batchId?: string;
+    categorySlug?: string;
+  }) =>
+    request<{ codes: string[]; total: number }>("/api/v1/admin/cards/export", {
+      method: "POST",
+      body: JSON.stringify({
+        ids: params.ids,
+        status: params.status && params.status !== "all" ? params.status : undefined,
+        q: params.q || undefined,
+        category: params.categorySlug || undefined,
+        batchId: params.batchId || undefined,
+      }),
+    }),
+
   listBatches: (categorySlug?: string) => {
     const sp = new URLSearchParams();
     if (categorySlug) sp.set("category", categorySlug);
     const q = sp.toString();
     return request<Batch[]>(`/api/v1/admin/batches${q ? `?${q}` : ""}`);
   },
+
+  exportBatch: (id: string) =>
+    request<{
+      codes: string[];
+      total: number;
+      batchId: string;
+      batchName: string;
+    }>(`/api/v1/admin/batches/${id}/export`),
 
   deleteBatch: (id: string) =>
     request<void>(`/api/v1/admin/batches/${id}`, { method: "DELETE" }),

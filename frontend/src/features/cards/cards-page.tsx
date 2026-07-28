@@ -2,6 +2,7 @@ import {
   Ban,
   CheckCircle,
   Copy,
+  Download,
   Eye,
   Plus,
   Search,
@@ -53,8 +54,13 @@ import {
   useBatchCardAction,
   useCardDetail,
   useCardsQuery,
+  useExportCards,
 } from "@/shared/hooks/use-cards";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
+import {
+  downloadCodesTxt,
+  exportFilename,
+} from "@/shared/lib/export-codes";
 import { formatDateTime } from "@/shared/lib/format";
 import { CardStatusBadge } from "@/shared/lib/status";
 
@@ -90,6 +96,7 @@ export function CardsPage() {
   });
   const detailQ = useCardDetail(detailId, reveal);
   const actionM = useBatchCardAction();
+  const exportM = useExportCards();
 
   const pageItems = listQ.data?.items ?? [];
   const selectableOnPage = pageItems.filter(isSelectable);
@@ -136,6 +143,50 @@ export function CardsPage() {
     void navigator.clipboard.writeText(codes.join("\n")).then(
       () => toast.success(`已复制 ${codes.length} 个编码`),
       () => toast.error("复制失败"),
+    );
+  }
+
+  /** 批量导出：有勾选则导已选，否则按当前筛选导出全部（一行一个 .txt） */
+  function runExport(mode: "selected" | "filter") {
+    if (exportM.isPending) return;
+    if (mode === "selected") {
+      const ids = [...selected];
+      if (ids.length === 0) {
+        toast.message("请先勾选要导出的卡密");
+        return;
+      }
+      exportM.mutate(
+        { ids },
+        {
+          onSuccess: (res) => {
+            downloadCodesTxt(
+              res.codes,
+              exportFilename("cards-selected", res.total),
+            );
+            toast.success(`已导出 ${res.total} 个编码`);
+          },
+        },
+      );
+      return;
+    }
+    const total = listQ.data?.total ?? 0;
+    if (total === 0) {
+      toast.message("当前筛选下没有卡密可导出");
+      return;
+    }
+    exportM.mutate(
+      {
+        status,
+        q: query || undefined,
+        categorySlug: categorySlug === ALL ? undefined : categorySlug,
+        batchId: batchFromUrl,
+      },
+      {
+        onSuccess: (res) => {
+          downloadCodesTxt(res.codes, exportFilename("cards", res.total));
+          toast.success(`已导出 ${res.total} 个编码（一行一个）`);
+        },
+      },
     );
   }
 
@@ -266,7 +317,7 @@ export function CardsPage() {
         description={
           batchFromUrl
             ? "当前按批次筛选 · 可清除筛选后查看全部"
-            : "按类别隔离的库存；支持批量启用/禁用/删除与复制编码"
+            : "按类别隔离的库存；支持批量导出/启用/禁用/删除"
         }
         actions={
           <>
@@ -284,6 +335,14 @@ export function CardsPage() {
                 清除批次筛选
               </Button>
             ) : null}
+            <Button
+              variant="outline"
+              disabled={exportM.isPending || (listQ.data?.total ?? 0) === 0}
+              onClick={() => runExport("filter")}
+            >
+              <Download />
+              导出
+            </Button>
             <Button variant="outline" asChild className="sm:w-auto">
               <Link to="/admin/cards/import">批量导入</Link>
             </Button>
@@ -312,6 +371,15 @@ export function CardsPage() {
                     >
                       <Copy />
                       复制编码
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={exportM.isPending}
+                      onClick={() => runExport("selected")}
+                    >
+                      <Download />
+                      导出已选 ({selected.size})
                     </Button>
                     <Button
                       variant="outline"

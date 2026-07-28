@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { ApiError } from "@/entities/types";
@@ -7,18 +7,42 @@ import { getErrorMessage } from "@/shared/lib/api-toast";
 import type { BatchRedeemItem } from "@/shared/lib/redeem-zip";
 import { queryKeys } from "@/shared/lib/query-keys";
 
+/** 站点配置（含类别元数据）；库存另由 stock 轮询刷新 */
 export function usePublicConfigQuery() {
   return useQuery({
     queryKey: queryKeys.publicConfig,
     queryFn: () => api.getPublicConfig(),
-    staleTime: 30_000,
+    staleTime: 60_000,
+  });
+}
+
+/** 兑换端类别库存：默认 15s 轮询，窗口聚焦时也会刷新 */
+export function usePublicCategoryStockQuery(opts?: {
+  /** 轮询间隔 ms，默认 15000；0 关闭轮询 */
+  intervalMs?: number;
+  enabled?: boolean;
+}) {
+  const interval =
+    opts?.intervalMs === undefined ? 15_000 : opts.intervalMs;
+  return useQuery({
+    queryKey: queryKeys.publicCategoryStock,
+    queryFn: () => api.getPublicCategoryStock(),
+    enabled: opts?.enabled !== false,
+    staleTime: 5_000,
+    refetchInterval: interval > 0 ? interval : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 }
 
 export function useRedeemMutation() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { category: string; code: string }) =>
       api.redeem(input),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.publicCategoryStock });
+    },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "兑换失败");
     },
@@ -30,6 +54,7 @@ export function useRedeemMutation() {
  * 单条失败不中断整批，结果写入 items。
  */
 export function useBatchRedeemMutation() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
       category: string;
@@ -55,6 +80,9 @@ export function useBatchRedeemMutation() {
         onProgress?.(i + 1, codes.length, item);
       }
       return items;
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.publicCategoryStock });
     },
   });
 }

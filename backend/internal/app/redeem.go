@@ -11,14 +11,25 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 )
 
+// availableStockExpr 可兑换库存：未使用且未过期（与兑换逻辑一致）
+const availableStockExpr = `COUNT(cards.id) FILTER (
+	WHERE cards.status = 'unused'
+	  AND (cards.expires_at IS NULL OR cards.expires_at > now())
+)`
+
 func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	s, err := a.GetSettings(ctx)
 	if err != nil {
 		return domain.PublicConfig{}, err
 	}
 	rows, err := a.Pool.Query(ctx, `
-		SELECT slug, name, code_prefix, description, icon_kind, icon_value
-		FROM categories WHERE enabled=true ORDER BY sort_order, created_at`)
+		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind, c.icon_value,
+		       `+availableStockExpr+`
+		FROM categories c
+		LEFT JOIN cards ON cards.category_id = c.id
+		WHERE c.enabled = true
+		GROUP BY c.id
+		ORDER BY c.sort_order, c.created_at`)
 	if err != nil {
 		return domain.PublicConfig{}, err
 	}
@@ -26,7 +37,7 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	cats := []domain.PublicCategory{}
 	for rows.Next() {
 		var c domain.PublicCategory
-		if err := rows.Scan(&c.Slug, &c.Name, &c.CodePrefix, &c.Description, &c.Icon.Kind, &c.Icon.Value); err != nil {
+		if err := rows.Scan(&c.Slug, &c.Name, &c.CodePrefix, &c.Description, &c.Icon.Kind, &c.Icon.Value, &c.UnusedCount); err != nil {
 			return domain.PublicConfig{}, err
 		}
 		cats = append(cats, c)
@@ -58,6 +69,36 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 		ShowApiDocsEntry: s.ApiDocsEnabled && s.ShowApiDocsEntry,
 		PublicRedeemApiKey: pubKey, RateLimitIpPerMin: s.RateLimitIpPerMin, RateLimitCodePerMin: s.RateLimitCodePerMin,
 		Categories: cats,
+	}, nil
+}
+
+// PublicCategoryStock 启用类别的可兑换库存快照（供兑换端轮询，轻量无 HTML）。
+func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, error) {
+	rows, err := a.Pool.Query(ctx, `
+		SELECT c.slug, `+availableStockExpr+`
+		FROM categories c
+		LEFT JOIN cards ON cards.category_id = c.id
+		WHERE c.enabled = true
+		GROUP BY c.id
+		ORDER BY c.sort_order, c.created_at`)
+	if err != nil {
+		return domain.PublicStock{}, err
+	}
+	defer rows.Close()
+	out := []domain.PublicCategoryStock{}
+	for rows.Next() {
+		var s domain.PublicCategoryStock
+		if err := rows.Scan(&s.Slug, &s.UnusedCount); err != nil {
+			return domain.PublicStock{}, err
+		}
+		out = append(out, s)
+	}
+	if out == nil {
+		out = []domain.PublicCategoryStock{}
+	}
+	return domain.PublicStock{
+		Categories: out,
+		UpdatedAt:  formatTS(time.Now().UTC()),
 	}, nil
 }
 

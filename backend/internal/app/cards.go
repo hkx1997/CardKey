@@ -384,6 +384,116 @@ func (a *App) DeleteBatch(ctx context.Context, id, actor, ip string) error {
 	return nil
 }
 
+// maxExportCodes 单次导出上限，防止一次拉爆内存。
+const maxExportCodes = 100_000
+
+// ExportCardCodes 导出卡密编码（一行一个）。ids 非空时仅导出指定 ID，否则按筛选条件。
+func (a *App) ExportCardCodes(ctx context.Context, status, q, categorySlug, batchID string, ids []string, actor, ip string) ([]string, error) {
+	where := []string{"1=1"}
+	args := []any{}
+	i := 1
+
+	if len(ids) > 0 {
+		// 仅导出指定 ID（保持请求顺序不强制，按创建时间倒序）
+		ph := make([]string, 0, len(ids))
+		for _, id := range ids {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			ph = append(ph, fmt.Sprintf("$%d", i))
+			args = append(args, id)
+			i++
+		}
+		if len(ph) == 0 {
+			return nil, apperr.Validation("未选择任何卡密")
+		}
+		where = append(where, "cards.id IN ("+strings.Join(ph, ",")+")")
+	} else {
+		if status != "" && status != "all" {
+			where = append(where, fmt.Sprintf("cards.status=$%d", i))
+			args = append(args, status)
+			i++
+		}
+		if q != "" {
+			where = append(where, fmt.Sprintf("(cards.code ILIKE $%d OR cards.note ILIKE $%d)", i, i))
+			args = append(args, "%"+q+"%")
+			i++
+		}
+		if categorySlug != "" {
+			where = append(where, fmt.Sprintf("cat.slug=$%d", i))
+			args = append(args, categorySlug)
+			i++
+		}
+		if batchID != "" {
+			where = append(where, fmt.Sprintf("cards.batch_id=$%d", i))
+			args = append(args, batchID)
+			i++
+		}
+	}
+	wsql := strings.Join(where, " AND ")
+
+	var total int
+	countSQL := `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
+	if err := a.Pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return nil, err
+	}
+	if total == 0 {
+		return nil, apperr.Validation("没有可导出的卡密")
+	}
+	if total > maxExportCodes {
+		return nil, apperr.Validation(fmt.Sprintf("导出数量超过上限 %d，请缩小筛选范围", maxExportCodes))
+	}
+
+	sql := `
+		SELECT cards.code
+		FROM cards
+		JOIN categories cat ON cat.id=cards.category_id
+		WHERE ` + wsql + `
+		ORDER BY cards.created_at DESC`
+	rows, err := a.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	codes := make([]string, 0, total)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		codes = append(codes, code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	detail := fmt.Sprintf("count=%d", len(codes))
+	if batchID != "" {
+		detail += " batch=" + batchID
+	}
+	if len(ids) > 0 {
+		detail += " mode=ids"
+	} else {
+		detail += " mode=filter"
+	}
+	a.Audit(ctx, "admin", actor, "export_cards", "cards", detail, ip)
+	return codes, nil
+}
+
+// ExportBatchCardCodes 按批次导出全部卡密编码。
+func (a *App) ExportBatchCardCodes(ctx context.Context, batchID, actor, ip string) (codes []string, batchName string, err error) {
+	err = a.Pool.QueryRow(ctx, `SELECT name FROM batches WHERE id=$1`, batchID).Scan(&batchName)
+	if err != nil {
+		return nil, "", apperr.NotFound("批次不存在")
+	}
+	codes, err = a.ExportCardCodes(ctx, "", "", "", batchID, nil, actor, ip)
+	if err != nil {
+		return nil, batchName, err
+	}
+	return codes, batchName, nil
+}
+
 func (a *App) ListBatches(ctx context.Context, categorySlug string) ([]domain.Batch, error) {
 	sql := `
 		SELECT b.id, b.category_id, cat.name, b.name, b.note, b.created_at,
