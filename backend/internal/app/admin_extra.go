@@ -357,6 +357,11 @@ func (a *App) UpdateSettings(ctx context.Context, patch domain.Settings, actor, 
 	if strings.TrimSpace(patch.SmtpPassword) == "" {
 		patch.SmtpPassword = rawCur.SmtpPassword
 	}
+	// Webhook 密钥空串保留原值（与 SMTP 密码同策略）
+	if strings.TrimSpace(patch.RedeemWebhookSecret) == "" {
+		patch.RedeemWebhookSecret = rawCur.RedeemWebhookSecret
+	}
+	patch.RedeemWebhookURL = strings.TrimSpace(patch.RedeemWebhookURL)
 	_ = cur
 	if err := a.SaveSettings(ctx, patch); err != nil {
 		return domain.Settings{}, err

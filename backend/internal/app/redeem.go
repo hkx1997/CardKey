@@ -66,8 +66,14 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 		DocumentTitle: docTitle,
 		RedeemTitle: s.RedeemTitle, RedeemSubtitle: s.RedeemSubtitle, RedeemSuccessHint: s.RedeemSuccessHint,
 		RedeemPlaceholder: s.RedeemPlaceholder, RedeemButtonText: s.RedeemButtonText,
-		// 验证码开关仅配置项预留；未接入人机验证服务时不对前端宣称已保护
-		CaptchaEnabled: false, RedeemTabVisibleCount: s.RedeemTabVisibleCount,
+		// 仅当设置开启且环境配齐 Turnstile 密钥时，才对前端宣称已保护
+		CaptchaEnabled: a.CaptchaActive(ctx), RedeemTabVisibleCount: s.RedeemTabVisibleCount,
+		CaptchaSiteKey: func() string {
+			if a.CaptchaActive(ctx) {
+				return a.CaptchaSiteKey
+			}
+			return ""
+		}(),
 		ApiBasePath: s.ApiBasePath, ApiPublicBaseUrl: strings.TrimRight(s.ApiPublicBaseUrl, "/"),
 		ApiDocsEnabled: s.ApiDocsEnabled,
 		ShowApiDocsEntry: s.ApiDocsEnabled && s.ShowApiDocsEntry,
@@ -132,7 +138,7 @@ func PublicStockETag(s domain.PublicStock) string {
 	return `W/"` + sum + `"`
 }
 
-func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey string) (domain.RedeemResult, error) {
+func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey string, captchaToken string) (domain.RedeemResult, error) {
 	s, err := a.GetSettings(ctx)
 	if err != nil {
 		return domain.RedeemResult{}, err
@@ -144,6 +150,10 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 				return domain.RedeemResult{}, err
 			}
 		}
+	}
+	// 浏览器兑换：Turnstile（API Key 调用跳过）
+	if err := a.RequireCaptchaForRedeem(ctx, captchaToken, ip, apiKey); err != nil {
+		return domain.RedeemResult{}, err
 	}
 	code = crypto.NormalizeCode(code)
 	if code == "" {
@@ -251,11 +261,14 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	if a.RDB != nil {
 		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
 	}
-	return domain.RedeemResult{
+	result := domain.RedeemResult{
 		Status: "success", Category: cat.Slug, CategoryName: cat.Name,
 		Code: cardCode, Type: typ, Content: content, ContentEncoding: encoding,
 		Filename: filename, Mime: mime, Size: size, RedeemedAt: formatTS(now),
-	}, nil
+	}
+	// 异步 Webhook（不阻塞响应）
+	a.FireRedeemWebhook(ctx, s, result, ip)
+	return result, nil
 }
 
 func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySlug string) (domain.PageResult[domain.RedeemRecord], error) {

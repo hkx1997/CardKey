@@ -1,7 +1,8 @@
 name: Release
 
-# Docker 一键更新需要 Linux 资产：仅上传 linux-amd64 / linux-arm64 + checksums
-# 不附带 Windows / macOS 包
+# Docker 一键更新需要 Linux 资产：后端 + 嵌入 SPA + 迁移
+# 仅上传 linux-amd64 / linux-arm64 + checksums（不附带 Windows/macOS）
+# 空壳包（约 11–12MB、未 embed 前端）会导致线上 502 / UI 不更新 —— 本流水线强制 ≥13MB
 
 on:
   push:
@@ -23,11 +24,47 @@ jobs:
         with:
           go-version: "1.22"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
+
       - name: Version
         id: ver
         run: |
           V=$(tr -d ' \t\r\n' < VERSION)
           echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building CardKey $V"
+
+      - name: Build frontend (embed SPA)
+        working-directory: frontend
+        env:
+          VITE_API_MODE: http
+          VITE_APP_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -f dist/index.html
+          test -d dist/assets
+          ASSETS=$(find dist/assets -type f | wc -l)
+          echo "frontend assets=$ASSETS"
+          test "$ASSETS" -ge 5
+
+      - name: Copy SPA into webstatic embed
+        run: |
+          rm -rf backend/internal/webstatic/dist
+          mkdir -p backend/internal/webstatic/dist
+          cp -a frontend/dist/. backend/internal/webstatic/dist/
+          test -f backend/internal/webstatic/dist/index.html
+          test -d backend/internal/webstatic/dist/assets
+          CSS=$(ls backend/internal/webstatic/dist/assets/index-*.css | head -1)
+          JS=$(ls backend/internal/webstatic/dist/assets/index-*.js | head -1)
+          test -n "$CSS" && test -n "$JS"
+          echo "CSS=$CSS" >> "$GITHUB_ENV"
+          echo "JS=$JS" >> "$GITHUB_ENV"
+          echo "embed markers: CSS=$CSS JS=$JS"
 
       - name: Build Linux binaries
         working-directory: backend
@@ -43,6 +80,45 @@ jobs:
           cd ../dist
           sha256sum cardkey-linux-* > checksums.txt
           ls -la
+
+      - name: Gate binary size and SPA embed
+        run: |
+          set -euo pipefail
+          for bin in dist/cardkey-linux-amd64 dist/cardkey-linux-arm64; do
+            sz=$(wc -c <"$bin" | tr -d ' ')
+            echo "$bin size=$sz"
+            if [ "$sz" -lt 13000000 ]; then
+              echo "FAIL: $bin too small ($sz) — empty shell without SPA" >&2
+              exit 1
+            fi
+          done
+          python3 - <<'PY'
+          import pathlib, sys
+          bin_path = pathlib.Path("dist/cardkey-linux-amd64")
+          data = bin_path.read_bytes()
+          css = pathlib.Path("${{ env.CSS }}".strip() or ".")
+          # env may be relative; re-resolve from workspace
+          import os, glob
+          css_files = glob.glob("backend/internal/webstatic/dist/assets/index-*.css")
+          js_files = glob.glob("backend/internal/webstatic/dist/assets/index-*.js")
+          if not css_files or not js_files:
+              raise SystemExit("missing index css/js for embed check")
+          css = pathlib.Path(css_files[0]).read_bytes()[:120]
+          js = pathlib.Path(js_files[0]).read_bytes()[:120]
+          ok = True
+          if css not in data:
+              print("FAIL: CSS payload missing in binary", file=sys.stderr)
+              ok = False
+          if js not in data:
+              print("FAIL: JS payload missing in binary", file=sys.stderr)
+              ok = False
+          if b"index-" not in data:
+              print("FAIL: no index- asset name in binary", file=sys.stderr)
+              ok = False
+          if not ok:
+              raise SystemExit(1)
+          print("OK embed gate", bin_path, "size", len(data))
+          PY
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

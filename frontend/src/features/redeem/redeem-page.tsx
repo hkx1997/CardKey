@@ -26,6 +26,10 @@ import { SiteBrand } from "@/shared/components/site-brand";
 import { TaskProgress } from "@/shared/components/task-progress";
 import { ThemeToggleButton } from "@/shared/components/theme-toggle-button";
 import {
+  resetTurnstile,
+  TurnstileWidget,
+} from "@/shared/components/turnstile-widget";
+import {
   BATCH_REDEEM_MAX,
   PUBLIC_STOCK_POLL_MS,
   useBatchRedeemMutation,
@@ -57,6 +61,7 @@ export function RedeemPage() {
     total: number;
   } | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
 
   const stockPollMs = PUBLIC_STOCK_POLL_MS;
   const stockPollSec = Math.max(1, Math.round(stockPollMs / 1000));
@@ -156,31 +161,44 @@ export function RedeemPage() {
       toast.error("请输入兑换编码（一行一个）");
       return;
     }
+    const needCaptcha = !!cfg?.captchaEnabled && !!cfg.captchaSiteKey;
+    if (needCaptcha && !captchaToken) {
+      toast.error("请先完成人机验证");
+      return;
+    }
 
     clearResults();
+    const token = captchaToken ?? undefined;
 
     // 单条：走原有单次兑换体验
     if (codes.length === 1) {
       const code = codes[0]!;
       redeemM.mutate(
-        { category, code },
+        { category, code, captchaToken: token },
         {
           onSuccess: (data) => {
             setSingleResult(data);
             toast.success(cfg?.redeemSuccessHint || "兑换成功");
+            setCaptchaToken(null);
+            resetTurnstile();
           },
-          onError: () => setSingleResult(null),
+          onError: () => {
+            setSingleResult(null);
+            setCaptchaToken(null);
+            resetTurnstile();
+          },
         },
       );
       return;
     }
 
-    // 多条：批量
+    // 多条：批量（首条带验证码；若服务端要求每条验证，需关闭批量或接 API Key）
     setProgress({ done: 0, total: codes.length });
     batchM.mutate(
       {
         category,
         codes,
+        captchaToken: token,
         onProgress: (done, total) => setProgress({ done, total }),
       },
       {
@@ -192,10 +210,14 @@ export function RedeemPage() {
           if (fail === 0) toast.success(`全部兑换完成 · ${ok} 条`);
           else if (ok === 0) toast.error(`全部失败 · ${fail} 条`);
           else toast.message(`完成：成功 ${ok} · 失败 ${fail}`);
+          setCaptchaToken(null);
+          resetTurnstile();
         },
         onError: () => {
           setProgress(null);
           toast.error("批量兑换中断");
+          setCaptchaToken(null);
+          resetTurnstile();
         },
       },
     );
@@ -404,6 +426,14 @@ export function RedeemPage() {
                   : `${codes.length} 条编码（已去重，单次最多 ${BATCH_REDEEM_MAX} 条）`}
               </span>
             </div>
+            {cfg?.captchaEnabled && cfg.captchaSiteKey ? (
+              <div className="flex justify-center">
+                <TurnstileWidget
+                  siteKey={cfg.captchaSiteKey}
+                  onToken={setCaptchaToken}
+                />
+              </div>
+            ) : null}
             {(selected?.slug === "vip" || selected?.slug === "cdk") && (
               <p className="text-center text-[11px] text-muted-foreground">
                 <button
@@ -430,7 +460,14 @@ export function RedeemPage() {
               type="submit"
               size="lg"
               className="interactive-press h-11 w-full text-sm"
-              disabled={busy || !category || codes.length === 0}
+              disabled={
+                busy ||
+                !category ||
+                codes.length === 0 ||
+                (!!cfg?.captchaEnabled &&
+                  !!cfg.captchaSiteKey &&
+                  !captchaToken)
+              }
             >
               {redeemM.isPending || batchM.isPending ? (
                 <>

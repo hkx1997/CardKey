@@ -97,7 +97,11 @@ export const httpClient = {
       body: JSON.stringify(input),
     }),
 
-  redeem: (input: { category: string; code: string }) =>
+  redeem: (input: {
+    category: string;
+    code: string;
+    captchaToken?: string;
+  }) =>
     request<RedeemResult>("/api/v1/public/redeem", {
       method: "POST",
       body: JSON.stringify(input),
@@ -443,6 +447,13 @@ export const httpClient = {
       migrationsEmbedded?: boolean;
       migrationsBundled?: string[];
       migrationsApplied?: string[];
+      staticEmbedded?: boolean;
+      staticEmbeddedFiles?: number;
+      binaryPath?: string;
+      binarySize?: number;
+      csrfCheck?: boolean;
+      env?: string;
+      warnings?: { code: string; message: string }[];
     }>("/api/v1/admin/system/info"),
 
   checkUpdates: (force?: boolean) =>

@@ -187,10 +187,35 @@ export function SystemVersion({ className }: { className?: string }) {
             <DialogDescription className="break-all text-xs">
               模式 {infoQ.data?.updateMode ?? "—"} · commit{" "}
               <span className="font-mono">{infoQ.data?.commit ?? "—"}</span>
+              {typeof infoQ.data?.staticEmbeddedFiles === "number" ? (
+                <>
+                  {" "}
+                  · SPA {infoQ.data.staticEmbeddedFiles} 文件
+                </>
+              ) : null}
+              {typeof infoQ.data?.binarySize === "number" &&
+              infoQ.data.binarySize > 0 ? (
+                <>
+                  {" "}
+                  · {(infoQ.data.binarySize / (1024 * 1024)).toFixed(1)} MB
+                </>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
 
           <div className="dialog-body space-y-4 text-sm">
+            {infoQ.data?.warnings && infoQ.data.warnings.length > 0 ? (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1.5">
+                <p className="font-medium text-amber-800 dark:text-amber-200">
+                  配置建议（不影响启动）
+                </p>
+                <ul className="list-disc space-y-1 pl-4 text-amber-900/90 dark:text-amber-100/90">
+                  {infoQ.data.warnings.map((w) => (
+                    <li key={w.code}>{w.message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {/* 无「数据库迁移 / SQL 列表」等运维说明 */}
             <div className="flex flex-wrap gap-2">
               <Button
@@ -284,7 +309,7 @@ export function SystemVersion({ className }: { className?: string }) {
                     onClick={async () => {
                       const ok = await confirm({
                         title: `更新到 v${check.latest}`,
-                        description: `下载并替换后重启，约 ${RELOAD_COUNTDOWN_SEC} 秒后自动刷新页面。`,
+                        description: `将下载完整 Linux 包（须 ≥13MB，含前端）并替换后重启。约 ${RELOAD_COUNTDOWN_SEC} 秒后自动刷新。空壳包会被拒绝。`,
                         confirmLabel: "一键更新并重启",
                         destructive: true,
                       });

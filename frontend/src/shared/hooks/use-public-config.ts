@@ -44,8 +44,11 @@ export function usePublicCategoryStockQuery(opts?: {
 export function useRedeemMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { category: string; code: string }) =>
-      api.redeem(input),
+    mutationFn: (input: {
+      category: string;
+      code: string;
+      captchaToken?: string;
+    }) => api.redeem(input),
     onSuccess: () => {
       void qc.invalidateQueries({
         queryKey: queryKeys.publicCategoryStock,
@@ -71,9 +74,10 @@ export function useBatchRedeemMutation() {
     mutationFn: async (input: {
       category: string;
       codes: string[];
+      captchaToken?: string;
       onProgress?: (done: number, total: number, last: BatchRedeemItem) => void;
     }): Promise<BatchRedeemItem[]> => {
-      const { category, onProgress } = input;
+      const { category, onProgress, captchaToken } = input;
       let codes = input.codes;
       if (codes.length > BATCH_REDEEM_MAX) {
         toast.message(
@@ -86,7 +90,12 @@ export function useBatchRedeemMutation() {
         const code = codes[i]!;
         let item: BatchRedeemItem;
         try {
-          const result = await api.redeem({ category, code });
+          // 首条带 Turnstile token；服务端校验后 Redis 短时放行同 IP 后续条
+          const result = await api.redeem({
+            category,
+            code,
+            captchaToken: i === 0 ? captchaToken : undefined,
+          });
           item = { code, ok: true, result };
         } catch (e) {
           item = {

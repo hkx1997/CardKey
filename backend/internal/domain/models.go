@@ -224,6 +224,10 @@ type Settings struct {
 	MailCardAlertCategoryIds []string `json:"mailCardAlertCategoryIds"`
 	// 同类预警冷却（分钟），防刷信
 	MailAlertCooldownMinutes int `json:"mailAlertCooldownMinutes"`
+
+	// 兑换成功 Webhook（异步 POST JSON；可选 HMAC 签名头 X-CardKey-Signature）
+	RedeemWebhookURL    string `json:"redeemWebhookUrl"`
+	RedeemWebhookSecret string `json:"redeemWebhookSecret"`
 }
 
 type PublicConfig struct {
@@ -239,6 +243,8 @@ type PublicConfig struct {
 	RedeemPlaceholder     string           `json:"redeemPlaceholder"`
 	RedeemButtonText      string           `json:"redeemButtonText"`
 	CaptchaEnabled        bool             `json:"captchaEnabled"`
+	// CaptchaSiteKey Cloudflare Turnstile site key（仅 captchaEnabled 时下发）
+	CaptchaSiteKey        string           `json:"captchaSiteKey,omitempty"`
 	RedeemTabVisibleCount int              `json:"redeemTabVisibleCount"`
 	ApiBasePath           string           `json:"apiBasePath"`
 	ApiPublicBaseUrl      string           `json:"apiPublicBaseUrl"`

@@ -63,6 +63,8 @@ services:
       REQUIRE_REDIS: ${REQUIRE_REDIS:-true}
       REQUIRE_REDEEM_API_KEY: ${REQUIRE_REDEEM_API_KEY:-false}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
+      CAPTCHA_SITE_KEY: ${CAPTCHA_SITE_KEY:-}
+      CAPTCHA_SECRET_KEY: ${CAPTCHA_SECRET_KEY:-}
       UPDATE_MODE: ${UPDATE_MODE:-docker}
       UPDATE_GITHUB_OWNER: ${UPDATE_GITHUB_OWNER:-hkx1997}
       UPDATE_GITHUB_REPO: ${UPDATE_GITHUB_REPO:-CardKey}
@@ -85,6 +87,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      # 进程存活；配置错误 / 启动砖机时为 unhealthy（便于与 502 对照）
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
     restart: unless-stopped
 
   frontend-mock:

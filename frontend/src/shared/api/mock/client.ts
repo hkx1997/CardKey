@@ -119,6 +119,7 @@ export const mockClient = {
   async redeem(input: {
     category: string;
     code: string;
+    captchaToken?: string;
   }): Promise<RedeemResult> {
     await delay(280);
     const db = mockStore.getDb();
@@ -1008,6 +1009,12 @@ export const mockClient = {
       migrationsEmbedded: true,
       migrationsBundled: ["001_init.sql", "002_icon_value_text.sql", "003_card_content_meta.sql"],
       migrationsApplied: ["001_init.sql", "002_icon_value_text.sql", "003_card_content_meta.sql"],
+      staticEmbedded: true,
+      staticEmbeddedFiles: 56,
+      binarySize: 14_000_000,
+      csrfCheck: true,
+      env: "development",
+      warnings: [],
     };
   },
 

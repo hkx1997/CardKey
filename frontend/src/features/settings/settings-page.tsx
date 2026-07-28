@@ -237,7 +237,8 @@ export function SettingsPage() {
                 onChange={(v) => set("maskCardErrors", v)}
               />
               <ToggleRow
-                label="验证码（预留，当前不生效；请依赖 IP/码限流）"
+                label="兑换人机验证（Cloudflare Turnstile）"
+                description="需在 .env 配置 CAPTCHA_SITE_KEY 与 CAPTCHA_SECRET_KEY 后生效；API Key 兑换可跳过"
                 checked={form.captchaEnabled}
                 onChange={(v) => set("captchaEnabled", v)}
               />
@@ -266,6 +267,28 @@ export function SettingsPage() {
                   />
                 </FormField>
               </div>
+              <FormField
+                label="兑换成功 Webhook URL"
+                hint="留空关闭。兑换成功后异步 POST JSON（event=redeem.success），失败不影响用户兑换"
+              >
+                <Input
+                  placeholder="https://example.com/hooks/cardkey"
+                  value={form.redeemWebhookUrl ?? ""}
+                  onChange={(e) => set("redeemWebhookUrl", e.target.value)}
+                />
+              </FormField>
+              <FormField
+                label="Webhook 签名密钥"
+                hint="可选。请求头 X-CardKey-Signature: sha256=…；留空保存表示不修改已有密钥"
+              >
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="可选 HMAC secret"
+                  value={form.redeemWebhookSecret ?? ""}
+                  onChange={(e) => set("redeemWebhookSecret", e.target.value)}
+                />
+              </FormField>
             </div>
           </SettingsSection>
 

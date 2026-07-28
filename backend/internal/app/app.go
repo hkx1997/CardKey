@@ -34,6 +34,10 @@ type App struct {
 	RequireRedis        bool
 	MetricsToken        string
 
+	// Cloudflare Turnstile
+	CaptchaSiteKey   string
+	CaptchaSecretKey string
+
 	UpdateEnabled      bool
 	UpdateMode         string
 	UpdateGitHubOwner  string
@@ -127,6 +131,8 @@ func (a *App) DefaultSettings() domain.Settings {
 		MailCardUnusedThreshold:     10,
 		MailCardAlertCategoryIds:    []string{},
 		MailAlertCooldownMinutes:    60,
+		RedeemWebhookURL:            "",
+		RedeemWebhookSecret:         "",
 	}
 }
 
@@ -171,9 +177,12 @@ func (a *App) loadSettings(ctx context.Context) (domain.Settings, error) {
 	if err != nil {
 		return s, err
 	}
-	// 对外永不回传 SMTP 明文密码
+	// 对外永不回传 SMTP 明文密码 / Webhook 签名密钥
 	s.SmtpPasswordSet = strings.TrimSpace(s.SmtpPassword) != ""
 	s.SmtpPassword = ""
+	if strings.TrimSpace(s.RedeemWebhookSecret) != "" {
+		s.RedeemWebhookSecret = "" // 前端用空表示「保留原密钥」
+	}
 	return s, nil
 }
 
@@ -199,6 +208,7 @@ func (a *App) SaveSettings(ctx context.Context, s domain.Settings) error {
 	masked := s
 	masked.SmtpPasswordSet = strings.TrimSpace(s.SmtpPassword) != ""
 	masked.SmtpPassword = ""
+	masked.RedeemWebhookSecret = ""
 	a.settingsMu.Lock()
 	a.settingsCache = &masked
 	a.settingsAt = time.Now()

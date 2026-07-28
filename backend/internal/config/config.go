@@ -32,6 +32,10 @@ type Config struct {
 	// /metrics 访问令牌；空则生产禁用、开发放行
 	MetricsToken string
 
+	// Cloudflare Turnstile（验证码）；双密钥齐全且设置开启时才对浏览器兑换生效
+	CaptchaSiteKey   string
+	CaptchaSecretKey string
+
 	// 在线更新
 	UpdateEnabled      bool
 	UpdateMode         string // binary | docker | disabled
@@ -114,6 +118,8 @@ func Load() Config {
 		CSRFCheck:           csrf,
 		RequireRedis:        strings.EqualFold(getenv("REQUIRE_REDIS", requireRedisDefault), "true"),
 		MetricsToken:        getenv("METRICS_TOKEN", ""),
+		CaptchaSiteKey:      strings.TrimSpace(getenv("CAPTCHA_SITE_KEY", "")),
+		CaptchaSecretKey:    strings.TrimSpace(getenv("CAPTCHA_SECRET_KEY", "")),
 		UpdateEnabled:       updateMode != "disabled",
 		UpdateMode:          updateMode,
 		UpdateGitHubOwner:   getenv("UPDATE_GITHUB_OWNER", "hkx1997"),
@@ -159,6 +165,51 @@ func (c Config) ValidateProduction() error {
 	// 生产仅强制密钥强度。其它项（CSRF/Redis/METRICS/sslmode）在运行时降级，
 	// 禁止再因「推荐配置」导致一键更新后进程起不来 → Cloudflare 502。
 	return nil
+}
+
+// ProductionWarning 非致命生产建议（启动 WARN + system/info，不 exit）。
+type ProductionWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// ProductionWarnings 收集可运行但不理想的配置，供运维对照。
+func (c Config) ProductionWarnings() []ProductionWarning {
+	if c.Env != "production" {
+		return nil
+	}
+	var out []ProductionWarning
+	if !c.CSRFCheck {
+		out = append(out, ProductionWarning{
+			Code:    "csrf_disabled",
+			Message: "CSRF_CHECK=false：浏览器管理端写操作缺少同源校验，生产建议设为 true",
+		})
+	}
+	if c.MetricsToken == "" {
+		out = append(out, ProductionWarning{
+			Code:    "metrics_open",
+			Message: "未设置 METRICS_TOKEN：/metrics 在生产可能被禁用或未保护，建议设置随机令牌",
+		})
+	}
+	if strings.Contains(strings.ToLower(c.DatabaseURL), "sslmode=disable") {
+		out = append(out, ProductionWarning{
+			Code:    "db_ssl_disable",
+			Message: "DATABASE_URL 使用 sslmode=disable：仅适合内网 Docker；公网库请启用 TLS",
+		})
+	}
+	if !c.RequireRedis {
+		out = append(out, ProductionWarning{
+			Code:    "redis_optional",
+			Message: "REQUIRE_REDIS=false：限流/会话吊销在 Redis 宕机时可能放行，多实例务必开启 Redis",
+		})
+	}
+	if !c.SecureCookie {
+		out = append(out, ProductionWarning{
+			Code:    "insecure_cookie",
+			Message: "SECURE_COOKIE=false：仅 HTTP 调试适用；HTTPS 反代后应 true",
+		})
+	}
+	return out
 }
 
 type simpleErr string

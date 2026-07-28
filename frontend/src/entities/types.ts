@@ -78,6 +78,8 @@ export interface PublicConfig {
   redeemButtonText: string;
   redeemTabVisibleCount: number;
   captchaEnabled: boolean;
+  /** Cloudflare Turnstile site key；仅 captchaEnabled 时有值 */
+  captchaSiteKey?: string;
   categories: PublicCategory[];
   apiBasePath: string;
   /** 对外 API 根，如 https://api.example.com；空则用当前 origin */
@@ -241,6 +243,10 @@ export interface Settings {
   rateLimitCodePerMin: number;
   rateLimitFailClosed: boolean;
   maskCardErrors: boolean;
+  /** 兑换成功 Webhook URL（空=关闭） */
+  redeemWebhookUrl?: string;
+  /** 签名密钥；读取为空表示保留原值，写入空串不改 */
+  redeemWebhookSecret?: string;
 
   /* API 文档 */
   apiDocsEnabled: boolean;

@@ -85,7 +85,7 @@ HTTP → handler → app（业务）→ pgx / redis
 ### 发版一体包（强制 · 自 v0.1.21）
 
 **一键更新 / Release 二进制必须同时带上：后端 + 前端 SPA + 数据库迁移。**  
-禁止「只发业务 Go、不管 UI / SQL」——线上已多次因此表现为：弹窗溢出未修、`/assets/*.js` 变成 `text/html`、新功能页面不出现。
+禁止「只发业务 Go、不管 UI / SQL」——线上已多次因此表现为：弹窗溢出未修、`/assets/*.js` 变成 `text/html`、新功能页面不出现、**一键更新后 Cloudflare 502**。
 
 | 产物 | 如何进入二进制 | 运行时 |
 |------|----------------|--------|
@@ -94,7 +94,21 @@ HTTP → handler → app（业务）→ pgx / redis
 | 前端 SPA | `pnpm build` → 拷入 `internal/webstatic/dist` → `//go:embed all:dist` | 优先嵌入服务；`/assets/*` **禁止**回退成 `index.html` |
 | 磁盘 `/app/static` | Docker 仍可拷贝一份 | **仅作 embed 缺文件回退**，不可当作「一键更新会刷新 UI」的唯一来源 |
 
-发版入口：**只走 `bash scripts/release.sh`**（会先 `pnpm build` 再交叉编译 Linux）。Docker 构建：`Dockerfile` 在 `go build` 前 `COPY` 前端 dist 进 `webstatic/dist`。
+#### ⚠️ 体积铁律（空壳 vs 完整包）——线上踩过坑，必须遵守
+
+| 状态 | 典型体积（linux-amd64） | 说明 |
+|------|-------------------------|------|
+| **空壳 / 坏包** | **约 11～12MB**（&lt; 13_000_000 字节） | 未嵌入 SPA，或 `gh`/上传截断；UI 不更新；旧版甚至启动即 `config invalid` 死循环 → **502** |
+| **完整包（合格）** | **≥ 13MB，常见约 14MB** | 含后端 + 迁移 + 前端 SPA；`staticEmbeddedFiles` 通常 **&gt; 50** |
+
+- **发版后必须核对 GitHub Release 远程体积**，不能只看本地 `dist/release-*`。
+- Windows 上 `gh release upload` 曾把 ~14MB 截成 ~12MB 空壳；**必须**用 `scripts/_upload_assets.py` 流式上传，并在脚本/API 侧校验 `remote size == local size` 且 **≥ 13MB**。
+- 若远程已是空壳：删掉该 Release 资产后执行  
+  `python scripts/_upload_assets.py <VERSION>`  
+  用本地 `dist/release-<VERSION>/cardkey-linux-*` 重传（本地也必须 ≥13MB）。
+- 在线更新代码（较新版本）会 `assertLinuxBinaryOK` 拒绝 &lt;13MB / 非 ELF；**从很旧版本一键升级时可能没有该校验**，坏包仍会写入数据卷 → 进程起不来。
+
+发版入口：**只走 `bash scripts/release.sh`**（会先 `pnpm build` 再交叉编译 Linux + 上传校验）。Docker 构建：`Dockerfile` 在 `go build` 前 `COPY` 前端 dist 进 `webstatic/dist`。
 
 **分层约定（前端）**
 
@@ -130,6 +144,7 @@ features/*-page  →  shared/hooks  →  shared/api (mock | http)
 | 脚本调管理 API | `Authorization: Bearer <API_Key>`，scope 需含 **`admin:api`** |
 | 兑换 API | 可选/强制 Bearer，scope **`redeem:api`**（系统固定兑换密钥仅此权限） |
 | CSRF | 带 Cookie 的写操作校验 Origin/Referer；纯 Bearer 脚本跳过 |
+| 兑换验证码 | 可选 Cloudflare Turnstile：`CAPTCHA_SITE_KEY` + `CAPTCHA_SECRET_KEY`，设置页开关；API Key 兑换跳过 |
 
 `RequireAdmin` 优先级：**Authorization Bearer** 优先于 Cookie；JWT 失败会回退尝试 API Key（避免 Key 被误报「会话过期」）。
 
@@ -296,19 +311,32 @@ bash scripts/release.sh --dry-run
 脚本要点：
 
 1. 校验 tag 不重复  
-2. **`pnpm build` 前端**并写入 `backend/internal/webstatic/dist`  
+2. **`pnpm build` 前端**并写入 `backend/internal/webstatic/dist`（assets 过少则拒绝发版）  
 3. `CGO_ENABLED=0` 交叉编译 Linux amd64/arm64（**含嵌入 SPA + migrations**）  
-4. `git push origin main` + `git push origin vX.Y.Z`  
-5. 创建 GitHub Release，附带上述二进制  
+4. **本地体积校验**：每个 `cardkey-linux-*` **≥ 13_000_000 字节**，并抽查 CSS/JS 字节串已 embed  
+5. `git push origin main` + `git push origin vX.Y.Z`  
+6. 创建 GitHub Release；**用 `scripts/_upload_assets.py` 流式上传**（勿依赖 Windows `gh` 大文件路径，曾截成 ~12MB）  
+7. **再查远程 API `assets[].size`**，必须与本地一致且 ≥13MB，否则发版失败 / 立刻重传  
 
 **不要**再发 Windows/macOS 包；在线更新只认 Linux 资产。  
-**不要**手工只 `go build` 打 Release——会漏前端。
+**不要**手工只 `go build` 打 Release——会漏前端。  
+**不要**在远程体积仍是 11～12MB 时告诉用户「可以一键更新」。
 
-### 7.3 发版后验证
+### 7.3 发版后验证（强制清单）
 
-- Release 页有 `cardkey-linux-amd64` / `arm64`  
-- 管理端检测更新可见新版本  
-- 升级后浏览器资源应变为新 hash（如 `index-XXXX.js`），且 DevTools 中 `.js`/`.css` 的 `Content-Type` 分别为 `text/javascript` / `text/css`（**不是** `text/html`）
+```bash
+# 远程体积（amd64 必须 ≥ 13000000，常见 ~14e6）
+gh api repos/hkx1997/CardKey/releases/tags/vX.Y.Z \
+  --jq '.assets[] | {name,size}'
+```
+
+- [ ] Release 有 `cardkey-linux-amd64` / `arm64`，**size ≥ 13MB**（不是 11～12MB）  
+- [ ] 本机可：`curl -fL -o /tmp/ck …/cardkey-linux-amd64 && ls -lh /tmp/ck` 同样 ≥13MB、ELF  
+- [ ] 管理端检测更新可见新版本  
+- [ ] 升级后日志：`staticEmbedded:true`、`staticEmbeddedFiles` **明显大于 1（常见 50+）**、`version` 为新版本  
+- [ ] 浏览器资源新 hash；DevTools 中 `.js`/`.css` 的 `Content-Type` 不是 `text/html`  
+
+远程若错包：`python scripts/_upload_assets.py X.Y.Z` 覆盖资产（本地 `dist/release-X.Y.Z` 须已是完整包）。
 
 ---
 
@@ -335,15 +363,66 @@ docker compose up -d --no-deps cardkey
 
 后台 → 版本信息 → **检测更新** → **一键更新**：
 
-- 下载当前架构的 `cardkey-linux-*`（**内嵌：Go 后端 + 全部 `*.sql` + 前端 SPA**）  
-- 替换进程二进制并退出，由 `restart: unless-stopped` 拉起  
+- 下载当前架构的 `cardkey-linux-*`（**内嵌：Go 后端 + 全部 `*.sql` + 前端 SPA**，体积须 ≥13MB）  
+- 写入数据卷可执行文件（常见路径容器内 **`/app/data/bin/cardkey`**，对应卷如 `cardkey_cardkey_data` 或 `cardkey_app_data`）并 `os.Exit`，由 `restart: unless-stopped` 拉起  
 - 启动时：执行未应用迁移 + 用嵌入 SPA 提供 UI  
 - **不** `compose down -v`，不删 Postgres 卷  
-- 升级后 **Ctrl+F5**；若 `.js`/`.css` 报 MIME=`text/html`，说明 assets 未正确嵌入或命中了 SPA 回退——应升级到含修复的版本并确认日志 `staticEmbeddedFiles` > 1  
+- 升级后 **Ctrl+F5**；若 `.js`/`.css` 报 MIME=`text/html`，说明 assets 未正确嵌入或命中了 SPA 回退——应换**完整包**并确认日志 `staticEmbeddedFiles` > 1  
 
 `.env` 中 `UPDATE_BINARY_PATH` / `UPDATE_RELEASES_DIR` **请留空**。
 
-### 8.3 像「数据被重置」时
+日志里 `exiting for update restart … version=0.1.xx` 的 **version 是目标 tag**，不等于磁盘 exe 一定是完整/正确构建；以 **`cardkey listening` 行的 version + staticEmbeddedFiles + 体积** 为准。
+
+### 8.3 一键更新后 502 / 容器重启循环（必读）
+
+Cloudflare **502 = 源站进程没起来**（不是前端坏了）。先看：
+
+```bash
+docker logs cardkey-cardkey-1 --tail 80
+```
+
+| 日志 / 现象 | 原因 | 处理 |
+|-------------|------|------|
+| `config invalid` … `CSRF_CHECK=true` | 旧二进制生产强校验；`.env` 里 `CSRF_CHECK=false` | **生产把 `CSRF_CHECK=true`**（或删掉该项用默认 true），再 `compose up -d --force-recreate cardkey` |
+| 同上或其它 `config invalid` | 密钥过短 / 示例 `CONTENT_KEY` 等 | 按日志修 `.env`，**不要**为了省事放宽生产密钥校验 |
+| 下载/卷内 exe **约 11～12MB** | Release 空壳或截断上传 | 从 GitHub **重下 ≥13MB 完整包**，写入数据卷后再 recreate（见下） |
+| 仅镜像是旧版、卷内是坏包 | entrypoint **优先跑卷内** `/app/data/bin/cardkey` | 必须覆盖卷内二进制，只 rebuild 镜像往往不够 |
+
+**手工灌入完整二进制（示例，目录以实际部署为准）：**
+
+```bash
+cd /root/CardKey   # 或你的 compose 目录
+# 1) .env：生产 CSRF 建议 true
+sed -i 's/^CSRF_CHECK=.*/CSRF_CHECK=true/' .env
+
+# 2) 下载并确认体积 ≥13MB、ELF
+curl -fL --retry 5 -o /tmp/cardkey-bin \
+  https://github.com/hkx1997/CardKey/releases/download/vX.Y.Z/cardkey-linux-amd64
+ls -lh /tmp/cardkey-bin   # 必须约 14M，禁止 11～12M 继续
+
+# 3) 写入一键更新用的数据卷（名称以 docker volume ls 为准）
+docker run --rm \
+  -v cardkey_cardkey_data:/data \
+  -v /tmp/cardkey-bin:/bin-in:ro \
+  alpine sh -c 'mkdir -p /data/bin && cp /bin-in /data/bin/cardkey && chmod 755 /data/bin/cardkey && ls -lh /data/bin/cardkey'
+# 若实际挂的是 cardkey_app_data，把卷名换成 cardkey_app_data 再写一次
+
+# 4) 只重建应用，不动库
+docker compose up -d --force-recreate cardkey
+sleep 5
+docker logs cardkey-cardkey-1 --tail 30
+curl -sS http://127.0.0.1:18080/healthz
+```
+
+成功标志：日志出现 **`cardkey listening`**，`version` 正确，`staticEmbeddedFiles` 较大；**不再**刷 `config invalid`。
+
+**生产配置注意（与启动强校验相关）：**
+
+- `CSRF_CHECK`：生产 **应为 `true`**（`.env.example` 默认 true）。浏览器管理端写操作依赖同源 CSRF；`false` 仅适合明确的本地调试。  
+- `ValidateProduction`（自修复版起）：**只强制密钥强度**（`JWT_SECRET` / `CONTENT_KEY`），**不得**再因 CSRF / METRICS / sslmode 等「推荐项」让进程直接 exit → 否则一键更新后必 502。  
+- 改校验逻辑后必须打**完整一体包**发版；空壳包即使 version 字符串新，行为仍可能是旧代码。
+
+### 8.4 像「数据被重置」时
 
 多数是 **挂到了新空卷**，旧数据仍在旧 volume：
 
@@ -354,7 +433,7 @@ bash scripts/recover-volume.sh
 
 切勿：`docker compose down -v`、`docker volume rm`、`docker system prune --volumes`。
 
-### 8.4 备份
+### 8.5 备份
 
 ```bash
 docker compose exec -T postgres \
@@ -397,10 +476,13 @@ docker compose exec -T postgres \
 2. **演示数据**：禁止在 `Bootstrap` 里自动 `seedDemo`；仅 setup 显式开关。  
 3. **鉴权**：管理 API 变更须同时考虑 Cookie JWT 与 `admin:api` Bearer。  
 4. **发版一体包（强制）**：用户可升级的改动必须走 `scripts/release.sh`，保证 **后端 + 前端 dist + 迁移 SQL** 同进 Linux 二进制；禁止只改 Go 发版、只改前端不发版、只加 SQL 不发版。  
-5. **迁移**：schema 变更只追加 `backend/migrations/00N_*.sql`，由 embed 在启动时执行。  
-6. **静态资源**：`/assets/*` 不得回退 `index.html`；改 UI 后必须发版/重建。  
-7. **范围**：不擅自改无关模块；密钥不写进仓库。  
-8. **文档**：行为变更同步 `AGENTS.md` / `README.md` / `deploy/DATA_SAFETY.md`。  
+5. **Release 体积（强制）**：`cardkey-linux-amd64/arm64` 本地与 **GitHub 远程**均须 **≥ 13MB**（完整包约 14MB）。**11～12MB = 空壳/截断，禁止当正式包发布或让用户安装。** 上传用 `scripts/_upload_assets.py`；发版后用 API/`ls -lh` 复核远程 size。  
+6. **禁止启动砖机**：`ValidateProduction` 只拦弱密钥；**不要**把 `CSRF_CHECK` / `METRICS_TOKEN` / `sslmode` 等做成生产「校验失败即 exit」——会导致一键更新后 **502 死循环**。生产文档与 `.env.example` 仍应 **推荐 `CSRF_CHECK=true`**。  
+7. **502 / 更新失败排障**：先 `docker logs`；见 `config invalid` 先修 `.env`（尤其 CSRF）；见 11～12MB 包则重下完整 Release 并写入 **数据卷** `…/bin/cardkey`（不只 rebuild 镜像）。  
+8. **迁移**：schema 变更只追加 `backend/migrations/00N_*.sql`，由 embed 在启动时执行。  
+9. **静态资源**：`/assets/*` 不得回退 `index.html`；改 UI 后必须发版/重建。  
+10. **范围**：不擅自改无关模块；密钥不写进仓库。  
+11. **文档**：行为变更同步 `AGENTS.md` / `README.md` / `deploy/DATA_SAFETY.md`。  
 
 ---
 
@@ -411,9 +493,11 @@ docker compose exec -T postgres \
 | `README.md` | 用户向安装与功能说明 |
 | `DESIGN.md` | 详细设计 |
 | `REQUIREMENTS.md` | 需求 |
+| `OPTIMIZATION.md` | **全面优化方案**（交付/测试/安全/规模分迭代 A·B·C） |
 | `deploy/DATA_SAFETY.md` | 卷与防误删 |
 | `deploy/docker-deploy.sh` | 一键安装 |
-| `scripts/release.sh` | 发版 |
+| `scripts/release.sh` | 发版（含体积校验） |
+| `scripts/_upload_assets.py` | 流式上传 Release 资产、避免空壳 |
 | `scripts/upgrade.sh` | 安全升级 |
 | `scripts/recover-volume.sh` | 找回旧卷 |
 

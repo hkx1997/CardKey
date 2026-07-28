@@ -14,7 +14,6 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/cardkey/cardkey/internal/pkg/httpx"
 	"github.com/cardkey/cardkey/internal/pkg/response"
-	"github.com/cardkey/cardkey/internal/version"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -140,28 +139,6 @@ func (h *Handler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 		h.setAuthCookie(w, r, token)
 	}
 	response.OK(w, user)
-}
-
-func (h *Handler) Redeem(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Category string `json:"category"`
-		Code     string `json:"code"`
-	}
-	if err := h.decode(r, &in); err != nil {
-		response.Fail(w, err)
-		return
-	}
-	apiKey := middleware.BearerToken(r)
-	res, err := h.App.Redeem(r.Context(), in.Category, in.Code, middleware.ClientIP(r), r.UserAgent(), apiKey)
-	if err != nil {
-		h.App.IncRedeemErr()
-		response.Fail(w, err)
-		return
-	}
-	if res.Status == "success" {
-		h.App.IncRedeemOK()
-	}
-	response.OK(w, res)
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -744,31 +721,6 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, res)
 }
 
-func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	// 附带版本，便于确认一键更新是否真的切到新二进制（不查库）
-	response.OK(w, map[string]string{
-		"status":  "ok",
-		"version": version.Version,
-		"commit":  version.Commit,
-	})
-}
-
-func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if err := h.App.Ready(ctx); err != nil {
-		h.App.Log.Warn("ready check failed", "err", err)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"NOT_READY","message":"依赖服务不可用"}}`))
-		return
-	}
-	response.OK(w, map[string]string{"status": "ready"})
-}
-
-func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {
-	response.OK(w, h.App.SystemInfo(r.Context()))
-}
-
 func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 	url, err := h.App.UploadImage(r.Context(), r, middleware.Username(r.Context()), middleware.ClientIP(r))
 	if err != nil {
@@ -776,60 +728,6 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, map[string]string{"url": url})
-}
-
-func (h *Handler) CheckUpdates(w http.ResponseWriter, r *http.Request) {
-	force := r.URL.Query().Get("force") == "1" || r.URL.Query().Get("force") == "true"
-	res, err := h.App.CheckUpdatesOpt(r.Context(), force)
-	if err != nil {
-		response.Fail(w, err)
-		return
-	}
-	response.OK(w, res)
-}
-
-func (h *Handler) UpdateHistory(w http.ResponseWriter, r *http.Request) {
-	list, err := h.App.ListUpdateHistory(r.Context())
-	if err != nil {
-		response.Fail(w, err)
-		return
-	}
-	response.OK(w, list)
-}
-
-func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
-	response.OK(w, h.App.GetUpdateStatus())
-}
-
-func (h *Handler) ApplyUpdate(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Version string `json:"version"`
-	}
-	_ = h.decode(r, &in)
-	if err := h.App.ApplyUpdate(r.Context(), in.Version, middleware.Username(r.Context()), middleware.ClientIP(r)); err != nil {
-		response.Fail(w, err)
-		return
-	}
-	// 立即写出并 flush，避免进程即将退出时响应滞留在缓冲里
-	response.OK(w, map[string]string{"status": "restarting"})
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (h *Handler) RollbackUpdate(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Version string `json:"version"`
-	}
-	_ = h.decode(r, &in)
-	if err := h.App.RollbackUpdate(r.Context(), in.Version, middleware.Username(r.Context()), middleware.ClientIP(r)); err != nil {
-		response.Fail(w, err)
-		return
-	}
-	response.OK(w, map[string]string{"status": "restarting"})
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
 }
 
 // silence unused in some builds

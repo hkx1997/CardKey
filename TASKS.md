@@ -4,8 +4,17 @@
 |---|---|
 | 关联设计 | [DESIGN.md](./DESIGN.md) v1.2 |
 | 关联需求 | [REQUIREMENTS.md](./REQUIREMENTS.md) |
+| 后续优化 | [OPTIMIZATION.md](./OPTIMIZATION.md)（v1.1 实施中） |
 | 原则 | **原型即产品** · **零历史兼容** · **始终最优** |
-| 状态 | ✅ 全面完成（前端原型 + Go 后端 + Docker 全栈） |
+| 状态 | ✅ 主产品闭环；🚧 优化 v0.1.46 已落地 A 大部 + 验证码/CI（见 OPTIMIZATION §15） |
+
+## 优化迭代进度（摘录）
+
+| 阶段 | 状态 |
+|------|------|
+| A 稳定交付（发版空壳门禁、warnings、healthcheck、binary 测试） | 🚧 基本完成（自动回滚增强待续） |
+| B 质量/验证码/CI | 🚧 CI + Turnstile 完成 |
+| C 规模/对象存储/Webhook | ⬜ 未开始 |
 
 ## 任务总览
 

@@ -48,3 +48,34 @@ func TestValidateProduction_AllowsDockerDefaults(t *testing.T) {
 		t.Fatalf("docker defaults must boot: %v", err)
 	}
 }
+
+func TestProductionWarnings_EmitsAdvisories(t *testing.T) {
+	c := Config{
+		Env:          "production",
+		CSRFCheck:    false,
+		MetricsToken: "",
+		RequireRedis: false,
+		SecureCookie: false,
+		DatabaseURL:  "postgres://u:p@postgres:5432/db?sslmode=disable",
+	}
+	ws := c.ProductionWarnings()
+	if len(ws) < 3 {
+		t.Fatalf("expected multiple warnings, got %d: %+v", len(ws), ws)
+	}
+	codes := map[string]bool{}
+	for _, w := range ws {
+		codes[w.Code] = true
+	}
+	for _, want := range []string{"csrf_disabled", "metrics_open", "db_ssl_disable"} {
+		if !codes[want] {
+			t.Fatalf("missing warning %s in %+v", want, ws)
+		}
+	}
+}
+
+func TestProductionWarnings_SkipsNonProd(t *testing.T) {
+	c := Config{Env: "development", CSRFCheck: false}
+	if ws := c.ProductionWarnings(); len(ws) != 0 {
+		t.Fatalf("expected none, got %+v", ws)
+	}
+}

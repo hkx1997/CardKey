@@ -390,6 +390,8 @@ function createDb(): MockDb {
       rateLimitCodePerMin: 10,
       rateLimitFailClosed: true,
       maskCardErrors: true,
+      redeemWebhookUrl: "",
+      redeemWebhookSecret: "",
       apiDocsEnabled: true,
       showApiDocsEntry: true,
       exposePublicRedeemKeyInDocs: false,

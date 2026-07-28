@@ -21,8 +21,13 @@ $null
 scripts/verify-out/
 *.bak
 .docker/
+# 发版产物（含各版本 linux 二进制，勿提交）
 /dist/
+/dist/**
 *.ps1.bak
 .playwright-mcp/
 scripts/check_css.py
 scripts/_check_css.py
+# 本机数据与误生成文件
+/data/
+cookies*.txt
