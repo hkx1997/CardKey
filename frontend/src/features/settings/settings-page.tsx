@@ -357,7 +357,7 @@ export function SettingsPage() {
               </FormField>
               <FormField
                 label="对外 API 地址（Base URL）"
-                hint="完整 origin，如 https://api.example.com；留空则文档使用当前站点域名"
+                hint="仅 origin（不要带 /api/v1），如 https://api.example.com；留空则文档用当前站点域名。接口路径本身已含前缀。"
               >
                 <Input
                   value={form.apiPublicBaseUrl || ""}
@@ -366,14 +366,25 @@ export function SettingsPage() {
                   placeholder="https://your-domain.com"
                 />
               </FormField>
-              <div className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-2 font-mono text-[11px] text-muted-foreground">
-                文档预览：{" "}
-                {
-                  resolveApiBase({
-                    apiBasePath: form.apiBasePath,
-                    apiPublicBaseUrl: form.apiPublicBaseUrl,
-                  }).redeemUrl
-                }
+              <div className="space-y-1 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                <div>
+                  Base URL：{" "}
+                  {
+                    resolveApiBase({
+                      apiBasePath: form.apiBasePath,
+                      apiPublicBaseUrl: form.apiPublicBaseUrl,
+                    }).baseRoot
+                  }
+                </div>
+                <div>
+                  兑换示例：{" "}
+                  {
+                    resolveApiBase({
+                      apiBasePath: form.apiBasePath,
+                      apiPublicBaseUrl: form.apiPublicBaseUrl,
+                    }).redeemUrl
+                  }
+                </div>
               </div>
             </div>
           </SettingsSection>

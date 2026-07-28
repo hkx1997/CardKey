@@ -163,26 +163,19 @@ export function ApiDocsContent({
             {isAdmin ? "管理端 · 完整 API" : "兑换端 · 仅兑换相关"}
           </Badge>
         </div>
-        <CodeBlock
-          lang="text"
-          code={`${baseRoot}${apiPrefix}`}
-          heightClass="h-16"
-        />
+        {/* 仅 origin：路径里已含 /api/v1 等前缀，勿再拼进 Base URL */}
+        <CodeBlock lang="text" code={baseRoot} heightClass="h-16" />
         <p className="text-[11px] text-muted-foreground">
-          可在「系统设置 → API → 对外 API 地址」配置；留空则使用当前站点域名。
-          {isAdmin ? (
-            <>
-              {" "}
-              下表路径中的前缀即{" "}
-              <code className="font-mono">{apiPrefix}</code>。
-            </>
-          ) : (
-            <>
-              {" "}
-              兑换路径前缀：{" "}
-              <code className="font-mono">{apiPrefix}</code>。
-            </>
-          )}
+          可在「系统设置 → API → 对外 API 地址」配置 origin；留空则用当前站点域名。
+          完整请求地址 ={" "}
+          <code className="font-mono">Base URL</code> + 下表路径（路径已含前缀{" "}
+          <code className="font-mono">{apiPrefix}</code>
+          ，例如{" "}
+          <code className="font-mono">
+            {baseRoot}
+            {apiPrefix}/public/redeem
+          </code>
+          ）。
         </p>
       </section>
 
@@ -195,16 +188,19 @@ export function ApiDocsContent({
               · <strong className="text-foreground">兑换端</strong>（scope{" "}
               <code className="font-mono">redeem:api</code>
               ）：仅{" "}
-              <code className="font-mono">/public/config</code>、
-              <code className="font-mono">/public/category-stock</code>、
-              <code className="font-mono">/public/redeem</code>
+              <code className="font-mono">{apiPrefix}/public/config</code>、
+              <code className="font-mono">
+                {apiPrefix}/public/category-stock
+              </code>
+              、
+              <code className="font-mono">{apiPrefix}/public/redeem</code>
               。系统固定兑换密钥仅有此权限。
             </p>
             <p>
               · <strong className="text-foreground">管理端</strong>（Cookie JWT 或
               scope <code className="font-mono">admin:api</code>
               ）：全部{" "}
-              <code className="font-mono">/admin/*</code>
+              <code className="font-mono">{apiPrefix}/admin/*</code>
               ；
               <code className="font-mono">admin:api</code> 可覆盖兑换权限。
             </p>
@@ -220,10 +216,8 @@ export function ApiDocsContent({
         ) : (
           <>
             <p>
-              · 本页说明<strong className="text-foreground">兑换接口</strong>
-              （
-              <code className="font-mono">POST …/public/redeem</code>
-              ）的请求与响应，供对接使用。
+              · 本页列出<strong className="text-foreground">兑换端接口</strong>
+              与请求/响应说明，供对接使用。
             </p>
             <p>
               · 鉴权：默认无需密钥；若开启「强制兑换密钥」，请求头{" "}
@@ -234,7 +228,7 @@ export function ApiDocsContent({
               <code className="font-mono">redeem:api</code>。
             </p>
             <p>
-              · 完整接口清单与管理端 API 请登录后台 →「管理 API」查看。
+              · 完整管理端 API 请登录后台 →「管理 API」查看。
             </p>
           </>
         )}
@@ -250,61 +244,70 @@ export function ApiDocsContent({
         </p>
       </section>
 
-      {/* 管理端：完整目录 + 接口表；兑换端公开文档不展示接口列表 */}
-      {isAdmin ? (
-        <nav className="flex flex-wrap gap-2 text-[11px]">
-          <a
-            href="#endpoints-redeem"
-            className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            兑换端 · {REDEEM_ENDPOINTS.length}
-          </a>
-          <a
-            href="#endpoints-ops"
-            className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            安装/运维 · {PUBLIC_OPS_ENDPOINTS.length}
-          </a>
-          <a
-            href="#endpoints-admin-auth"
-            className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            认证与系统 · {ADMIN_AUTH_ENDPOINTS.length}
-          </a>
-          <a
-            href="#endpoints-admin-api"
-            className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            管理业务 · {ADMIN_API_ENDPOINTS.length}
-          </a>
-          <a
-            href="#admin-create-card"
-            className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            创建卡密 · 多类型
-          </a>
-          <a
-            href="#redeem-detail"
-            className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            兑换详解
-          </a>
+      {/* 目录导航：兑换端 / 管理端同一套样式 */}
+      <nav className="flex flex-wrap gap-2 text-[11px]">
+        <a
+          href="#endpoints-redeem"
+          className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+        >
+          兑换端 · {REDEEM_ENDPOINTS.length}
+        </a>
+        {isAdmin ? (
+          <>
+            <a
+              href="#endpoints-ops"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              安装/运维 · {PUBLIC_OPS_ENDPOINTS.length}
+            </a>
+            <a
+              href="#endpoints-admin-auth"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              认证与系统 · {ADMIN_AUTH_ENDPOINTS.length}
+            </a>
+            <a
+              href="#endpoints-admin-api"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              管理业务 · {ADMIN_API_ENDPOINTS.length}
+            </a>
+            <a
+              href="#admin-create-card"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              创建卡密 · 多类型
+            </a>
+          </>
+        ) : null}
+        <a
+          href="#redeem-detail"
+          className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+        >
+          兑换详解
+        </a>
+        {isAdmin ? (
           <span className="self-center text-muted-foreground/80">
             管理 {adminTotal} · 兑换 {REDEEM_ENDPOINTS.length} · 运维{" "}
             {PUBLIC_OPS_ENDPOINTS.length}
           </span>
-        </nav>
-      ) : null}
+        ) : (
+          <span className="self-center text-muted-foreground/80">
+            兑换 {REDEEM_ENDPOINTS.length} 个接口
+          </span>
+        )}
+      </nav>
 
+      {/* 接口总表：兑换端与管理端同一表格样式 */}
+      <EndpointTable
+        id="endpoints-redeem"
+        title="兑换端接口"
+        subtitle="仅兑换相关；scope=redeem:api 可调用（若强制密钥）"
+        items={REDEEM_ENDPOINTS}
+        prefix={apiPrefix}
+      />
       {isAdmin ? (
         <>
-          <EndpointTable
-            id="endpoints-redeem"
-            title="兑换端接口"
-            subtitle="仅兑换相关；scope=redeem:api 可调用（若强制密钥）"
-            items={REDEEM_ENDPOINTS}
-            prefix={apiPrefix}
-          />
           <EndpointTable
             id="endpoints-ops"
             title="安装 / 运维（非兑换业务）"

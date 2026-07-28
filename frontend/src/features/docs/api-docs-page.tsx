@@ -28,7 +28,7 @@ export function ApiDocsPage() {
   return (
     <div className="flex min-h-dvh flex-col bg-background">
       <header className="sticky top-0 z-20 border-b border-border/50 bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between px-5">
+        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-5">
           <SiteBrand name={cfg.siteName} logo={cfg.siteLogo} />
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" asChild className="text-xs">
@@ -42,14 +42,16 @@ export function ApiDocsPage() {
         </div>
       </header>
 
-      <PageContainer narrow className="fade-in">
-        <h1 className="text-2xl font-semibold tracking-tight">兑换端 API 文档</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          兑换接口请求示例与响应说明 · 权限 redeem:api · 不含接口总表与管理端
-        </p>
-        <div className="mt-8">
-          <ApiDocsContent cfg={cfg} scope="public" />
+      <PageContainer className="fade-in max-w-6xl space-y-6 px-4 py-8 sm:px-6 sm:py-10">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            兑换端 API 文档
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            接口总表 · 请求示例与响应说明 · 权限 redeem:api（不含管理端）
+          </p>
         </div>
+        <ApiDocsContent cfg={cfg} scope="public" />
       </PageContainer>
     </div>
   );
