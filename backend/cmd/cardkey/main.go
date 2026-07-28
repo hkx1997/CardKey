@@ -73,6 +73,14 @@ func main() {
 		log.Error("config invalid", "err", err)
 		os.Exit(1)
 	}
+	// 启动即打版本，便于 docker logs 区分「空壳 / 旧包 / 新包」
+	log.Info("starting cardkey",
+		"version", version.Version,
+		"commit", version.Commit,
+		"env", cfg.Env,
+		"requireRedis", cfg.RequireRedis,
+		"csrf", cfg.CSRFCheck,
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

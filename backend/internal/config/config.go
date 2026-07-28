@@ -156,16 +156,8 @@ func (c Config) ValidateProduction() error {
 			return errf("CONTENT_KEY must be hex")
 		}
 	}
-	// 以下为「推荐」而非硬失败：Docker 内 PG 常用 sslmode=disable；METRICS_TOKEN 空时 /metrics 已 404。
-	// 过严会导致一键更新后进程起不来 → 反代/Cloudflare 502。
-	if !c.CSRFCheck {
-		return errf("production requires CSRF_CHECK=true (or unset to default true)")
-	}
-	// RequireRedis / SecureCookie / MetricsToken / sslmode：不强制退出，避免已有部署被卡死
-	// （Redis 不可用时限流与 JWT 吊销会降级，见运行时逻辑）
-	_ = c.RequireRedis
-	_ = c.SecureCookie
-	_ = c.MetricsToken
+	// 生产仅强制密钥强度。其它项（CSRF/Redis/METRICS/sslmode）在运行时降级，
+	// 禁止再因「推荐配置」导致一键更新后进程起不来 → Cloudflare 502。
 	return nil
 }
 

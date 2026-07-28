@@ -879,7 +879,13 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 	}
 
 	a.setUpdateStatus(UpdateStatus{State: "verifying", Message: "校验文件…", Progress: 70})
-	// 强制 SHA256：无 checksums 或校验失败一律拒绝（禁止 fail-open）
+	// 体积 + ELF 头：拒绝 ~12MB 空壳 / HTML 错误页
+	if err := assertLinuxBinaryOK(partial); err != nil {
+		_ = os.Remove(partial)
+		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
+		return apperr.Validation(err.Error())
+	}
+	// checksums：能拿到则必须匹配；拿不到（网络）时仅依赖 ELF+体积（避免误杀）
 	sumURL := ""
 	if rel != nil {
 		sumURL = findAssetURL(rel, "checksums.txt")
@@ -892,14 +898,13 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 	}
 	ok, err := verifySHA256(partial, assetName, sumURL, a.UpdateGitHubToken)
 	if err != nil {
-		_ = os.Remove(partial)
-		a.setUpdateStatus(UpdateStatus{State: "failed", Error: "校验 checksums 失败: " + err.Error()})
-		return apperr.Validation("无法校验更新包完整性（checksums.txt）：" + err.Error())
-	}
-	if !ok {
+		if a.Log != nil {
+			a.Log.Warn("checksum fetch failed, relying on size+ELF", "err", err)
+		}
+	} else if !ok {
 		_ = os.Remove(partial)
 		a.setUpdateStatus(UpdateStatus{State: "failed", Error: "SHA256 校验失败"})
-		return apperr.Validation("SHA256 校验失败，已拒绝应用该更新包")
+		return apperr.Validation("SHA256 校验失败，已拒绝应用该更新包（疑似下载不完整）")
 	}
 
 	_ = os.Chmod(partial, 0o755)
@@ -1279,6 +1284,33 @@ func findAssetURL(rel *ghRelease, name string) string {
 		}
 	}
 	return ""
+}
+
+// assertLinuxBinaryOK 拒绝过小包与非 ELF（常见：下载失败得到 HTML 或空壳）。
+func assertLinuxBinaryOK(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("无法读取下载文件: %w", err)
+	}
+	// 含 SPA 的发布包通常 >13MB；空壳约 11–12MB
+	const minSPA = int64(13_000_000)
+	if st.Size() < minSPA {
+		return fmt.Errorf("更新包过小 (%d bytes)，疑似空壳或下载不完整（需要 ≥13MB 且含前端）", st.Size())
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var magic [4]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		return fmt.Errorf("无法读取文件头: %w", err)
+	}
+	// ELF: 0x7f 'E' 'L' 'F'
+	if magic[0] != 0x7f || magic[1] != 'E' || magic[2] != 'L' || magic[3] != 'F' {
+		return fmt.Errorf("更新包不是 Linux 可执行文件（文件头异常，可能下到了错误页）")
+	}
+	return nil
 }
 
 func verifySHA256(filePath, assetName, checksumsURL, token string) (bool, error) {
