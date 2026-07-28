@@ -415,7 +415,7 @@ export const mockClient = {
     };
   },
 
-  async listCategories(): Promise<Category[]> {
+  async listCategories(_opts?: { light?: boolean }): Promise<Category[]> {
     await delay();
     mockStore.requireSession();
     mockStore.recomputeCounts(mockStore.getDb());

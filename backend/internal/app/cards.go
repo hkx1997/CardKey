@@ -665,20 +665,34 @@ func (a *App) ExportBatchCardCodes(ctx context.Context, batchID, actor, ip strin
 }
 
 func (a *App) ListBatches(ctx context.Context, categorySlug string) ([]domain.Batch, error) {
-	sql := `
-		SELECT b.id, b.category_id, cat.name, b.name, b.note, b.created_at,
-		       COUNT(c.id), COUNT(c.id) FILTER (WHERE c.status='unused')
-		FROM batches b
-		JOIN categories cat ON cat.id=b.category_id
-		LEFT JOIN cards c ON c.batch_id=b.id
-	`
+	// 先截断最近 100 批，再对这批做 cards 聚合，避免全表 JOIN 再 LIMIT
 	args := []any{}
+	filter := ""
 	if categorySlug != "" {
-		sql += ` WHERE cat.slug=$1`
+		filter = ` AND cat.slug=$1`
 		args = append(args, categorySlug)
 	}
-	// 限制返回最近 100 条，避免导入批次数无限增长导致全量 JOIN 超时
-	sql += ` GROUP BY b.id, cat.name ORDER BY b.created_at DESC LIMIT 100`
+	sql := `
+		WITH recent AS (
+			SELECT b.id, b.category_id, cat.name AS category_name, b.name, b.note, b.created_at
+			FROM batches b
+			JOIN categories cat ON cat.id=b.category_id
+			WHERE 1=1` + filter + `
+			ORDER BY b.created_at DESC
+			LIMIT 100
+		)
+		SELECT r.id, r.category_id, r.category_name, r.name, r.note, r.created_at,
+		       COALESCE(agg.card_count, 0), COALESCE(agg.unused_count, 0)
+		FROM recent r
+		LEFT JOIN (
+			SELECT c.batch_id,
+			       COUNT(*)::int AS card_count,
+			       COUNT(*) FILTER (WHERE c.status='unused')::int AS unused_count
+			FROM cards c
+			WHERE c.batch_id IN (SELECT id FROM recent)
+			GROUP BY c.batch_id
+		) agg ON agg.batch_id = r.id
+		ORDER BY r.created_at DESC`
 	rows, err := a.Pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err

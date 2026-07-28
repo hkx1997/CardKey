@@ -10,56 +10,154 @@ import (
 	"github.com/cardkey/cardkey/internal/domain"
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 func (a *App) Dashboard(ctx context.Context) (domain.DashboardStats, error) {
-	var s domain.DashboardStats
-
-	// 卡密状态一次聚合
-	_ = a.Pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*),
-			COUNT(*) FILTER (WHERE status='unused'),
-			COUNT(*) FILTER (WHERE status='used'),
-			COUNT(*) FILTER (WHERE status='disabled'),
-			COUNT(*) FILTER (WHERE status='expired')
-		FROM cards`).Scan(&s.TotalCards, &s.UnusedCards, &s.UsedCards, &s.DisabledCards, &s.ExpiredCards)
-
-	// 兑换指标一次聚合
-	_ = a.Pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*),
-			COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE),
-			COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE - 1),
-			COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - 6)
-		FROM redeem_records`).Scan(&s.TotalRedeems, &s.TodayRedeems, &s.YesterdayRedeems, &s.WeekRedeems)
-
-	if s.TotalCards > 0 {
-		s.RedeemRate = int(float64(s.UsedCards) / float64(s.TotalCards) * 100)
+	type byCat = struct {
+		Slug       string              `json:"slug"`
+		Name       string              `json:"name"`
+		Icon       domain.CategoryIcon `json:"icon"`
+		Unused     int                 `json:"unused"`
+		Used       int                 `json:"used"`
+		Total      int                 `json:"total"`
+		RedeemRate int                 `json:"redeemRate"`
 	}
 
-	_ = a.Pool.QueryRow(ctx, `
-		SELECT COUNT(*), COUNT(*) FILTER (WHERE enabled) FROM categories`).
-		Scan(&s.TotalCategories, &s.EnabledCategories)
-	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL`).Scan(&s.ActiveApiKeys)
+	var (
+		totalCards, unusedCards, usedCards, disabledCards, expiredCards int
+		totalRedeems, todayRedeems, yesterdayRedeems, weekRedeems       int
+		totalCategories, enabledCategories, activeAPIKeys               int
+		counts                                                          = map[string]int{}
+		byCategory                                                      []byCat
+		recent                                                          []domain.RedeemRecord
+	)
 
-	// 14 天趋势：单次 group by，再补零
-	counts := map[string]int{}
-	trows, err := a.Pool.Query(ctx, `
-		SELECT to_char(created_at::date, 'MM-DD') AS d, COUNT(*)
-		FROM redeem_records
-		WHERE created_at >= (CURRENT_DATE - 13)
-		GROUP BY created_at::date
-		ORDER BY created_at::date`)
-	if err == nil {
+	var g errgroup.Group
+	g.Go(func() error {
+		return a.Pool.QueryRow(ctx, `
+			SELECT
+				COUNT(*),
+				COUNT(*) FILTER (WHERE status='unused'),
+				COUNT(*) FILTER (WHERE status='used'),
+				COUNT(*) FILTER (WHERE status='disabled'),
+				COUNT(*) FILTER (WHERE status='expired')
+			FROM cards`).Scan(&totalCards, &unusedCards, &usedCards, &disabledCards, &expiredCards)
+	})
+	g.Go(func() error {
+		return a.Pool.QueryRow(ctx, `
+			SELECT
+				COUNT(*),
+				COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + 1),
+				COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - 1 AND created_at < CURRENT_DATE),
+				COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - 6)
+			FROM redeem_records`).Scan(&totalRedeems, &todayRedeems, &yesterdayRedeems, &weekRedeems)
+	})
+	g.Go(func() error {
+		_ = a.Pool.QueryRow(ctx, `
+			SELECT COUNT(*), COUNT(*) FILTER (WHERE enabled) FROM categories`).
+			Scan(&totalCategories, &enabledCategories)
+		_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL`).Scan(&activeAPIKeys)
+		return nil
+	})
+	g.Go(func() error {
+		trows, err := a.Pool.Query(ctx, `
+			SELECT to_char(date_trunc('day', created_at), 'MM-DD') AS d, COUNT(*)
+			FROM redeem_records
+			WHERE created_at >= CURRENT_DATE - 13
+			GROUP BY date_trunc('day', created_at)
+			ORDER BY date_trunc('day', created_at)`)
+		if err != nil {
+			return nil
+		}
 		defer trows.Close()
+		local := map[string]int{}
 		for trows.Next() {
 			var d string
 			var c int
 			if trows.Scan(&d, &c) == nil {
-				counts[d] = c
+				local[d] = c
 			}
 		}
+		counts = local
+		return nil
+	})
+	g.Go(func() error {
+		rows, err := a.Pool.Query(ctx, `
+			SELECT cat.slug, cat.name, cat.icon_kind,
+			       CASE WHEN cat.icon_kind='image' AND length(cat.icon_value)>256 THEN '' ELSE cat.icon_value END,
+			       COALESCE(cat.unused_count, 0),
+			       COALESCE(agg.used_count, 0),
+			       COALESCE(agg.card_count, 0)
+			FROM categories cat
+			LEFT JOIN (
+				SELECT category_id,
+				       COUNT(*)::int AS card_count,
+				       COUNT(*) FILTER (WHERE status='used')::int AS used_count
+				FROM cards
+				GROUP BY category_id
+			) agg ON agg.category_id = cat.id
+			ORDER BY cat.sort_order`)
+		if err != nil {
+			return nil
+		}
+		defer rows.Close()
+		var list []byCat
+		for rows.Next() {
+			var slug, name, ik, iv string
+			var unused, used, total int
+			if rows.Scan(&slug, &name, &ik, &iv, &unused, &used, &total) != nil {
+				continue
+			}
+			rate := 0
+			if total > 0 {
+				rate = int(float64(used) / float64(total) * 100)
+			}
+			list = append(list, byCat{
+				Slug: slug, Name: name, Icon: domain.CategoryIcon{Kind: ik, Value: iv},
+				Unused: unused, Used: used, Total: total, RedeemRate: rate,
+			})
+		}
+		byCategory = list
+		return nil
+	})
+	g.Go(func() error {
+		recent = a.listRecentRedeems(ctx, 8)
+		return nil
+	})
+	_ = g.Wait()
+
+	s := domain.DashboardStats{
+		TotalCards: totalCards, UnusedCards: unusedCards, UsedCards: usedCards,
+		DisabledCards: disabledCards, ExpiredCards: expiredCards,
+		TotalRedeems: totalRedeems, TodayRedeems: todayRedeems,
+		YesterdayRedeems: yesterdayRedeems, WeekRedeems: weekRedeems,
+		TotalCategories: totalCategories, EnabledCategories: enabledCategories,
+		ActiveApiKeys: activeAPIKeys,
+		RecentRedeems: recent,
+	}
+	if s.TotalCards > 0 {
+		s.RedeemRate = int(float64(s.UsedCards) / float64(s.TotalCards) * 100)
+	}
+	s.ByCategory = make([]struct {
+		Slug       string              `json:"slug"`
+		Name       string              `json:"name"`
+		Icon       domain.CategoryIcon `json:"icon"`
+		Unused     int                 `json:"unused"`
+		Used       int                 `json:"used"`
+		Total      int                 `json:"total"`
+		RedeemRate int                 `json:"redeemRate"`
+	}, 0, len(byCategory))
+	for _, bc := range byCategory {
+		s.ByCategory = append(s.ByCategory, struct {
+			Slug       string              `json:"slug"`
+			Name       string              `json:"name"`
+			Icon       domain.CategoryIcon `json:"icon"`
+			Unused     int                 `json:"unused"`
+			Used       int                 `json:"used"`
+			Total      int                 `json:"total"`
+			RedeemRate int                 `json:"redeemRate"`
+		}{Slug: bc.Slug, Name: bc.Name, Icon: bc.Icon, Unused: bc.Unused, Used: bc.Used, Total: bc.Total, RedeemRate: bc.RedeemRate})
 	}
 	s.Trend = make([]struct {
 		Date  string `json:"date"`
@@ -73,53 +171,9 @@ func (a *App) Dashboard(ctx context.Context) (domain.DashboardStats, error) {
 			Count int    `json:"count"`
 		}{Date: key, Count: counts[key]})
 	}
-
-	// by category
-	s.ByCategory = []struct {
-		Slug       string              `json:"slug"`
-		Name       string              `json:"name"`
-		Icon       domain.CategoryIcon `json:"icon"`
-		Unused     int                 `json:"unused"`
-		Used       int                 `json:"used"`
-		Total      int                 `json:"total"`
-		RedeemRate int                 `json:"redeemRate"`
-	}{}
-	rows, err := a.Pool.Query(ctx, `
-		SELECT cat.slug, cat.name, cat.icon_kind, cat.icon_value,
-		       COUNT(c.id), COUNT(c.id) FILTER (WHERE c.status='unused'), COUNT(c.id) FILTER (WHERE c.status='used')
-		FROM categories cat
-		LEFT JOIN cards c ON c.category_id=cat.id
-		GROUP BY cat.id ORDER BY cat.sort_order`)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var slug, name, ik, iv string
-			var total, unused, used int
-			if rows.Scan(&slug, &name, &ik, &iv, &total, &unused, &used) != nil {
-				continue
-			}
-			rate := 0
-			if total > 0 {
-				rate = int(float64(used) / float64(total) * 100)
-			}
-			s.ByCategory = append(s.ByCategory, struct {
-				Slug       string              `json:"slug"`
-				Name       string              `json:"name"`
-				Icon       domain.CategoryIcon `json:"icon"`
-				Unused     int                 `json:"unused"`
-				Used       int                 `json:"used"`
-				Total      int                 `json:"total"`
-				RedeemRate int                 `json:"redeemRate"`
-			}{Slug: slug, Name: name, Icon: domain.CategoryIcon{Kind: ik, Value: iv}, Unused: unused, Used: used, Total: total, RedeemRate: rate})
-		}
-	}
-
-	rr, _ := a.ListRedeems(ctx, 1, 8, "", "")
-	s.RecentRedeems = rr.Items
 	if s.RecentRedeems == nil {
 		s.RecentRedeems = []domain.RedeemRecord{}
 	}
-
 	s.StatusBreakdown = []struct {
 		Status domain.CardStatus `json:"status"`
 		Count  int               `json:"count"`
@@ -130,6 +184,34 @@ func (a *App) Dashboard(ctx context.Context) (domain.DashboardStats, error) {
 		{Status: domain.StatusExpired, Count: s.ExpiredCards},
 	}
 	return s, nil
+}
+
+// listRecentRedeems 仅最近 N 条，跳过 COUNT 全表。
+func (a *App) listRecentRedeems(ctx context.Context, limit int) []domain.RedeemRecord {
+	if limit < 1 {
+		limit = 8
+	}
+	rows, err := a.Pool.Query(ctx, `
+		SELECT r.id, r.category_id, cat.slug, cat.name, r.card_id, r.code, COALESCE(r.ip::text,''), r.user_agent, r.created_at
+		FROM redeem_records r
+		JOIN categories cat ON cat.id=r.category_id
+		ORDER BY r.created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return []domain.RedeemRecord{}
+	}
+	defer rows.Close()
+	items := []domain.RedeemRecord{}
+	for rows.Next() {
+		var r domain.RedeemRecord
+		var created time.Time
+		if err := rows.Scan(&r.ID, &r.CategoryID, &r.CategorySlug, &r.CategoryName, &r.CardID, &r.Code, &r.IP, &r.UserAgent, &created); err != nil {
+			continue
+		}
+		r.CreatedAt = formatTS(created)
+		items = append(items, r)
+	}
+	return items
 }
 
 func (a *App) ListAPIKeys(ctx context.Context) ([]domain.ApiKeyMeta, error) {

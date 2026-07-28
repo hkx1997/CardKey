@@ -38,7 +38,7 @@ import { cn } from "@/shared/lib/cn";
 
 export function SettingsPage() {
   const q = useSettingsQuery();
-  const catsQ = useCategoriesQuery();
+  const catsQ = useCategoriesQuery({ light: true });
   const m = useUpdateSettings();
   const testMailM = useTestMail();
   const [form, setForm] = useState<Settings | null>(null);

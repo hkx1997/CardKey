@@ -7,10 +7,15 @@ import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { toastApiError } from "@/shared/lib/api-toast";
 import { queryKeys } from "@/shared/lib/query-keys";
 
-export function useCategoriesQuery() {
+/** 完整类别列表（管理页）；筛选下拉请用 light */
+export function useCategoriesQuery(opts?: { light?: boolean }) {
+  const light = !!opts?.light;
   return useQuery({
-    queryKey: queryKeys.categories,
-    queryFn: () => api.listCategories(),
+    queryKey: light
+      ? ([...queryKeys.categories, "light"] as const)
+      : queryKeys.categories,
+    queryFn: () => api.listCategories(light ? { light: true } : undefined),
+    staleTime: light ? 60_000 : 45_000,
   });
 }
 

@@ -47,7 +47,7 @@ export function RedeemsPage() {
   const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
   const [categorySlug, setCategorySlug] = useState(ALL);
 
-  const catsQ = useCategoriesQuery();
+  const catsQ = useCategoriesQuery({ light: true });
   const listQ = useRedeemsQuery({
     page,
     pageSize,

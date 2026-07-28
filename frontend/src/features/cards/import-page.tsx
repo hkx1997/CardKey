@@ -29,6 +29,7 @@ import { TaskProgress } from "@/shared/components/task-progress";
 import { api } from "@/shared/api/client";
 import { useImportCards } from "@/shared/hooks/use-cards";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
+import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { CARD_TYPE_OPTIONS } from "@/shared/lib/card-content";
 import { fieldErrors, importCardsSchema } from "@/shared/lib/schemas";
 
@@ -36,8 +37,9 @@ const IMPORT_TYPES = CARD_TYPE_OPTIONS.filter((o) => o.kind === "text");
 const ASYNC_THRESHOLD = 200;
 
 export function ImportPage() {
-  const catsQ = useCategoriesQuery();
+  const catsQ = useCategoriesQuery({ light: true });
   const m = useImportCards();
+  const inv = useInvalidate();
 
   const [categoryId, setCategoryId] = useState("");
   const [raw, setRaw] = useState(
@@ -115,13 +117,20 @@ export function ImportPage() {
         toast.message("已提交异步导入，可等待完成…");
         // 轮询进度
         const id = job.id;
-        for (let i = 0; i < 120; i++) {
-          await new Promise((r) => setTimeout(r, 500));
+        // 1s 起轮询，逐步退避到 3s，降低鉴权与 DB 压力
+        let delay = 1000;
+        for (let i = 0; i < 90; i++) {
+          await new Promise((r) => setTimeout(r, delay));
+          if (typeof document !== "undefined" && document.hidden) {
+            delay = Math.min(delay + 500, 4000);
+            continue;
+          }
           const st = await api.getImportJob(id);
           setAsyncJob(st);
           if (st.status === "success" || st.status === "failed") {
             if (st.status === "success") {
               toast.success(`异步导入完成 · ${st.successCount} 条`);
+              void inv.cardsHeavy();
             } else {
               toast.error(
                 "errorReport" in st && st.errorReport
@@ -131,6 +140,7 @@ export function ImportPage() {
             }
             break;
           }
+          delay = Math.min(Math.floor(delay * 1.25), 3000);
         }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "异步导入失败");

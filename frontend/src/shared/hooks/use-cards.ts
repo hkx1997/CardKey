@@ -106,8 +106,7 @@ export function useImportCards() {
     }) => api.importCards(input),
     onSuccess: (res) => {
       toast.success(`成功导入 ${res.total} 条到「${res.category.name}」`);
-      void inv.cards();
-      void inv.batches();
+      void inv.cardsHeavy();
     },
     onError: (e) => toastApiError(e, "导入失败"),
   });

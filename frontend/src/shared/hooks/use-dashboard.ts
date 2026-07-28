@@ -21,8 +21,8 @@ export function useRuntimeMetricsQuery(enabled = true) {
     queryKey: queryKeys.runtimeMetrics,
     queryFn: () => api.runtimeMetrics(),
     enabled: enabled && visible,
-    refetchInterval: visible ? 5_000 : false,
-    staleTime: 2_000,
+    refetchInterval: visible ? 12_000 : false,
+    staleTime: 8_000,
     refetchIntervalInBackground: false,
   });
 }

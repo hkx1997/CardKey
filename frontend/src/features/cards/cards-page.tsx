@@ -103,7 +103,7 @@ export function CardsPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [reveal, setReveal] = useState(false);
 
-  const catsQ = useCategoriesQuery();
+  const catsQ = useCategoriesQuery({ light: true });
   const listQ = useCardsQuery({
     page,
     pageSize,

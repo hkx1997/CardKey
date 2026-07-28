@@ -10,16 +10,71 @@ import (
 	"github.com/google/uuid"
 )
 
+// ListCategories 列表：用物化 unused_count + 单次 cards 聚合子查询，避免 JOIN 放大。
+// light=true 时不拉巨大 icon data URL、不聚合 used/total（筛选下拉用）。
 func (a *App) ListCategories(ctx context.Context) ([]domain.Category, error) {
+	return a.listCategories(ctx, false)
+}
+
+// ListCategoriesLight 筛选下拉：id/name/slug/prefix/enabled/unused_count，无大图。
+func (a *App) ListCategoriesLight(ctx context.Context) ([]domain.Category, error) {
+	return a.listCategories(ctx, true)
+}
+
+func (a *App) listCategories(ctx context.Context, light bool) ([]domain.Category, error) {
+	if light {
+		rows, err := a.Pool.Query(ctx, `
+			SELECT c.id, c.name, c.slug, c.code_prefix, c.description, c.enabled, c.sort_order,
+			       c.icon_kind,
+			       CASE
+			         WHEN c.icon_kind = 'image' AND length(c.icon_value) > 256 THEN ''
+			         ELSE c.icon_value
+			       END,
+			       c.created_at,
+			       COALESCE(c.unused_count, 0)
+			FROM categories c
+			ORDER BY c.sort_order, c.created_at`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []domain.Category
+		for rows.Next() {
+			var c domain.Category
+			var created time.Time
+			var unused int
+			if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
+				&c.Icon.Kind, &c.Icon.Value, &created, &unused); err != nil {
+				return nil, err
+			}
+			c.CreatedAt = formatTS(created)
+			c.UnusedCount = &unused
+			z := 0
+			c.CardCount = &z
+			c.UsedCount = &z
+			out = append(out, c)
+		}
+		if out == nil {
+			out = []domain.Category{}
+		}
+		return out, nil
+	}
+
+	// 完整列表：物化 unused + 一次 cards 聚合（避免 JOIN 行放大）
 	rows, err := a.Pool.Query(ctx, `
 		SELECT c.id, c.name, c.slug, c.code_prefix, c.description, c.enabled, c.sort_order,
 		       c.icon_kind, c.icon_value, c.created_at,
-		       COUNT(cards.id) AS card_count,
-		       COUNT(cards.id) FILTER (WHERE cards.status='unused') AS unused_count,
-		       COUNT(cards.id) FILTER (WHERE cards.status='used') AS used_count
+		       COALESCE(c.unused_count, 0),
+		       COALESCE(agg.card_count, 0),
+		       COALESCE(agg.used_count, 0)
 		FROM categories c
-		LEFT JOIN cards ON cards.category_id = c.id
-		GROUP BY c.id
+		LEFT JOIN (
+			SELECT category_id,
+			       COUNT(*)::int AS card_count,
+			       COUNT(*) FILTER (WHERE status='used')::int AS used_count
+			FROM cards
+			GROUP BY category_id
+		) agg ON agg.category_id = c.id
 		ORDER BY c.sort_order, c.created_at`)
 	if err != nil {
 		return nil, err
@@ -29,14 +84,14 @@ func (a *App) ListCategories(ctx context.Context) ([]domain.Category, error) {
 	for rows.Next() {
 		var c domain.Category
 		var created time.Time
-		var cardCount, unused, used int
+		var unused, cardCount, used int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
-			&c.Icon.Kind, &c.Icon.Value, &created, &cardCount, &unused, &used); err != nil {
+			&c.Icon.Kind, &c.Icon.Value, &created, &unused, &cardCount, &used); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = formatTS(created)
-		c.CardCount = &cardCount
 		c.UnusedCount = &unused
+		c.CardCount = &cardCount
 		c.UsedCount = &used
 		out = append(out, c)
 	}
@@ -44,6 +99,30 @@ func (a *App) ListCategories(ctx context.Context) ([]domain.Category, error) {
 		out = []domain.Category{}
 	}
 	return out, nil
+}
+
+func (a *App) getCategoryRow(ctx context.Context, id string) (domain.Category, error) {
+	var c domain.Category
+	var created time.Time
+	var unused int
+	err := a.Pool.QueryRow(ctx, `
+		SELECT c.id, c.name, c.slug, c.code_prefix, c.description, c.enabled, c.sort_order,
+		       c.icon_kind, c.icon_value, c.created_at, COALESCE(c.unused_count, 0)
+		FROM categories c WHERE c.id=$1`, id).
+		Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
+			&c.Icon.Kind, &c.Icon.Value, &created, &unused)
+	if err != nil {
+		return domain.Category{}, apperr.NotFound("类别不存在")
+	}
+	c.CreatedAt = formatTS(created)
+	c.UnusedCount = &unused
+	var cardCount, used int
+	_ = a.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int, COUNT(*) FILTER (WHERE status='used')::int
+		FROM cards WHERE category_id=$1`, id).Scan(&cardCount, &used)
+	c.CardCount = &cardCount
+	c.UsedCount = &used
+	return c, nil
 }
 
 func (a *App) CreateCategory(ctx context.Context, name, slug, prefix, desc string, icon domain.CategoryIcon, actor, ip string) (domain.Category, error) {
@@ -63,7 +142,6 @@ func (a *App) CreateCategory(ctx context.Context, name, slug, prefix, desc strin
 	if icon.Value == "" {
 		icon.Value = "ticket"
 	}
-	// 旧库 icon_value 若仍是 VARCHAR(128)，长 data URL 会炸；给出可操作提示（热修复应已扩成 TEXT）
 	if icon.Kind == "image" && len(icon.Value) > 512*1024 {
 		return domain.Category{}, apperr.Validation("图标图片过大，请压缩到 200KB 以内")
 	}
@@ -91,19 +169,9 @@ func (a *App) CreateCategory(ctx context.Context, name, slug, prefix, desc strin
 }
 
 func (a *App) UpdateCategory(ctx context.Context, id string, name, desc *string, enabled *bool, sort *int, icon *domain.CategoryIcon, actor, ip string) (domain.Category, error) {
-	cats, err := a.ListCategories(ctx)
+	cur, err := a.getCategoryRow(ctx, id)
 	if err != nil {
 		return domain.Category{}, err
-	}
-	var cur *domain.Category
-	for i := range cats {
-		if cats[i].ID == id {
-			cur = &cats[i]
-			break
-		}
-	}
-	if cur == nil {
-		return domain.Category{}, apperr.NotFound("类别不存在")
 	}
 	if name != nil {
 		cur.Name = strings.TrimSpace(*name)
@@ -132,7 +200,7 @@ func (a *App) UpdateCategory(ctx context.Context, id string, name, desc *string,
 		return domain.Category{}, err
 	}
 	a.Audit(ctx, "admin", actor, "update_category", "category:"+id, cur.Name, ip)
-	return *cur, nil
+	return cur, nil
 }
 
 // DeleteCategory 删除类别。
@@ -160,7 +228,6 @@ func (a *App) DeleteCategory(ctx context.Context, id, actor, ip string) error {
 	}
 	defer tx.Rollback(ctx)
 
-	// 无交易数据时可能仍有 unused/disabled 库存，一并清理
 	if _, err := tx.Exec(ctx, `DELETE FROM cards WHERE category_id=$1 AND status <> 'used'`, id); err != nil {
 		return err
 	}
@@ -190,7 +257,7 @@ func (a *App) FindCategoryBySlug(ctx context.Context, slug string) (domain.Categ
 		Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
 			&c.Icon.Kind, &c.Icon.Value, &created)
 	if err != nil {
-		return c, apperr.New(400, "CATEGORY_INVALID", "类别无效或已关闭")
+		return domain.Category{}, apperr.NotFound("类别不存在")
 	}
 	c.CreatedAt = formatTS(created)
 	return c, nil

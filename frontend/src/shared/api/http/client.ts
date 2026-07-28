@@ -230,7 +230,10 @@ export const httpClient = {
       checkedAt: string;
     }>("/api/v1/admin/dashboard/runtime"),
 
-  listCategories: () => request<Category[]>("/api/v1/admin/categories"),
+  listCategories: (opts?: { light?: boolean }) => {
+    const q = opts?.light ? "?light=1" : "";
+    return request<Category[]>(`/api/v1/admin/categories${q}`);
+  },
 
   createCategory: (input: {
     name: string;

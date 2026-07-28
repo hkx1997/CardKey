@@ -49,12 +49,12 @@ export function SystemVersion({ className }: { className?: string }) {
   const [busy, setBusy] = useState(false);
   const [applyProgress, setApplyProgress] = useState<number | undefined>();
 
-  // 进入管理端后软检测更新（服务端有缓存），用于「新」角标
+  // 进入管理端后延迟软检测更新，避免与首屏列表抢带宽
   useEffect(() => {
     if (checkM.data || checkM.isPending) return;
     const t = window.setTimeout(() => {
       checkM.mutate();
-    }, 800);
+    }, 8_000);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载软检测一次
   }, []);

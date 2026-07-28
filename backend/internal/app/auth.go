@@ -370,12 +370,40 @@ func (a *App) ChangePassword(ctx context.Context, adminID, oldPW, newPW string) 
 	}
 	_, err = a.Pool.Exec(ctx, `
 		UPDATE admins SET password_hash=$1, must_change_password=false, updated_at=now() WHERE id=$2`, nh, adminID)
+	if err == nil {
+		a.InvalidateMustChangeCache(adminID)
+	}
 	return err
 }
 
-// MustChangePassword 查询是否需要强制改密。
+// mustChangeCache 短缓存，避免每个管理 API 都查 admins。
+type mustChangeCacheEntry struct {
+	must bool
+	at   time.Time
+}
+
+var mustChangeCache sync.Map // adminID -> mustChangeCacheEntry
+
+const mustChangeCacheTTL = 45 * time.Second
+
+// MustChangePassword 查询是否需要强制改密（进程内 45s 缓存）。
 func (a *App) MustChangePassword(ctx context.Context, adminID string) (bool, error) {
+	if v, ok := mustChangeCache.Load(adminID); ok {
+		e := v.(mustChangeCacheEntry)
+		if time.Since(e.at) < mustChangeCacheTTL {
+			return e.must, nil
+		}
+	}
 	var must bool
 	err := a.Pool.QueryRow(ctx, `SELECT must_change_password FROM admins WHERE id=$1`, adminID).Scan(&must)
-	return must, err
+	if err != nil {
+		return false, err
+	}
+	mustChangeCache.Store(adminID, mustChangeCacheEntry{must: must, at: time.Now()})
+	return must, nil
+}
+
+// InvalidateMustChangeCache 改密成功后清缓存。
+func (a *App) InvalidateMustChangeCache(adminID string) {
+	mustChangeCache.Delete(adminID)
 }

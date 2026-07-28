@@ -143,7 +143,8 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "{prefix}/admin/categories",
     auth: "JWT / admin:api",
-    desc: "类别列表",
+    desc: "类别列表；?light=1 筛选下拉（无大图/轻量计数）",
+    query: "light?",
   },
   {
     method: "POST",

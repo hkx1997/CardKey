@@ -341,7 +341,14 @@ func (h *Handler) RuntimeMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
-	list, err := h.App.ListCategories(r.Context())
+	light := r.URL.Query().Get("light") == "1" || r.URL.Query().Get("light") == "true"
+	var list []domain.Category
+	var err error
+	if light {
+		list, err = h.App.ListCategoriesLight(r.Context())
+	} else {
+		list, err = h.App.ListCategories(r.Context())
+	}
 	if err != nil {
 		response.Fail(w, err)
 		return
