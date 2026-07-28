@@ -28,7 +28,7 @@ func (h *Handler) decode(r *http.Request, dst any) error {
 
 func (h *Handler) setAuthCookie(w http.ResponseWriter, r *http.Request, token string) {
 	// Secure：HTTPS 或反代 X-Forwarded-Proto=https；亦可 SECURE_COOKIE=true 强制
-	secure := httpx.IsHTTPS(r) || h.App.SecureCookie
+	secure := httpx.IsHTTPS(r, h.App.TrustProxy) || h.App.SecureCookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "cardkey_token",
 		Value:    token,
@@ -41,7 +41,7 @@ func (h *Handler) setAuthCookie(w http.ResponseWriter, r *http.Request, token st
 }
 
 func (h *Handler) clearAuthCookie(w http.ResponseWriter, r *http.Request) {
-	secure := httpx.IsHTTPS(r) || h.App.SecureCookie
+	secure := httpx.IsHTTPS(r, h.App.TrustProxy) || h.App.SecureCookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "cardkey_token",
 		Value:    "",
@@ -80,20 +80,40 @@ func (h *Handler) GetPublicCategoryStock(w http.ResponseWriter, r *http.Request)
 }
 
 // FaviconRedirect 浏览器默认请求 /favicon.ico 时跳转到系统设置中的图标。
+// 仅允许同源相对路径（/uploads/… 或 /favicon.svg），禁止 open redirect。
 func (h *Handler) FaviconRedirect(w http.ResponseWriter, r *http.Request) {
 	s, err := h.App.GetSettings(r.Context())
 	target := "/favicon.svg"
 	if err == nil {
 		fav := strings.TrimSpace(s.SiteFavicon)
-		if fav != "" {
-			// data URL 无法作为 Location；回退 svg
-			if !strings.HasPrefix(fav, "data:") {
-				target = fav
-			}
+		if fav != "" && safeSameOriginPath(fav) {
+			target = fav
 		}
 	}
-	// 相对路径保持同源
 	http.Redirect(w, r, target, http.StatusFound)
+}
+
+func safeSameOriginPath(p string) bool {
+	p = strings.TrimSpace(p)
+	if p == "" || strings.HasPrefix(p, "data:") {
+		return false
+	}
+	// 禁止协议相对 //evil 与绝对 URL
+	if strings.HasPrefix(p, "//") || strings.Contains(p, "://") {
+		return false
+	}
+	if !strings.HasPrefix(p, "/") {
+		return false
+	}
+	// 仅站内静态资源路径
+	if strings.HasPrefix(p, "/uploads/") || p == "/favicon.svg" || strings.HasPrefix(p, "/assets/") {
+		return true
+	}
+	// 其它以 / 开头的相对路径也允许（同源），但拒绝 \ 与控制字符
+	if strings.ContainsAny(p, "\\\r\n\t") {
+		return false
+	}
+	return true
 }
 
 func (h *Handler) SetupStatus(w http.ResponseWriter, r *http.Request) {

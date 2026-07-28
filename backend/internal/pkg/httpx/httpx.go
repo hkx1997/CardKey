@@ -74,10 +74,14 @@ func ClientIP(r *http.Request, trustProxy bool) string {
 	return host
 }
 
-// IsHTTPS 判断请求是否经 HTTPS（含反代）。
-func IsHTTPS(r *http.Request) bool {
+// IsHTTPS 判断请求是否经 HTTPS。
+// trustProxy 为真时才信任 X-Forwarded-Proto（防客户端伪造）。
+func IsHTTPS(r *http.Request, trustProxy bool) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if trustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return false
 }

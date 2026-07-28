@@ -58,6 +58,9 @@ export function useRedeemMutation() {
   });
 }
 
+/** 批量兑换单次上限（防无限粘贴打爆限流） */
+export const BATCH_REDEEM_MAX = 50;
+
 /**
  * 批量兑换：逐条调用公开 redeem API（顺序执行，避免瞬时打爆限流）。
  * 单条失败不中断整批，结果写入 items。
@@ -70,7 +73,14 @@ export function useBatchRedeemMutation() {
       codes: string[];
       onProgress?: (done: number, total: number, last: BatchRedeemItem) => void;
     }): Promise<BatchRedeemItem[]> => {
-      const { category, codes, onProgress } = input;
+      const { category, onProgress } = input;
+      let codes = input.codes;
+      if (codes.length > BATCH_REDEEM_MAX) {
+        toast.message(
+          `单次最多兑换 ${BATCH_REDEEM_MAX} 条，已截取前 ${BATCH_REDEEM_MAX} 条`,
+        );
+        codes = codes.slice(0, BATCH_REDEEM_MAX);
+      }
       const items: BatchRedeemItem[] = [];
       for (let i = 0; i < codes.length; i++) {
         const code = codes[i]!;

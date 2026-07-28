@@ -540,12 +540,17 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 		}
 	}
 
-	// 2) GitHub Release（远程可回滚目标）
+	// 2) GitHub Release：仅「严格低于当前版本」可作为远程回滚目标
+	// 更高版本走「检测更新 / 一键更新」，不出现在回滚列表
 	if a.UpdateEnabled && a.UpdateGitHubOwner != "" && a.UpdateGitHubRepo != "" {
 		if rels, err := a.fetchReleasesList(ctx, 30); err == nil {
 			for _, rel := range rels {
 				ver := normalizeVer(rel.TagName)
-				if ver == "" {
+				if ver == "" || ver == cur {
+					continue
+				}
+				// 远程仅展示更旧版本；本机已有更新归档仍保留在步骤 1
+				if semverGreater(ver, cur) {
 					continue
 				}
 				// 仅列出含当前架构 linux 资产的版本（或无资产列表时仍展示 tag）
@@ -557,9 +562,7 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 						break
 					}
 				}
-				// 资产列表空时仍展示（直链下载可能可用）
 				if len(rel.Assets) > 0 && !hasLinux {
-					// 再放宽：有 cardkey-linux- 即可
 					for _, asset := range rel.Assets {
 						if strings.Contains(strings.ToLower(asset.Name), "cardkey-linux") {
 							hasLinux = true
@@ -584,7 +587,7 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 					byVer[ver] = &UpdateHistoryItem{
 						Version:    ver,
 						ModTime:    pub,
-						IsCurrent:  ver == cur,
+						IsCurrent:  false,
 						Source:     "remote",
 						CanInstall: true,
 					}
@@ -602,10 +605,19 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 		}
 	} else {
 		byVer[cur].IsCurrent = true
+		byVer[cur].CanInstall = false
 	}
 
+	// 本机若有「高于当前」的归档：可切换，但不叫远程回滚目标
 	items := make([]UpdateHistoryItem, 0, len(byVer))
 	for _, it := range byVer {
+		// 过滤：纯远程且不比当前旧的不应出现（双保险）
+		if it.Source == "remote" && (it.Version == cur || semverGreater(it.Version, cur)) {
+			continue
+		}
+		if it.IsCurrent {
+			it.CanInstall = false
+		}
 		items = append(items, *it)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -867,36 +879,27 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 	}
 
 	a.setUpdateStatus(UpdateStatus{State: "verifying", Message: "校验文件…", Progress: 70})
+	// 强制 SHA256：无 checksums 或校验失败一律拒绝（禁止 fail-open）
+	sumURL := ""
 	if rel != nil {
-		if sumURL := findAssetURL(rel, "checksums.txt"); sumURL != "" {
-			ok, err := verifySHA256(partial, assetName, sumURL, a.UpdateGitHubToken)
-			if err != nil {
-				if a.Log != nil {
-					a.Log.Warn("checksum verify skipped", "err", err)
-				}
-			} else if !ok {
-				_ = os.Remove(partial)
-				a.setUpdateStatus(UpdateStatus{State: "failed", Error: "SHA256 校验失败"})
-				return apperr.Validation("SHA256 校验失败")
-			}
-		}
+		sumURL = findAssetURL(rel, "checksums.txt")
 	}
-	// 无 API 时尝试下载 checksums.txt 直链
-	if rel == nil {
-		sumURL := fmt.Sprintf(
+	if sumURL == "" {
+		sumURL = fmt.Sprintf(
 			"https://github.com/%s/%s/releases/download/v%s/checksums.txt",
 			a.UpdateGitHubOwner, a.UpdateGitHubRepo, targetVer,
 		)
-		ok, err := verifySHA256(partial, assetName, sumURL, a.UpdateGitHubToken)
-		if err != nil {
-			if a.Log != nil {
-				a.Log.Warn("checksum optional skip", "err", err)
-			}
-		} else if !ok {
-			_ = os.Remove(partial)
-			a.setUpdateStatus(UpdateStatus{State: "failed", Error: "SHA256 校验失败"})
-			return apperr.Validation("SHA256 校验失败")
-		}
+	}
+	ok, err := verifySHA256(partial, assetName, sumURL, a.UpdateGitHubToken)
+	if err != nil {
+		_ = os.Remove(partial)
+		a.setUpdateStatus(UpdateStatus{State: "failed", Error: "校验 checksums 失败: " + err.Error()})
+		return apperr.Validation("无法校验更新包完整性（checksums.txt）：" + err.Error())
+	}
+	if !ok {
+		_ = os.Remove(partial)
+		a.setUpdateStatus(UpdateStatus{State: "failed", Error: "SHA256 校验失败"})
+		return apperr.Validation("SHA256 校验失败，已拒绝应用该更新包")
 	}
 
 	_ = os.Chmod(partial, 0o755)
@@ -995,7 +998,14 @@ func (a *App) RollbackUpdate(ctx context.Context, targetVer, actor, ip string) e
 		return a.installLocalBinaryAndRestart(ctx, localSrc, targetVer, actor, ip, "rollback_local")
 	}
 
-	// 无本机包：从 GitHub Release 下载目标版本（与一键更新同一路径）
+	// 无本机包：仅允许从 GitHub 回滚到「更旧」版本；升级请走一键更新
+	cur := normalizeVer(version.Version)
+	if targetVer == cur {
+		return apperr.Validation("已是当前版本 v" + cur)
+	}
+	if semverGreater(targetVer, cur) {
+		return apperr.Validation("v" + targetVer + " 新于当前 v" + cur + "，请用「检测更新 / 一键更新」，不能作为回滚目标")
+	}
 	if a.UpdateGitHubOwner == "" || a.UpdateGitHubRepo == "" {
 		return apperr.NotFound("本机无 v" + targetVer + " 归档，且未配置 GitHub 仓库，无法远程回滚")
 	}
@@ -1188,12 +1198,50 @@ func (a *App) downloadFile(ctx context.Context, url, dest string) error {
 		return err
 	}
 	defer f.Close()
-	n, err := io.Copy(f, io.LimitReader(resp.Body, 500<<20))
-	if err != nil {
-		return err
+	// 带进度的拷贝（15%→70%）
+	total := resp.ContentLength
+	var written int64
+	buf := make([]byte, 32*1024)
+	reader := io.LimitReader(resp.Body, 500<<20)
+	lastPct := -1
+	for {
+		nr, er := reader.Read(buf)
+		if nr > 0 {
+			nw, ew := f.Write(buf[:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = io.ErrShortWrite
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				return ew
+			}
+			if total > 0 {
+				pct := int(15 + float64(written)/float64(total)*55)
+				if pct > 70 {
+					pct = 70
+				}
+				if pct != lastPct {
+					lastPct = pct
+					a.setUpdateStatus(UpdateStatus{
+						State:    "downloading",
+						Message:  fmt.Sprintf("下载中 %d%%…", int(float64(written)/float64(total)*100)),
+						Progress: pct,
+					})
+				}
+			}
+		}
+		if er != nil {
+			if er == io.EOF {
+				break
+			}
+			return er
+		}
 	}
-	if n < 1024 {
-		return fmt.Errorf("downloaded file too small (%d bytes), likely not a binary", n)
+	if written < 1024 {
+		return fmt.Errorf("downloaded file too small (%d bytes), likely not a binary", written)
 	}
 	return nil
 }

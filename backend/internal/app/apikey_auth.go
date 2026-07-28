@@ -18,7 +18,8 @@ type APIKeyIdentity struct {
 	Scopes []string
 }
 
-// AuthenticateAPIKey 校验 Bearer API Key，需具备 needScope（admin:api 可覆盖任意 scope）。
+// AuthenticateAPIKey 校验 Bearer API Key，需具备 needScope。
+// admin:api 可覆盖一般管理 scope；system:update 仅 admin:api 或显式 system:update。
 // 系统固定兑换密钥（settings.publicRedeemApiKey）始终视为 redeem:api。
 func (a *App) AuthenticateAPIKey(ctx context.Context, plain string, needScope string) error {
 	_, err := a.AuthenticateAPIKeyIdentity(ctx, plain, needScope)
@@ -46,16 +47,19 @@ func (a *App) AuthenticateAPIKeyIdentity(ctx context.Context, plain string, need
 			return nil, apperr.Forbidden("系统兑换密钥仅具备 redeem:api 权限")
 		}
 	}
-	hash := crypto.HashAPIKey(plain)
+
+	peppered, legacy := crypto.APIKeyHashCandidates(plain, a.AESKey)
 	var id, name, prefix string
 	var scopes []string
 	var revoked *time.Time
 	var exp *time.Time
 	var rpm *int
+	var storedHash []byte
 	err = a.Pool.QueryRow(ctx, `
-		SELECT id, name, key_prefix, scopes, revoked_at, expires_at, rate_limit_rpm
-		FROM api_keys WHERE key_hash=$1`, hash).
-		Scan(&id, &name, &prefix, &scopes, &revoked, &exp, &rpm)
+		SELECT id, name, key_prefix, scopes, revoked_at, expires_at, rate_limit_rpm, key_hash
+		FROM api_keys WHERE key_hash=$1 OR key_hash=$2
+		LIMIT 1`, peppered, legacy).
+		Scan(&id, &name, &prefix, &scopes, &revoked, &exp, &rpm, &storedHash)
 	if err != nil {
 		return nil, apperr.Unauthorized("API Key 无效")
 	}
@@ -65,27 +69,43 @@ func (a *App) AuthenticateAPIKeyIdentity(ctx context.Context, plain string, need
 	if exp != nil && exp.Before(time.Now().UTC()) {
 		return nil, apperr.Unauthorized("API Key 已过期")
 	}
+	// 命中 legacy 时异步升级为 peppered hash
+	if len(storedHash) > 0 && subtle.ConstantTimeCompare(storedHash, legacy) == 1 &&
+		subtle.ConstantTimeCompare(peppered, legacy) != 1 {
+		_, _ = a.Pool.Exec(ctx, `UPDATE api_keys SET key_hash=$1 WHERE id=$2`, peppered, id)
+	}
 	if needScope != "" {
-		ok := false
-		for _, sc := range scopes {
-			if sc == needScope || sc == "admin:api" {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return nil, apperr.Forbidden("API Key 权限不足（需要 " + needScope + " 或 admin:api）")
+		if !scopeAllows(scopes, needScope) {
+			return nil, apperr.Forbidden("API Key 权限不足（需要 " + needScope + " 或更高权限）")
 		}
 	}
 	// 按 key 限流
 	if a.Limiter != nil && rpm != nil && *rpm > 0 {
-		ok, _ := a.Limiter.Allow(ctx, "apikey:"+id, *rpm)
-		if !ok {
+		ok, errLim := a.Limiter.Allow(ctx, "apikey:"+id, *rpm)
+		if errLim != nil && (a.Env == "production" || a.RateLimitFailClosed) {
+			return nil, apperr.RateLimited("API Key 限流暂不可用")
+		}
+		if errLim == nil && !ok {
 			return nil, apperr.RateLimited("API Key 请求过于频繁")
 		}
 	}
 	_, _ = a.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at=now() WHERE id=$1`, id)
 	return &APIKeyIdentity{ID: id, Name: name, Prefix: prefix, Scopes: scopes}, nil
+}
+
+// scopeAllows need 是否被 scopes 覆盖。
+// admin:api → 全部管理能力含 system:update
+// system:update → 仅更新相关
+func scopeAllows(scopes []string, need string) bool {
+	for _, sc := range scopes {
+		if sc == need {
+			return true
+		}
+		if sc == "admin:api" {
+			return true
+		}
+	}
+	return false
 }
 
 func prefixOf(plain string) string {

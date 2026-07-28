@@ -66,7 +66,7 @@ import { formatDateTime } from "@/shared/lib/format";
 import { CardStatusBadge } from "@/shared/lib/status";
 
 const ALL = "__all__";
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 function isSelectable(card: CardEntity) {
   return card.status === "unused" || card.status === "disabled";

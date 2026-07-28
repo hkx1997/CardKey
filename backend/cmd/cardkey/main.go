@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -144,6 +145,8 @@ func main() {
 		CSRFCheck:           cfg.CSRFCheck,
 		Env:                 cfg.Env,
 		RequireRedeemAPIKey: cfg.RequireRedeemAPIKey,
+		RateLimitFailClosed: strings.EqualFold(getenv("RATE_LIMIT_FAIL_CLOSED", "false"), "true") || cfg.Env == "production",
+		RequireRedis:        cfg.RequireRedis,
 		MetricsToken:        cfg.MetricsToken,
 		UpdateEnabled:       cfg.UpdateEnabled,
 		UpdateMode:          cfg.UpdateMode,

@@ -205,52 +205,43 @@ git push origin HEAD:main
 git tag -a "$TAG" -m "CardKey $TAG"
 git push origin "$TAG"
 
-echo "==> GitHub Release + Linux 资产"
-# 必须在 DIST 目录用相对路径上传：Windows 上 gh 对 MSYS 绝对路径可能传成残缺包（~12MB 无 SPA）
-(
-  cd "$DIST"
-  gh release create "$TAG" \
-    --title "CardKey $TAG" \
-    --notes-file "$NOTES" \
-    ./cardkey-linux-amd64 \
-    ./cardkey-linux-arm64 \
-    ./checksums.txt
-)
+echo "==> GitHub Release（先建空 Release，再用 API 流式上传，避免 Windows gh 截断 ~12MB 空壳）"
+gh release create "$TAG" \
+  --title "CardKey $TAG" \
+  --notes-file "$NOTES" \
+  --latest
 
-echo "==> 回拉校验 GitHub 资产（防空壳包上线）"
+# Python 直传 uploads.github.com，体积与本地一致
+python "$ROOT/scripts/_upload_assets.py" "$VERSION"
+
+echo "==> 校验远程资产体积 + SPA 嵌入"
+REMOTE_SZ=$(gh api "repos/hkx1997/CardKey/releases/tags/${TAG}" --jq '.assets[] | select(.name=="cardkey-linux-amd64") | .size')
+LOCAL_SZ=$(wc -c <"$DIST/cardkey-linux-amd64" | tr -d ' ')
+echo "local=$LOCAL_SZ remote=$REMOTE_SZ"
+if [[ "$LOCAL_SZ" != "$REMOTE_SZ" ]]; then
+  echo "FAIL: remote size mismatch after API upload" >&2
+  exit 1
+fi
+if [[ "$REMOTE_SZ" -lt 13000000 ]]; then
+  echo "FAIL: remote binary too small (empty shell)" >&2
+  exit 1
+fi
+# API 体积已对齐时再可选回拉（网络差时不阻断发版）
 VERIFY_DIR="$(mktemp -d)"
 trap 'rm -rf "$VERIFY_DIR"' EXIT
-gh release download "$TAG" -p cardkey-linux-amd64 -D "$VERIFY_DIR" --clobber
-LOCAL_SZ=$(wc -c <"$DIST/cardkey-linux-amd64" | tr -d ' ')
-REMOTE_SZ=$(wc -c <"$VERIFY_DIR/cardkey-linux-amd64" | tr -d ' ')
-if [[ "$LOCAL_SZ" != "$REMOTE_SZ" ]]; then
-  echo "FAIL: GitHub 资产大小 $REMOTE_SZ != 本地 $LOCAL_SZ，正在用相对路径覆盖重传…" >&2
-  (
-    cd "$DIST"
-    gh release delete-asset "$TAG" cardkey-linux-amd64 --yes || true
-    gh release delete-asset "$TAG" cardkey-linux-arm64 --yes || true
-    gh release delete-asset "$TAG" checksums.txt --yes || true
-    gh release upload "$TAG" ./cardkey-linux-amd64 ./cardkey-linux-arm64 ./checksums.txt --clobber
-  )
-  gh release download "$TAG" -p cardkey-linux-amd64 -D "$VERIFY_DIR" --clobber
-  REMOTE_SZ=$(wc -c <"$VERIFY_DIR/cardkey-linux-amd64" | tr -d ' ')
-  if [[ "$LOCAL_SZ" != "$REMOTE_SZ" ]]; then
-    echo "FAIL: 重传后仍不一致 local=$LOCAL_SZ remote=$REMOTE_SZ" >&2
-    exit 1
-  fi
-fi
-# 内容校验：CSS 片段必须在远程包内
-python - "$VERIFY_DIR/cardkey-linux-amd64" "$CSS_FILE" <<'PY'
+if gh release download "$TAG" -p cardkey-linux-amd64 -D "$VERIFY_DIR" --clobber 2>/dev/null; then
+  python - "$VERIFY_DIR/cardkey-linux-amd64" "$CSS_FILE" <<'PY'
 import sys
 from pathlib import Path
 data = Path(sys.argv[1]).read_bytes()
 css = Path(sys.argv[2]).read_bytes()[:120]
 if css not in data:
     raise SystemExit("FAIL: re-downloaded GitHub binary missing CSS embed")
-if len(data) < 13_000_000:
-    raise SystemExit(f"FAIL: re-downloaded binary too small: {len(data)}")
-print("OK GitHub asset verified:", len(data), "bytes")
+print("OK GitHub asset redownload verified:", len(data), "bytes")
 PY
+else
+  echo "WARN: redownload skipped (network); API size already matched local"
+fi
 
 rm -f "$NOTES"
 echo "OK: https://github.com/hkx1997/CardKey/releases/tag/$TAG"

@@ -20,7 +20,8 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	h := &handler.Handler{App: a}
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	// 禁止无条件 RealIP：伪造 X-Forwarded-For 会击穿限流/审计。
+	// 客户端 IP 仅由 ClientIPMiddleware(TrustProxy) 解析。
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(60 * time.Second))
 	r.Use(middleware.SecurityHeaders)
@@ -150,8 +151,9 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Get("/updates/check", h.CheckUpdates)
 					r.Get("/updates/history", h.UpdateHistory)
 					r.Get("/updates/status", h.UpdateStatus)
-					r.Post("/updates/apply", h.ApplyUpdate)
-					r.Post("/updates/rollback", h.RollbackUpdate)
+					// 应用/回滚：需 system:update 或 admin:api（JWT 会话始终可）
+					r.With(middleware.RequireAdminScope(a, "system:update")).Post("/updates/apply", h.ApplyUpdate)
+					r.With(middleware.RequireAdminScope(a, "system:update")).Post("/updates/rollback", h.RollbackUpdate)
 				})
 			})
 		})

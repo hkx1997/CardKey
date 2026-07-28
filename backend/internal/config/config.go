@@ -62,8 +62,8 @@ func Load() Config {
 	env := getenv("APP_ENV", "development")
 	prod := env == "production"
 
-	// SecureCookie：显式 true/false，否则生产默认 true、开发 false
-	secure := !prod
+	// SecureCookie：显式 true/false；否则生产默认 true、开发 false
+	secure := prod
 	if v := getenv("SECURE_COOKIE", ""); v != "" {
 		secure = strings.EqualFold(v, "true")
 	}
@@ -155,6 +155,26 @@ func (c Config) ValidateProduction() error {
 		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
 			return errf("CONTENT_KEY must be hex")
 		}
+	}
+	if !c.CSRFCheck {
+		return errf("production requires CSRF_CHECK=true for cookie session write protection")
+	}
+	if !c.RequireRedis {
+		return errf("production requires REQUIRE_REDIS=true (rate limit + JWT revoke)")
+	}
+	if !c.SecureCookie {
+		// 允许显式 SECURE_COOKIE=false，但不推荐；若设置了则仅当用户明确写出
+		if v := getenv("SECURE_COOKIE", ""); !strings.EqualFold(v, "false") {
+			return errf("production requires Secure cookies (omit SECURE_COOKIE or set true; behind TLS proxy use TRUST_PROXY)")
+		}
+	}
+	if strings.Contains(strings.ToLower(c.DatabaseURL), "sslmode=disable") {
+		if !strings.EqualFold(getenv("ALLOW_DB_SSLMODE_DISABLE", ""), "true") {
+			return errf("production DATABASE_URL must not use sslmode=disable (set ALLOW_DB_SSLMODE_DISABLE=true to override)")
+		}
+	}
+	if strings.TrimSpace(c.MetricsToken) == "" {
+		return errf("production requires METRICS_TOKEN to protect /metrics (or set a long random token)")
 	}
 	return nil
 }

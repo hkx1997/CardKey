@@ -33,8 +33,9 @@ func (a *App) Bootstrap(ctx context.Context, user, pass, publicRedeemKey string)
 			return "", "", err
 		}
 		adminUser, adminPass = user, pass
-		a.Log.Info("bootstrap admin created from env", slog.String("username", user))
-		fmt.Printf("\n=== CardKey Bootstrap ===\nAdmin: %s\nPassword: %s\n请登录后立即修改密码\n=========================\n\n", user, pass)
+		// 不向 stdout 打印明文密码（日志采集易泄露）；仅提示用户名与改密要求
+		a.Log.Info("bootstrap admin created from env", slog.String("username", user), slog.Bool("must_change_password", true))
+		fmt.Printf("\n=== CardKey Bootstrap ===\nAdmin: %s\nPassword: (from BOOTSTRAP_ADMIN_PASS env, not printed)\n请立即登录并修改密码\n=========================\n\n", user)
 	} else if n == 0 {
 		a.Log.Info("no admin yet — complete setup wizard at /admin/setup")
 		fmt.Printf("\n=== CardKey ===\n首次安装：打开管理端完成向导 /admin/setup\n===============\n\n")
@@ -78,7 +79,7 @@ func (a *App) Bootstrap(ctx context.Context, user, pass, publicRedeemKey string)
 		_, err = a.Pool.Exec(ctx, `
 			INSERT INTO api_keys(name, key_prefix, key_hash, scopes, is_system_redeem_key, rate_limit_rpm)
 			VALUES('系统兑换密钥', $1, $2, ARRAY['redeem:api'], true, 120)`,
-			prefix, crypto.HashAPIKey(plain))
+			prefix, crypto.HashAPIKeyPeppered(plain, a.AESKey))
 		if err != nil {
 			return adminUser, adminPass, err
 		}

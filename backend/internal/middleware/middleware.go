@@ -22,8 +22,9 @@ const (
 	CtxClientIP ctxKey = "clientIP"
 	CtxJWTRaw   ctxKey = "jwtRaw"
 	// CtxAuthKind: "jwt" | "apikey"
-	CtxAuthKind ctxKey = "authKind"
-	CtxAPIKeyID ctxKey = "apiKeyId"
+	CtxAuthKind    ctxKey = "authKind"
+	CtxAPIKeyID    ctxKey = "apiKeyId"
+	CtxAPIKeyScopes ctxKey = "apiKeyScopes"
 )
 
 func SecurityHeaders(next http.Handler) http.Handler {
@@ -176,10 +177,11 @@ func ProtectMetrics(token string, isProd bool, next http.HandlerFunc) http.Handl
 			got = strings.TrimSpace(strings.TrimPrefix(ah, "Bearer "))
 		}
 		if got == "" {
-			got = r.URL.Query().Get("token")
-		}
-		if got == "" {
 			got = r.Header.Get("X-Metrics-Token")
+		}
+		// 生产不接受 query token（易进 access log / Referer）
+		if got == "" && !isProd {
+			got = r.URL.Query().Get("token")
 		}
 		if got != tok {
 			response.Fail(w, apperr.Unauthorized("metrics 需要有效令牌"))
@@ -250,8 +252,11 @@ func RequireAdmin(a *app.App) func(http.Handler) http.Handler {
 				jwtErr = err
 			}
 
-			// 2) API Key（需 admin:api；脚本 / OpenAPI 拉类别等）
+			// 2) API Key：admin:api 或 system:update（后者仅应配合更新类路由；细粒度由 RequireAdminScope 再卡）
 			ident, err := a.AuthenticateAPIKeyIdentity(r.Context(), token, "admin:api")
+			if err != nil {
+				ident, err = a.AuthenticateAPIKeyIdentity(r.Context(), token, "system:update")
+			}
 			if err != nil {
 				// 非 ck_ 且未判为 JWT 时，再试一次 JWT（兼容边界 token）
 				if jwtErr == nil && !isLikelyJWT(token) {
@@ -280,7 +285,35 @@ func RequireAdmin(a *app.App) func(http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, CtxUsername, "apikey:"+label)
 			ctx = context.WithValue(ctx, CtxAuthKind, "apikey")
 			ctx = context.WithValue(ctx, CtxAPIKeyID, ident.ID)
+			ctx = context.WithValue(ctx, CtxAPIKeyScopes, ident.Scopes)
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireAdminScope 在已通过 RequireAdmin 后，限制 API Key 必须具备 needScope。
+// JWT 会话始终放行；admin:api 覆盖所有 need。
+func RequireAdminScope(a *app.App, needScope string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			kind, _ := r.Context().Value(CtxAuthKind).(string)
+			if kind != "apikey" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			scopes, _ := r.Context().Value(CtxAPIKeyScopes).([]string)
+			ok := false
+			for _, sc := range scopes {
+				if sc == needScope || sc == "admin:api" {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				response.Fail(w, apperr.Forbidden("API Key 权限不足（需要 "+needScope+" 或 admin:api）"))
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

@@ -22,7 +22,7 @@ import { useRedeemsQuery } from "@/shared/hooks/use-redeems";
 import { formatDateTime } from "@/shared/lib/format";
 
 const ALL = "__all__";
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 
 function toCsv(rows: RedeemRecord[]) {
   const header = ["类别", "编码", "IP", "UA", "时间"];

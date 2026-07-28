@@ -161,11 +161,11 @@ func (a *App) CompleteSetup(ctx context.Context, in SetupInput, ip string) (doma
 		_, err = tx.Exec(ctx, `
 			INSERT INTO api_keys(name, key_prefix, key_hash, scopes, is_system_redeem_key, rate_limit_rpm)
 			VALUES('系统兑换密钥', $1, $2, ARRAY['redeem:api'], true, 120)`,
-			prefix, crypto.HashAPIKey(s.PublicRedeemApiKey))
+			prefix, crypto.HashAPIKeyPeppered(s.PublicRedeemApiKey, a.AESKey))
 	} else {
 		_, err = tx.Exec(ctx, `
 			UPDATE api_keys SET key_prefix=$1, key_hash=$2, revoked_at=NULL
-			WHERE is_system_redeem_key=true`, prefix, crypto.HashAPIKey(s.PublicRedeemApiKey))
+			WHERE is_system_redeem_key=true`, prefix, crypto.HashAPIKeyPeppered(s.PublicRedeemApiKey, a.AESKey))
 	}
 	if err != nil {
 		return domain.AdminUser{}, "", err

@@ -30,6 +30,8 @@ type App struct {
 	Env          string
 
 	RequireRedeemAPIKey bool
+	RateLimitFailClosed bool
+	RequireRedis        bool
 	MetricsToken        string
 
 	UpdateEnabled      bool

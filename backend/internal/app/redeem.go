@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -24,13 +25,11 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	if err != nil {
 		return domain.PublicConfig{}, err
 	}
+	// 配置接口不再全表聚合库存（由 /category-stock 轮询承担），避免冷启动双倍扫表
 	rows, err := a.Pool.Query(ctx, `
-		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind, c.icon_value,
-		       `+availableStockExpr+`
+		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind, c.icon_value
 		FROM categories c
-		LEFT JOIN cards ON cards.category_id = c.id
 		WHERE c.enabled = true
-		GROUP BY c.id
 		ORDER BY c.sort_order, c.created_at`)
 	if err != nil {
 		return domain.PublicConfig{}, err
@@ -39,9 +38,11 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	cats := []domain.PublicCategory{}
 	for rows.Next() {
 		var c domain.PublicCategory
-		if err := rows.Scan(&c.Slug, &c.Name, &c.CodePrefix, &c.Description, &c.Icon.Kind, &c.Icon.Value, &c.UnusedCount); err != nil {
+		if err := rows.Scan(&c.Slug, &c.Name, &c.CodePrefix, &c.Description, &c.Icon.Kind, &c.Icon.Value); err != nil {
 			return domain.PublicConfig{}, err
 		}
+		// -1 表示「未携带库存，请用 stock 接口」；前端首屏用 stock 覆盖
+		c.UnusedCount = -1
 		cats = append(cats, c)
 	}
 	var logo, fav *string
@@ -65,7 +66,8 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 		DocumentTitle: docTitle,
 		RedeemTitle: s.RedeemTitle, RedeemSubtitle: s.RedeemSubtitle, RedeemSuccessHint: s.RedeemSuccessHint,
 		RedeemPlaceholder: s.RedeemPlaceholder, RedeemButtonText: s.RedeemButtonText,
-		CaptchaEnabled: s.CaptchaEnabled, RedeemTabVisibleCount: s.RedeemTabVisibleCount,
+		// 验证码开关仅配置项预留；未接入人机验证服务时不对前端宣称已保护
+		CaptchaEnabled: false, RedeemTabVisibleCount: s.RedeemTabVisibleCount,
 		ApiBasePath: s.ApiBasePath, ApiPublicBaseUrl: strings.TrimRight(s.ApiPublicBaseUrl, "/"),
 		ApiDocsEnabled: s.ApiDocsEnabled,
 		ShowApiDocsEntry: s.ApiDocsEnabled && s.ShowApiDocsEntry,
@@ -75,7 +77,17 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 }
 
 // PublicCategoryStock 启用类别的可兑换库存快照（供兑换端轮询，轻量无 HTML）。
+// Redis 短缓存 3s，减轻 10s 轮询 + 多实例重复聚合压力。
 func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, error) {
+	const cacheKey = "cardkey:public_stock_v1"
+	if a.RDB != nil {
+		if raw, err := a.RDB.Get(ctx, cacheKey).Bytes(); err == nil && len(raw) > 0 {
+			var cached domain.PublicStock
+			if json.Unmarshal(raw, &cached) == nil && len(cached.Categories) >= 0 {
+				return cached, nil
+			}
+		}
+	}
 	rows, err := a.Pool.Query(ctx, `
 		SELECT c.slug, `+availableStockExpr+`
 		FROM categories c
@@ -98,11 +110,16 @@ func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, erro
 	if out == nil {
 		out = []domain.PublicCategoryStock{}
 	}
-	return domain.PublicStock{
+	stock := domain.PublicStock{
 		Categories: out,
-		// 稳定时间戳由 ETag 内容哈希承担；此处保留可读更新时间
-		UpdatedAt: formatTS(time.Now().UTC()),
-	}, nil
+		UpdatedAt:  formatTS(time.Now().UTC()),
+	}
+	if a.RDB != nil {
+		if b, err := json.Marshal(stock); err == nil {
+			_ = a.RDB.Set(ctx, cacheKey, b, 3*time.Second).Err()
+		}
+	}
+	return stock, nil
 }
 
 // PublicStockETag 基于库存内容生成弱 ETag（不依赖时钟），供 304 协商。
@@ -230,6 +247,9 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.RedeemResult{}, err
+	}
+	if a.RDB != nil {
+		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
 	}
 	return domain.RedeemResult{
 		Status: "success", Category: cat.Slug, CategoryName: cat.Name,

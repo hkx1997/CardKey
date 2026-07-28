@@ -53,7 +53,12 @@ const SCOPE_OPTS: { id: ApiScope; label: string; desc: string }[] = [
   {
     id: "admin:api",
     label: "管理端",
-    desc: "可调用全部管理接口（类别/卡密/批次/设置等），亦覆盖兑换权限",
+    desc: "可调用全部管理接口（类别/卡密/批次/设置等），亦覆盖兑换与更新权限",
+  },
+  {
+    id: "system:update",
+    label: "系统更新",
+    desc: "仅一键更新/回滚；不含卡密与设置写操作（也可被 admin:api 覆盖）",
   },
 ];
 

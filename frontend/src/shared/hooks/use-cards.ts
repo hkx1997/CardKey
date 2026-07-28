@@ -18,6 +18,8 @@ export function useCardsQuery(params: {
   return useQuery({
     queryKey: queryKeys.cards(params),
     queryFn: () => api.listCards(params),
+    placeholderData: (prev) => prev,
+    meta: { toastError: true },
   });
 }
 

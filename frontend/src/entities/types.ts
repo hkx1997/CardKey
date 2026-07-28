@@ -12,7 +12,7 @@ export type CardType =
   | "pdf"
   | "file";
 export type CategoryIconKind = "lucide" | "image";
-export type ApiScope = "redeem:api" | "admin:api";
+export type ApiScope = "redeem:api" | "admin:api" | "system:update";
 
 export interface CategoryIcon {
   kind: CategoryIconKind;

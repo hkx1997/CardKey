@@ -7,6 +7,11 @@ func TestValidateProduction_RejectsWeakSecrets(t *testing.T) {
 		Env:           "production",
 		JWTSecret:     "cardkey-local-dev-jwt-secret-please-rotate-xx",
 		ContentKeyHex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		CSRFCheck:     true,
+		RequireRedis:  true,
+		SecureCookie:  true,
+		MetricsToken:  "metrics-token-for-tests-only",
+		DatabaseURL:   "postgres://u:p@localhost/db?sslmode=require",
 	}
 	if err := c.ValidateProduction(); err == nil {
 		t.Fatal("expected error for weak jwt")
@@ -25,5 +30,26 @@ func TestValidateProduction_SkipsNonProd(t *testing.T) {
 	c := Config{Env: "development", JWTSecret: "x"}
 	if err := c.ValidateProduction(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateProduction_RequiresMetricsAndCSRF(t *testing.T) {
+	c := Config{
+		Env:           "production",
+		JWTSecret:     "this-is-a-strong-enough-jwt-secret-value-32+",
+		ContentKeyHex: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+		CSRFCheck:     false,
+		RequireRedis:  true,
+		SecureCookie:  true,
+		MetricsToken:  "x",
+		DatabaseURL:   "postgres://u:p@localhost/db?sslmode=require",
+	}
+	if err := c.ValidateProduction(); err == nil {
+		t.Fatal("expected csrf error")
+	}
+	c.CSRFCheck = true
+	c.MetricsToken = ""
+	if err := c.ValidateProduction(); err == nil {
+		t.Fatal("expected metrics token error")
 	}
 }

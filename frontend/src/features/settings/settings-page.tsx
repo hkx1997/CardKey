@@ -105,7 +105,11 @@ export function SettingsPage() {
         }
         actions={
           <Button
-            className="interactive-press"
+            className={
+              dirty
+                ? "interactive-press shadow-md ring-2 ring-primary/30"
+                : "interactive-press"
+            }
             disabled={m.isPending || !dirty}
             onClick={save}
           >
@@ -113,6 +117,14 @@ export function SettingsPage() {
           </Button>
         }
       />
+      {dirty ? (
+        <div className="sticky top-0 z-10 mb-3 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+          <span>有未保存的更改</span>
+          <Button size="sm" className="h-7" disabled={m.isPending} onClick={save}>
+            {m.isPending ? "保存中…" : "立即保存"}
+          </Button>
+        </div>
+      ) : null}
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="h-auto w-full flex-wrap justify-start gap-1 bg-secondary/50 p-1 sm:w-auto">
@@ -225,7 +237,7 @@ export function SettingsPage() {
                 onChange={(v) => set("maskCardErrors", v)}
               />
               <ToggleRow
-                label="验证码（预留，暂未接入兑换页）"
+                label="验证码（预留，当前不生效；请依赖 IP/码限流）"
                 checked={form.captchaEnabled}
                 onChange={(v) => set("captchaEnabled", v)}
               />

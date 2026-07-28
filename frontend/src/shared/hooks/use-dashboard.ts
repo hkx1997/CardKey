@@ -8,6 +8,9 @@ export function useDashboardQuery(categorySlug?: string) {
   return useQuery({
     queryKey: [...queryKeys.dashboard, categorySlug ?? "all"] as const,
     queryFn: () => api.dashboardStats(categorySlug),
+    staleTime: 45_000,
+    refetchOnWindowFocus: false,
+    meta: { toastError: true },
   });
 }
 

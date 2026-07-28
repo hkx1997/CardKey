@@ -26,6 +26,7 @@ import { SiteBrand } from "@/shared/components/site-brand";
 import { TaskProgress } from "@/shared/components/task-progress";
 import { ThemeToggleButton } from "@/shared/components/theme-toggle-button";
 import {
+  BATCH_REDEEM_MAX,
   PUBLIC_STOCK_POLL_MS,
   useBatchRedeemMutation,
   usePublicCategoryStockQuery,
@@ -78,18 +79,19 @@ export function RedeemPage() {
       setStockCountdown(Math.max(0, Math.ceil(leftMs / 1000)));
     };
     tick();
-    const id = window.setInterval(tick, 250);
+    const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, [stockQ.dataUpdatedAt, stockPollMs, stockPollSec]);
 
   const cfg = configQ.data;
   const stockMap = useMemo(() => {
     const m = new Map<string, number>();
-    // 配置首屏库存
+    // 配置不再携带可靠库存（可能为 -1）；仅 stock 接口为准
     for (const c of cfg?.categories ?? []) {
-      if (typeof c.unusedCount === "number") m.set(c.slug, c.unusedCount);
+      if (typeof c.unusedCount === "number" && c.unusedCount >= 0) {
+        m.set(c.slug, c.unusedCount);
+      }
     }
-    // 轮询结果覆盖
     for (const c of stockQ.data?.categories ?? []) {
       m.set(c.slug, c.unusedCount);
     }
@@ -100,7 +102,11 @@ export function RedeemPage() {
     const list = cfg?.categories ?? [];
     return list.map((c) => ({
       ...c,
-      unusedCount: stockMap.get(c.slug) ?? c.unusedCount ?? 0,
+      unusedCount: stockMap.has(c.slug)
+        ? stockMap.get(c.slug)!
+        : c.unusedCount >= 0
+          ? c.unusedCount
+          : 0,
     }));
   }, [cfg?.categories, stockMap]);
 
@@ -227,6 +233,26 @@ export function RedeemPage() {
 
   const batchOk = batchItems?.filter((i) => i.ok).length ?? 0;
   const batchFail = batchItems ? batchItems.length - batchOk : 0;
+
+  if (configQ.isLoading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">
+        <Loader2 className="mr-2 size-4 animate-spin" />
+        加载兑换页…
+      </div>
+    );
+  }
+
+  if (configQ.isError) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 px-5 text-center">
+        <p className="text-sm text-muted-foreground">无法加载站点配置</p>
+        <Button size="sm" onClick={() => void configQ.refetch()}>
+          重试
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
@@ -375,7 +401,7 @@ export function RedeemPage() {
                   ? codes.length === 1
                     ? "1 条编码"
                     : "请输入编码"
-                  : `${codes.length} 条编码（已去重，不限条数）`}
+                  : `${codes.length} 条编码（已去重，单次最多 ${BATCH_REDEEM_MAX} 条）`}
               </span>
             </div>
             {(selected?.slug === "vip" || selected?.slug === "cdk") && (

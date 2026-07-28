@@ -578,7 +578,8 @@ func (a *App) ListBatches(ctx context.Context, categorySlug string) ([]domain.Ba
 		sql += ` WHERE cat.slug=$1`
 		args = append(args, categorySlug)
 	}
-	sql += ` GROUP BY b.id, cat.name ORDER BY b.created_at DESC`
+	// 限制返回最近 100 条，避免导入批次数无限增长导致全量 JOIN 超时
+	sql += ` GROUP BY b.id, cat.name ORDER BY b.created_at DESC LIMIT 100`
 	rows, err := a.Pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err

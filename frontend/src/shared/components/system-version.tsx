@@ -1,5 +1,5 @@
 import { ArrowUpCircle, History, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import { useConfirm } from "@/shared/components/confirm-dialog";
 import { MarkdownBody } from "@/shared/components/markdown-body";
 import { ReloadCountdown } from "@/shared/components/reload-countdown";
 import { TaskProgress } from "@/shared/components/task-progress";
+import { api } from "@/shared/api/client";
 import {
   useApplyUpdate,
   useCheckUpdates,
@@ -46,6 +47,17 @@ export function SystemVersion({ className }: { className?: string }) {
     null,
   );
   const [busy, setBusy] = useState(false);
+  const [applyProgress, setApplyProgress] = useState<number | undefined>();
+
+  // 进入管理端后软检测更新（服务端有缓存），用于「新」角标
+  useEffect(() => {
+    if (checkM.data || checkM.isPending) return;
+    const t = window.setTimeout(() => {
+      checkM.mutate();
+    }, 800);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载软检测一次
+  }, []);
 
   const check = checkM.data;
   const hasUpdate = !!check?.hasUpdate;
@@ -63,11 +75,30 @@ export function SystemVersion({ className }: { className?: string }) {
       failLabel: string;
     }) => {
       setBusy(true);
+      setApplyProgress(5);
       setRestartWait({
         phase: "applying",
         attempt: 0,
         message: `${opts.label}中，请勿关闭页面…`,
       });
+
+      const poll = window.setInterval(() => {
+        void api
+          .updateStatus()
+          .then((st) => {
+            if (typeof st.progress === "number") setApplyProgress(st.progress);
+            if (st.message) {
+              setRestartWait((prev) =>
+                prev
+                  ? { ...prev, message: st.message || prev.message }
+                  : prev,
+              );
+            }
+          })
+          .catch(() => {
+            /* 进程退出时忽略 */
+          });
+      }, 900);
 
       let submitted = false;
       try {
@@ -78,11 +109,15 @@ export function SystemVersion({ className }: { className?: string }) {
           submitted = true;
           toast.message("连接已中断，即将开始倒计时刷新…");
         } else {
+          window.clearInterval(poll);
           setBusy(false);
+          setApplyProgress(undefined);
           setRestartWait(null);
           toast.error(getErrorMessage(err, opts.failLabel));
           return;
         }
+      } finally {
+        window.clearInterval(poll);
       }
 
       if (!submitted) {
@@ -175,6 +210,7 @@ export function SystemVersion({ className }: { className?: string }) {
             {restartWait?.phase === "applying" ? (
               <TaskProgress
                 active
+                percent={applyProgress}
                 label={restartWait.message}
                 detail="请勿关闭页面"
               />
@@ -269,6 +305,9 @@ export function SystemVersion({ className }: { className?: string }) {
                 <History className="size-3.5" />
                 版本历史 / 回滚
               </div>
+              <p className="mb-2 text-[10px] text-muted-foreground leading-relaxed">
+                仅列出本机归档与更旧的 GitHub 版本；更新版本请用上方「检测更新」。
+              </p>
               {historyQ.isLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : (historyQ.data ?? []).length === 0 ? (
@@ -284,11 +323,22 @@ export function SystemVersion({ className }: { className?: string }) {
                           : h.source === "local"
                             ? "本机"
                             : "";
+                    // 回滚：非当前；远程项应为更旧版本（后端已过滤更高版本）
                     const canSwitch =
                       !h.isCurrent &&
                       h.canInstall !== false &&
+                      h.source !== "remote-newer" &&
                       (infoQ.data?.updateMode === "binary" ||
                         infoQ.data?.updateMode === "docker");
+                    const switchLabel =
+                      h.source === "local" &&
+                      version &&
+                      version !== "…" &&
+                      h.version.localeCompare(String(version).replace(/^v/i, ""), undefined, {
+                        numeric: true,
+                      }) > 0
+                        ? "切换"
+                        : "回滚";
                     return (
                       <li
                         key={h.version + (h.path ?? "") + (h.source ?? "")}
@@ -328,24 +378,25 @@ export function SystemVersion({ className }: { className?: string }) {
                               const fromRemote =
                                 h.source === "remote" || h.source === "both";
                               const ok = await confirm({
-                                title: `切换到 v${h.version}`,
+                                title: `${switchLabel}到 v${h.version}`,
                                 description: fromRemote
-                                  ? "将切换到该版本（本机无包则从 GitHub 下载）并重启。"
+                                  ? "将切换到该旧版本（本机无包则从 GitHub 下载）并重启。"
                                   : "将切换到该版本并重启。",
-                                confirmLabel:
-                                  h.source === "remote" ? "下载并回滚" : "回滚",
+                                confirmLabel: fromRemote
+                                  ? "下载并回滚"
+                                  : switchLabel,
                                 destructive: true,
                               });
                               if (!ok) return;
                               await runApplyOrRollback({
                                 action: () => rollbackM.mutateAsync(h.version),
                                 targetVersion: h.version,
-                                label: "回滚",
-                                failLabel: "回滚失败",
+                                label: switchLabel,
+                                failLabel: `${switchLabel}失败`,
                               });
                             }}
                           >
-                            回滚
+                            {switchLabel}
                           </Button>
                         ) : null}
                       </li>

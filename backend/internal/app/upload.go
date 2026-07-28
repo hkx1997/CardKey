@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -45,34 +44,27 @@ func (a *App) UploadImage(ctx context.Context, r *http.Request, actor, ip string
 		return "", apperr.Validation("图片不能超过 2MB")
 	}
 
-	// 嗅探 MIME
+	// 仅信任 magic-bytes 嗅探，禁止扩展名/客户端 Content-Type 兜底（防 polyglot）
 	buf := make([]byte, 512)
 	n, _ := io.ReadFull(file, buf)
-	ct := http.DetectContentType(buf[:n])
-	// SVG 检测较弱，回退 header
-	if ct == "text/plain; charset=utf-8" || ct == "application/octet-stream" {
-		if mt, _, _ := mime.ParseMediaType(hdr.Header.Get("Content-Type")); mt != "" {
-			ct = mt
-		}
+	if n < 12 {
+		return "", apperr.Validation("文件过小或无法识别")
 	}
+	// 显式拒绝 SVG 特征
+	head := strings.ToLower(string(buf[:n]))
+	if strings.Contains(head, "<svg") || strings.Contains(head, "<?xml") {
+		return "", apperr.Validation("出于安全考虑不支持 SVG，请使用 PNG / JPEG / WebP / ICO")
+	}
+	ct := http.DetectContentType(buf[:n])
 	ext, ok := allowedImageTypes[ct]
 	if !ok {
-		// 按扩展名兜底（不含 svg）
-		nameExt := strings.ToLower(filepath.Ext(hdr.Filename))
-		switch nameExt {
-		case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico":
-			if nameExt == ".jpeg" {
-				ext = ".jpg"
-			} else {
-				ext = nameExt
-			}
-			ok = true
-		case ".svg":
-			return "", apperr.Validation("出于安全考虑不支持 SVG，请使用 PNG / JPEG / WebP / ICO")
+		// ICO 部分环境被嗅探为 octet-stream：检查魔数 00 00 01 00
+		if n >= 4 && buf[0] == 0 && buf[1] == 0 && buf[2] == 1 && buf[3] == 0 {
+			ext, ok = ".ico", true
 		}
 	}
 	if !ok {
-		return "", apperr.Validation("仅支持 PNG / JPEG / GIF / WebP / ICO")
+		return "", apperr.Validation("仅支持 PNG / JPEG / GIF / WebP / ICO（按文件内容识别，勿改扩展名）")
 	}
 
 	dir := filepath.Join(a.DataDir, "uploads")

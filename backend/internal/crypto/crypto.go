@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,9 +23,28 @@ func CheckPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
+// HashAPIKey 兼容旧版：纯 SHA-256（无 pepper）。
+// 新写入请使用 HashAPIKeyPeppered。
 func HashAPIKey(plaintext string) []byte {
 	sum := sha256.Sum256([]byte(plaintext))
 	return sum[:]
+}
+
+// HashAPIKeyPeppered HMAC-SHA256(pepper, key)，防 DB 泄露后对弱自定义密钥离线爆破。
+func HashAPIKeyPeppered(plaintext string, pepper []byte) []byte {
+	if len(pepper) == 0 {
+		return HashAPIKey(plaintext)
+	}
+	m := hmac.New(sha256.New, pepper)
+	_, _ = m.Write([]byte(plaintext))
+	return m.Sum(nil)
+}
+
+// APIKeyHashCandidates 查询时同时匹配 peppered 与 legacy，便于平滑迁移。
+func APIKeyHashCandidates(plaintext string, pepper []byte) (peppered, legacy []byte) {
+	legacy = HashAPIKey(plaintext)
+	peppered = HashAPIKeyPeppered(plaintext, pepper)
+	return peppered, legacy
 }
 
 func NewAESKeyFromHex(hexKey string) ([]byte, error) {
@@ -73,17 +93,37 @@ func Decrypt(key, ciphertext, nonce []byte) ([]byte, error) {
 
 const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
+// randomAlphabetChar 拒绝采样，消除 byte%len 偏差
+func randomAlphabetChar(alphabet string) (byte, error) {
+	n := len(alphabet)
+	if n == 0 || n > 256 {
+		return 0, fmt.Errorf("invalid alphabet")
+	}
+	// 最大可整除 256 的倍数
+	max := 256 - (256 % n)
+	var b [1]byte
+	for {
+		if _, err := rand.Read(b[:]); err != nil {
+			return 0, err
+		}
+		v := int(b[0])
+		if v < max {
+			return alphabet[v%n], nil
+		}
+	}
+}
+
 func GenerateCode(prefix string) (string, error) {
 	prefix = strings.ToUpper(strings.TrimSpace(prefix))
 	segs := make([]string, 4)
-	buf := make([]byte, 4)
 	for i := 0; i < 4; i++ {
-		if _, err := rand.Read(buf); err != nil {
-			return "", err
-		}
 		var sb strings.Builder
 		for j := 0; j < 4; j++ {
-			sb.WriteByte(codeAlphabet[int(buf[j])%len(codeAlphabet)])
+			ch, err := randomAlphabetChar(codeAlphabet)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteByte(ch)
 		}
 		segs[i] = sb.String()
 	}
@@ -104,12 +144,13 @@ func RandomAPIKey() (string, error) {
 
 func RandomPassword(n int) (string, error) {
 	const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		ch, err := randomAlphabetChar(chars)
+		if err != nil {
+			return "", err
+		}
+		out[i] = ch
 	}
-	for i := range b {
-		b[i] = chars[int(b[i])%len(chars)]
-	}
-	return string(b), nil
+	return string(out), nil
 }

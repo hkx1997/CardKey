@@ -187,7 +187,7 @@ func (a *App) CreateAPIKey(ctx context.Context, name string, scopes []string, rp
 	err = a.Pool.QueryRow(ctx, `
 		INSERT INTO api_keys(id, name, key_prefix, key_hash, scopes, rate_limit_rpm)
 		VALUES($1,$2,$3,$4,$5,$6) RETURNING created_at`,
-		id, name, prefix, crypto.HashAPIKey(plain), scopes, rpm).Scan(&created)
+		id, name, prefix, crypto.HashAPIKeyPeppered(plain, a.AESKey), scopes, rpm).Scan(&created)
 	if err != nil {
 		return domain.ApiKeyMeta{}, "", err
 	}
@@ -263,7 +263,7 @@ func (a *App) RotateAPIKey(ctx context.Context, id, actor, ip string) (domain.Ap
 	}
 	_, err = a.Pool.Exec(ctx, `
 		UPDATE api_keys SET key_prefix=$1, key_hash=$2, revoked_at=NULL WHERE id=$3`,
-		prefix, crypto.HashAPIKey(plain), id)
+		prefix, crypto.HashAPIKeyPeppered(plain, a.AESKey), id)
 	if err != nil {
 		return domain.ApiKeyMeta{}, "", err
 	}
@@ -299,7 +299,7 @@ func (a *App) SetPublicRedeemKey(ctx context.Context, mode, custom, actor, ip st
 	}
 	_, err = a.Pool.Exec(ctx, `
 		UPDATE api_keys SET key_prefix=$1, key_hash=$2, revoked_at=NULL
-		WHERE is_system_redeem_key=true`, prefix, crypto.HashAPIKey(plain))
+		WHERE is_system_redeem_key=true`, prefix, crypto.HashAPIKeyPeppered(plain, a.AESKey))
 	if err != nil {
 		return "", err
 	}

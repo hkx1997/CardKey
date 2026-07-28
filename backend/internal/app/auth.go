@@ -24,9 +24,14 @@ func (a *App) Login(ctx context.Context, username, password, ip string) (domain.
 		return domain.AdminUser{}, "", apperr.Unauthorized("账号或密码错误")
 	}
 	if a.Limiter != nil {
-		okIP, _ := a.Limiter.Allow(ctx, "login:ip:"+ip, 20)
-		okUser, _ := a.Limiter.Allow(ctx, "login:user:"+username, 10)
-		if !okIP || !okUser {
+		okIP, errIP := a.Limiter.Allow(ctx, "login:ip:"+ip, 20)
+		okUser, errUser := a.Limiter.Allow(ctx, "login:user:"+username, 10)
+		// 限流后端失败：生产 fail-closed，避免 Redis 故障时被爆破
+		if errIP != nil || errUser != nil {
+			if a.Env == "production" || a.RateLimitFailClosed {
+				return domain.AdminUser{}, "", apperr.RateLimited("登录限流暂不可用，请稍后再试")
+			}
+		} else if !okIP || !okUser {
 			return domain.AdminUser{}, "", apperr.RateLimited("登录尝试过多，请稍后再试")
 		}
 	}
@@ -91,11 +96,19 @@ func (a *App) ParseJWT(ctx context.Context, token string) (*Claims, error) {
 }
 
 func (a *App) isJWTBlacklisted(ctx context.Context, jti string) bool {
-	if a.RDB == nil || jti == "" {
+	if jti == "" {
 		return false
 	}
+	// 生产要求 Redis：无 Redis 时拒绝所有 JWT（须重新登录），避免吊销失效窗口
+	if a.RDB == nil {
+		return a.Env == "production" || a.RequireRedis
+	}
 	n, err := a.RDB.Exists(ctx, "jwt:bl:"+jti).Result()
-	return err == nil && n > 0
+	if err != nil {
+		// 查询失败：fail-closed，当作已吊销
+		return true
+	}
+	return n > 0
 }
 
 // RevokeJWT 将 jti 加入黑名单直至过期。

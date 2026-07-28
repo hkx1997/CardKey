@@ -59,7 +59,7 @@ export const importCardsSchema = z.object({
 export const apiKeyCreateSchema = z.object({
   name: z.string().trim().min(1, "请输入名称").max(64),
   scopes: z
-    .array(z.enum(["redeem:api", "admin:api"]))
+    .array(z.enum(["redeem:api", "admin:api", "system:update"]))
     .min(1, "至少选择一个权限"),
 });
 
