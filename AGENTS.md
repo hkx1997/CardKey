@@ -356,8 +356,30 @@ bash scripts/upgrade.sh v0.1.14
 ```bash
 docker compose up -d --no-recreate postgres redis
 docker compose build cardkey
-docker compose up -d --no-deps cardkey
+# 必须清掉数据卷内旧一键更新二进制，否则 entrypoint 仍跑 /app/data/bin/cardkey
+# （upgrade.sh 会自动删卷内 bin/cardkey；手工升级务必自行删）
+docker compose up -d --no-deps --force-recreate cardkey
 ```
+
+**⚠️ 为何「compose build 了管理端还是旧 UI / 仍报 radix forwardRef」**
+
+`deploy/docker-entrypoint.sh` **优先执行数据卷** `/app/data/bin/cardkey`（管理端一键更新写入），体积 ≥13MB 就**不会用镜像里的新二进制**。  
+因此：只 `docker compose build` + `up` **不够**——必须删掉或覆盖卷内 exe。`scripts/upgrade.sh`（较新版）会在 rebuild 后自动清除该文件。
+
+临时手工修复（**只删 bin，不动 Postgres**）：
+
+```bash
+cd /root/CardKey
+docker run --rm -v cardkey_cardkey_data:/data alpine rm -f /data/bin/cardkey
+docker run --rm -v cardkey_app_data:/data alpine rm -f /data/bin/cardkey
+docker compose up -d --force-recreate --no-deps cardkey
+# 本机验证（绕过 Cloudflare）
+curl -sS http://127.0.0.1:18080/ | grep -oE 'assets/[^"]+\.js' | head
+# 不应再出现 radix-XXXX.js
+docker logs cardkey-cardkey-1 --tail 20   # 应有 cardkey listening + version
+```
+
+浏览器再 **Ctrl+F5**；Cloudflare 用户请在控制台 **缓存 → 清除全部**。
 
 ### 8.2 管理端一键更新（Docker 模式）
 
