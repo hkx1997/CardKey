@@ -19,6 +19,7 @@ func (a *App) bumpUnusedCount(ctx context.Context, categoryID string, delta int)
 }
 
 // ReconcileCategoryStock 全量对账类别 unused_count（正确性优先）。
+// 将物化字段与 cards 表真实 unused+未过期 计数对齐，修复非事务 bump 漂移。
 func (a *App) ReconcileCategoryStock(ctx context.Context) (int, error) {
 	tag, err := a.Pool.Exec(ctx, `
 		UPDATE categories c SET unused_count = sub.cnt, updated_at=now()

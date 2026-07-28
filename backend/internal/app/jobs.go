@@ -5,9 +5,16 @@ import (
 	"time"
 )
 
-// MarkExpiredCards 将已过期未使用的卡密标记为 expired，并扣减物化库存。
+// MarkExpiredCards 将已过期未使用的卡密标记为 expired，并在同一事务中扣减物化库存。
 func (a *App) MarkExpiredCards(ctx context.Context) (int64, error) {
-	rows, err := a.Pool.Query(ctx, `
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 先按类别统计将要过期的数量，再更新状态，最后扣库存（同事务）
+	rows, err := tx.Query(ctx, `
 		SELECT category_id::text, COUNT(*)::int FROM cards
 		WHERE status='unused' AND expires_at IS NOT NULL AND expires_at < now()
 		GROUP BY category_id`)
@@ -28,68 +35,98 @@ func (a *App) MarkExpiredCards(ctx context.Context) (int64, error) {
 		bumps = append(bumps, p)
 	}
 	rows.Close()
-	tag, err := a.Pool.Exec(ctx, `
+	if len(bumps) == 0 {
+		return 0, nil
+	}
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE cards SET status='expired', updated_at=now()
 		WHERE status='unused' AND expires_at IS NOT NULL AND expires_at < now()`)
 	if err != nil {
 		return 0, err
 	}
 	for _, p := range bumps {
-		a.bumpUnusedCount(ctx, p.id, -p.n)
+		if _, err := tx.Exec(ctx, `
+			UPDATE categories SET unused_count = GREATEST(0, unused_count - $2), updated_at=now()
+			WHERE id=$1::uuid`, p.id, p.n); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	if a.RDB != nil {
+		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
 	}
 	return tag.RowsAffected(), nil
 }
 
-// StartBackgroundJobs 启动周期任务（过期清理、邮件预警等）。
+// StartBackgroundJobs 启动周期任务（过期清理、库存对账、邮件预警等）。
 func (a *App) StartBackgroundJobs(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
-		// 启动后立即跑一次
-		if n, err := a.MarkExpiredCards(ctx); err != nil {
-			a.Log.Warn("expire job failed", "err", err)
-		} else if n > 0 {
-			a.Log.Info("expired cards marked", "count", n)
+
+		runCycle := func(label string) {
+			// 过期清理（事务内扣库存）
+			cctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			n, err := a.MarkExpiredCards(cctx)
+			cancel()
+			if err != nil {
+				if a.Log != nil {
+					a.Log.Warn("expire job failed", "err", err, "phase", label)
+				}
+			} else if n > 0 && a.Log != nil {
+				a.Log.Info("expired cards marked", "count", n, "phase", label)
+			}
+
+			// 库存全量对账（补偿非事务 bump 漂移）
+			sctx, scancel := context.WithTimeout(context.Background(), 90*time.Second)
+			if rn, rerr := a.ReconcileCategoryStock(sctx); rerr != nil {
+				if a.Log != nil {
+					a.Log.Warn("stock reconcile failed", "err", rerr, "phase", label)
+				}
+			} else if rn > 0 && a.Log != nil {
+				a.Log.Info("stock reconcile corrected", "categories", rn, "phase", label)
+			}
+			// 异步导入
+			a.ProcessPendingImportJobs(sctx, 3)
+			scancel()
+
+			// Webhook 可靠投递
+			wctx, wcancel := context.WithTimeout(context.Background(), 45*time.Second)
+			if wn, werr := a.ProcessDueWebhooks(wctx, 50); werr != nil {
+				if a.Log != nil {
+					a.Log.Warn("webhook outbox job failed", "err", werr)
+				}
+			} else if wn > 0 && a.Log != nil {
+				a.Log.Info("webhook outbox processed", "count", wn)
+			}
+			wcancel()
+
+			// 邮件预警
+			mctx, mcancel := context.WithTimeout(context.Background(), 45*time.Second)
+			a.EvaluateMailAlerts(mctx)
+			mcancel()
 		}
-		// 邮件预警稍后一点再跑，避免启动风暴
+
+		// 启动后立即对账 + 过期（修复重启前漂移）
+		runCycle("startup")
+
+		// 邮件预警稍晚，避免启动风暴（startup 周期已含一次；此处仅额外延迟一次）
 		go func() {
 			time.Sleep(45 * time.Second)
-			cctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			a.EvaluateMailAlerts(cctx)
+			mctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			a.EvaluateMailAlerts(mctx)
 			cancel()
 		}()
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				n, err := a.MarkExpiredCards(cctx)
-				cancel()
-				if err != nil {
-					a.Log.Warn("expire job failed", "err", err)
-				} else if n > 0 {
-					a.Log.Info("expired cards marked", "count", n)
-				}
-				// Webhook 可靠投递重试
-				wctx, wcancel := context.WithTimeout(context.Background(), 45*time.Second)
-				if wn, werr := a.ProcessDueWebhooks(wctx, 50); werr != nil {
-					a.Log.Warn("webhook outbox job failed", "err", werr)
-				} else if wn > 0 && a.Log != nil {
-					a.Log.Info("webhook outbox processed", "count", wn)
-				}
-				wcancel()
-				// 库存对账 + 异步导入
-				sctx, scancel := context.WithTimeout(context.Background(), 60*time.Second)
-				if _, err := a.ReconcileCategoryStock(sctx); err != nil && a.Log != nil {
-					a.Log.Warn("stock reconcile failed", "err", err)
-				}
-				a.ProcessPendingImportJobs(sctx, 3)
-				scancel()
-				// 邮件预警与过期清理同周期
-				mctx, mcancel := context.WithTimeout(context.Background(), 45*time.Second)
-				a.EvaluateMailAlerts(mctx)
-				mcancel()
+				runCycle("tick")
 			}
 		}
 	}()

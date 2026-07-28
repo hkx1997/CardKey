@@ -24,6 +24,7 @@ import {
   useDeleteBatch,
   useExportBatch,
 } from "@/shared/hooks/use-batches";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { TaskProgress } from "@/shared/components/task-progress";
 import {
   downloadCodesTxt,
@@ -37,6 +38,14 @@ export function BatchesPage() {
   const deleteM = useDeleteBatch();
   const exportM = useExportBatch();
   const [exportingId, setExportingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
+
+  const allBatches = q.data ?? [];
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return allBatches.slice(start, start + pageSize);
+  }, [allBatches, page, pageSize]);
 
   async function handleDelete(b: Batch) {
     const usedLike = b.cardCount - b.unusedCount;
@@ -178,10 +187,21 @@ export function BatchesPage() {
           ) : null}
           <DataTable
             columns={columns}
-            rows={q.data}
+            rows={pageRows}
             rowKey={(b) => b.id}
             loading={q.isLoading}
             minWidth={640}
+            pagination={{
+              page,
+              pageSize,
+              total: allBatches.length,
+              onPageChange: setPage,
+              onPageSizeChange: (n) => {
+                setPageSize(n);
+                setPage(1);
+              },
+              pageSizeOptions,
+            }}
             mobileCard={(b) => (
               <div className="rounded-xl border border-border/70 p-3">
                 <div className="flex items-start justify-between gap-2">

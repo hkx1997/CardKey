@@ -119,6 +119,8 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 
 					r.Get("/dashboard/stats", h.Dashboard)
 					r.Get("/dashboard/runtime", h.RuntimeMetrics)
+					// 运维：手动触发库存物化对账
+					r.Post("/ops/reconcile-stock", h.ReconcileStock)
 
 					r.Get("/categories", h.ListCategories)
 					r.Post("/categories", h.CreateCategory)

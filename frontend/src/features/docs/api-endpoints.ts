@@ -310,6 +310,12 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     query: "page, page_size",
   },
   {
+    method: "POST",
+    path: "{prefix}/admin/ops/reconcile-stock",
+    auth: "管理员",
+    desc: "运维：标记过期卡密 + 全量对账类别 unused_count（补偿物化库存漂移）",
+  },
+  {
     method: "GET",
     path: "{prefix}/admin/updates/check",
     auth: "管理员",

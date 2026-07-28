@@ -267,9 +267,20 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 		batchID = &batch.ID
 	}
 
-	// 分批提交，避免超长事务锁表
-	const chunk = 500
+	// 分批提交：无 job 时每 500 行；异步 job 每 50 行提交并回写进度（chunk 中段可细）
+	chunk := 500
+	if jobID != "" {
+		chunk = 50
+	}
 	codes := make([]string, 0, len(lines))
+	reportProgress := func(done int) {
+		if jobID == "" {
+			return
+		}
+		_, _ = a.Pool.Exec(ctx, `
+			UPDATE import_jobs SET done_lines=$2, success_count=$2, updated_at=now()
+			WHERE id=$1::uuid AND status='running'`, jobID, done)
+	}
 	for i := 0; i < len(lines); i += chunk {
 		end := i + chunk
 		if end > len(lines) {
@@ -307,11 +318,7 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		if jobID != "" {
-			_, _ = a.Pool.Exec(ctx, `
-				UPDATE import_jobs SET done_lines=$2, success_count=$2, updated_at=now()
-				WHERE id=$1::uuid AND status='running'`, jobID, len(codes))
-		}
+		reportProgress(len(codes))
 	}
 	a.bumpUnusedCount(ctx, categoryID, len(codes))
 	a.Audit(ctx, "admin", actor, "import", "category:"+categoryID, fmt.Sprintf("导入 %d 条 → %s", len(codes), cat.Name), ip)

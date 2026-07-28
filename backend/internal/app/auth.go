@@ -118,12 +118,13 @@ func (a *App) issueLoginTicket(ctx context.Context, adminID, username string) (s
 	if a.RDB != nil {
 		key := "login:ticket:" + ticket
 		val := adminID + "|" + username
+		// 多实例必须用 Redis；写失败则拒绝签发，避免落到本机内存导致其它实例验不过
 		if err := a.RDB.Set(ctx, key, val, 5*time.Minute).Err(); err != nil {
 			return "", err
 		}
 		return ticket, nil
 	}
-	// 无 Redis：内存 map（单实例测试/开发）
+	// 无 Redis：内存 map（仅单实例开发/测试）
 	loginTickets.Store(ticket, loginTicketVal{adminID: adminID, username: username, exp: time.Now().Add(5 * time.Minute)})
 	return ticket, nil
 }
@@ -135,11 +136,11 @@ func (a *App) consumeLoginTicket(ctx context.Context, ticket string) (adminID, u
 	}
 	if a.RDB != nil {
 		key := "login:ticket:" + ticket
-		val, e := a.RDB.Get(ctx, key).Result()
+		// GetDel 原子消费，防多实例并发重放
+		val, e := a.RDB.GetDel(ctx, key).Result()
 		if e != nil || val == "" {
 			return "", "", apperr.Unauthorized("登录票据无效或已过期")
 		}
-		_ = a.RDB.Del(ctx, key).Err()
 		parts := strings.SplitN(val, "|", 2)
 		if len(parts) != 2 {
 			return "", "", apperr.Unauthorized("登录票据无效")
@@ -260,31 +261,52 @@ func (a *App) Me(ctx context.Context, adminID string) (domain.AdminUser, error) 
 }
 
 // BeginTOTPSetup 生成密钥与 otpauth URI（尚未启用，需 Confirm）。
+// 有 Redis 时只写 Redis（多实例共享）；无 Redis 时写进程内存（仅单实例）。
 func (a *App) BeginTOTPSetup(ctx context.Context, adminID, username string) (secret, uri string, err error) {
 	secret, err = crypto.GenerateTOTPSecret()
 	if err != nil {
 		return "", "", apperr.Internal("生成密钥失败")
 	}
-	// 暂存 pending secret（Redis 或内存）
-	pendingTOTP.Store(adminID, secret)
 	if a.RDB != nil {
-		_ = a.RDB.Set(ctx, "totp:pending:"+adminID, secret, 15*time.Minute).Err()
+		if err := a.RDB.Set(ctx, "totp:pending:"+adminID, secret, 15*time.Minute).Err(); err != nil {
+			return "", "", apperr.Internal("暂存两步验证密钥失败（Redis 不可用）")
+		}
+		// 清掉本机旧缓存，避免与 Redis 不一致
+		pendingTOTP.Delete(adminID)
+	} else {
+		pendingTOTP.Store(adminID, secret)
 	}
 	uri = crypto.TOTPProvisioningURI(secret, username, "CardKey")
 	return secret, uri, nil
 }
 
-// ConfirmTOTPSetup 用验证码确认并启用 2FA。
-func (a *App) ConfirmTOTPSetup(ctx context.Context, adminID, code string) error {
-	secret := ""
+// loadPendingTOTP 读取绑定中的密钥；有 Redis 时只信 Redis。
+func (a *App) loadPendingTOTP(ctx context.Context, adminID string) string {
 	if a.RDB != nil {
-		secret, _ = a.RDB.Get(ctx, "totp:pending:"+adminID).Result()
+		secret, err := a.RDB.Get(ctx, "totp:pending:"+adminID).Result()
+		if err == nil && secret != "" {
+			return secret
+		}
+		return ""
 	}
-	if secret == "" {
-		if v, ok := pendingTOTP.Load(adminID); ok {
-			secret = v.(string)
+	if v, ok := pendingTOTP.Load(adminID); ok {
+		if s, ok := v.(string); ok {
+			return s
 		}
 	}
+	return ""
+}
+
+func (a *App) clearPendingTOTP(ctx context.Context, adminID string) {
+	pendingTOTP.Delete(adminID)
+	if a.RDB != nil {
+		_ = a.RDB.Del(ctx, "totp:pending:"+adminID).Err()
+	}
+}
+
+// ConfirmTOTPSetup 用验证码确认并启用 2FA。
+func (a *App) ConfirmTOTPSetup(ctx context.Context, adminID, code string) error {
+	secret := a.loadPendingTOTP(ctx, adminID)
 	if secret == "" {
 		return apperr.Validation("请先开始绑定两步验证")
 	}
@@ -296,10 +318,7 @@ func (a *App) ConfirmTOTPSetup(ctx context.Context, adminID, code string) error 
 	if err != nil {
 		return err
 	}
-	pendingTOTP.Delete(adminID)
-	if a.RDB != nil {
-		_ = a.RDB.Del(ctx, "totp:pending:"+adminID).Err()
-	}
+	a.clearPendingTOTP(ctx, adminID)
 	a.Audit(ctx, "admin", adminID, "totp_enable", "auth", "启用两步验证", "")
 	return nil
 }

@@ -3,6 +3,9 @@ name: Release
 # Docker 一键更新需要 Linux 资产：后端 + 嵌入 SPA + 迁移
 # 仅上传 linux-amd64 / linux-arm64 + checksums（不附带 Windows/macOS）
 # 空壳包（约 11–12MB、未 embed 前端）会导致线上 502 / UI 不更新 —— 本流水线强制 ≥13MB
+#
+# 防覆盖：若 tag 上已有 ≥13MB 的完整 amd64 资产，且本流水线产物更小，则只更新 notes、不覆盖二进制
+# （避免本机 release.sh 已上传完整包后，CI 再以次品覆盖）
 
 on:
   push:
@@ -93,12 +96,9 @@ jobs:
             fi
           done
           python3 - <<'PY'
-          import pathlib, sys
+          import pathlib, sys, glob
           bin_path = pathlib.Path("dist/cardkey-linux-amd64")
           data = bin_path.read_bytes()
-          css = pathlib.Path("${{ env.CSS }}".strip() or ".")
-          # env may be relative; re-resolve from workspace
-          import os, glob
           css_files = glob.glob("backend/internal/webstatic/dist/assets/index-*.css")
           js_files = glob.glob("backend/internal/webstatic/dist/assets/index-*.js")
           if not css_files or not js_files:
@@ -120,14 +120,79 @@ jobs:
           print("OK embed gate", bin_path, "size", len(data))
           PY
 
-      - name: Create GitHub Release
+      - name: Decide whether to upload binaries
+        id: upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NEW=$(wc -c < dist/cardkey-linux-amd64 | tr -d ' ')
+          REMOTE=0
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            REMOTE=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" \
+              --jq '[.assets[] | select(.name=="cardkey-linux-amd64") | .size] | first // 0' || echo 0)
+          fi
+          echo "new_amd64=$NEW remote_amd64=$REMOTE"
+          # 已有完整资产且本构建更小 → 不覆盖（保护本机 release.sh 先传的完整包）
+          if [ "${REMOTE:-0}" -ge 13000000 ] && [ "$NEW" -lt "$REMOTE" ]; then
+            echo "skip_binaries=true" >> "$GITHUB_OUTPUT"
+            echo "KEEP existing full assets (remote=$REMOTE > new=$NEW)"
+          else
+            echo "skip_binaries=false" >> "$GITHUB_OUTPUT"
+            echo "Will upload CI binaries (new=$NEW remote=$REMOTE)"
+          fi
+
+      - name: Create/Update GitHub Release (with binaries)
+        if: steps.upload.outputs.skip_binaries != 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: CardKey ${{ github.ref_name }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             dist/cardkey-linux-amd64
             dist/cardkey-linux-arm64
             dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create/Update GitHub Release (notes only, keep assets)
+        if: steps.upload.outputs.skip_binaries == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CardKey ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify remote asset sizes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sleep 3
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          tag = os.environ["TAG"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          out = subprocess.check_output(
+              ["gh", "api", f"repos/{repo}/releases/tags/{tag}"],
+              text=True,
+          )
+          rel = json.loads(out)
+          assets = {a["name"]: a["size"] for a in rel.get("assets", [])}
+          print("remote assets:", assets)
+          ok = True
+          for name in ("cardkey-linux-amd64", "cardkey-linux-arm64"):
+              sz = int(assets.get(name) or 0)
+              if sz < 13_000_000:
+                  print(f"FAIL: remote {name} size={sz} < 13MB", file=sys.stderr)
+                  ok = False
+              else:
+                  print(f"OK remote {name}={sz}")
+          if not ok:
+              raise SystemExit(1)
+          print("OK remote size gate")
+          PY

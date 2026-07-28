@@ -35,7 +35,9 @@ import { FormField } from "@/shared/components/form-field";
 import { IconButton } from "@/shared/components/icon-button";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
+import { PaginationBar } from "@/shared/components/pagination-bar";
 import { SecretField } from "@/shared/components/secret-field";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { cn } from "@/shared/lib/cn";
 import { formatDateTime } from "@/shared/lib/format";
 import {
@@ -71,6 +73,8 @@ export function ApiKeysPage() {
   const [customFixed, setCustomFixed] = useState("");
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(1);
+  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
 
   const listQ = useApiKeysQuery();
   const settingsQ = useSettingsQuery();
@@ -91,6 +95,11 @@ export function ApiKeysPage() {
     () => (listQ.data ?? []).filter((k) => !k.isSystemRedeemKey),
     [listQ.data],
   );
+
+  const pageKeys = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return customKeys.slice(start, start + pageSize);
+  }, [customKeys, page, pageSize]);
 
   function toggleScope(s: ApiScope) {
     setScopes((prev) =>
@@ -234,7 +243,7 @@ export function ApiKeysPage() {
             <EmptyState>暂无自定义密钥</EmptyState>
           ) : (
             <div className="space-y-3">
-              {customKeys.map((k) => {
+              {pageKeys.map((k) => {
                 const secret = secretOf(k);
                 const show = !!revealed[k.id];
                 return (
@@ -370,6 +379,19 @@ export function ApiKeysPage() {
                   </div>
                 );
               })}
+              {customKeys.length > 0 ? (
+                <PaginationBar
+                  page={page}
+                  pageSize={pageSize}
+                  total={customKeys.length}
+                  onPageChange={setPage}
+                  onPageSizeChange={(n) => {
+                    setPageSize(n);
+                    setPage(1);
+                  }}
+                  pageSizeOptions={pageSizeOptions}
+                />
+              ) : null}
             </div>
           )}
         </CardContent>

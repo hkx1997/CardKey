@@ -162,7 +162,7 @@ export function SettingsPage() {
         <TabsContent value="general" className="space-y-4">
           <SettingsSection
             title="列表显示"
-            description="卡密 / 兑换记录 / 审计列表共用；也可在各列表页底栏随时切换。保存在本机浏览器。"
+            description="卡密 / 兑换 / 审计 / 批次 / API 密钥列表共用；也可在各列表页底栏随时切换。保存在本机浏览器。"
           >
             <PageSizeSettingsPanel />
           </SettingsSection>

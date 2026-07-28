@@ -31,3 +31,22 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, h.App.SystemInfo(r.Context()))
 }
+
+// ReconcileStock 手动触发类别 unused_count 全量对账。
+func (h *Handler) ReconcileStock(w http.ResponseWriter, r *http.Request) {
+	// 先跑过期，再对账，与后台周期任务一致
+	expired, err := h.App.MarkExpiredCards(r.Context())
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	n, err := h.App.ReconcileCategoryStock(r.Context())
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]any{
+		"correctedCategories": n,
+		"expiredMarked":       expired,
+	})
+}
