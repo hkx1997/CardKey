@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 
 import { api } from "@/shared/api/client";
 import { useInvalidate } from "@/shared/hooks/use-invalidate";
