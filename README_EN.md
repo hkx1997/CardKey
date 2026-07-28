@@ -9,6 +9,34 @@ Self-hosted high-concurrency card-key (gift code) redeem platform: public redeem
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**Live demo:** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API docs](https://cardkey.ai-service.top/docs) · [Admin](https://cardkey.ai-service.top/admin)
+
+## Screenshots
+
+Captured from the demo at [cardkey.ai-service.top](https://cardkey.ai-service.top/) (UI may change slightly across versions).
+
+### Public redeem
+
+| Single code | Batch |
+|:---:|:---:|
+| ![Redeem](docs/screenshots/redeem.png) | ![Batch redeem](docs/screenshots/redeem-batch.png) |
+
+Category tabs, one-click redeem, multi-code batch mode with export.
+
+### Public API docs
+
+| Overview (Base URL) | Endpoint table |
+|:---:|:---:|
+| ![API docs](docs/screenshots/api-docs.png) | ![Endpoints](docs/screenshots/api-docs-endpoints.png) |
+
+Public `/docs`: endpoint list + multi-language samples. Base URL is the site origin; paths already include the `/api/v1` prefix. Admin has a full **Admin API** docs page.
+
+### Admin
+
+![Admin login](docs/screenshots/admin-login.png)
+
+After setup, open `/admin` for categories, cards, batches, API keys, settings, audit, and online updates.
+
 ## Features
 
 - **Public redeem**: category tabs, single/batch redeem, ZIP export

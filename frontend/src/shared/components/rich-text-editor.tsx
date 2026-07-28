@@ -15,6 +15,9 @@ import { sanitizeHtml } from "@/shared/lib/sanitize-html";
 /**
  * 轻量富文本编辑器（contentEditable + document.execCommand）
  * 未引入 Tiptap/Quill；强制断行，避免长串撑破弹窗。
+ *
+ * 注意：contentEditable 非受控 DOM，外部 value 变化时必须主动写入 innerHTML。
+ * last 用 null 表示「尚未同步」，避免挂载时 value===initial last 导致编辑弹窗空白。
  */
 export function RichTextEditor({
   value,
@@ -28,13 +31,17 @@ export function RichTextEditor({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const last = useRef(value);
+  /** 上次由本组件写入/回传的 HTML；null = 从未同步过 */
+  const last = useRef<string | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (value !== last.current && el.innerHTML !== value) {
-      el.innerHTML = value || "";
+    // 外部 value 与我们记录的不一致时，强制灌入 DOM（含首次挂载）
+    if (value !== last.current) {
+      if (el.innerHTML !== (value || "")) {
+        el.innerHTML = value || "";
+      }
       last.current = value;
     }
   }, [value]);
@@ -93,7 +100,7 @@ export function RichTextEditor({
         aria-multiline
         data-placeholder={placeholder}
         className={cn(
-          "rich-text-editor box-border min-h-[120px] max-h-[240px] min-w-0 w-full max-w-full",
+          "rich-text-editor box-border min-h-[120px] max-h-[280px] min-w-0 w-full max-w-full",
           "overflow-x-hidden overflow-y-auto px-3 py-2 text-sm outline-none",
         )}
         onInput={emit}

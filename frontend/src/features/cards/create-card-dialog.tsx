@@ -162,7 +162,7 @@ export function CreateCardDialog({
         onOpenChange(v);
       }}
     >
-      <DialogContent className="max-w-md">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>新建卡密</DialogTitle>
           <DialogDescription>

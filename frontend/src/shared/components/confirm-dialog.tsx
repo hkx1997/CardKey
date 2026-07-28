@@ -61,7 +61,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         }}
       >
         <DialogContent
-          className="max-w-md"
+          size="sm"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <DialogHeader>

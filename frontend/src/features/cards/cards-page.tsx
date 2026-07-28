@@ -670,7 +670,7 @@ export function CardsPage() {
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>卡密详情</DialogTitle>
             <DialogDescription asChild>

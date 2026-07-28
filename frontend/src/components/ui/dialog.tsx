@@ -25,21 +25,43 @@ export const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+/** 弹窗宽度档位：固定 w-[min(X,100vw-2rem)]，避免仅改 max-w 无效 */
+const DIALOG_SIZE_CLASS = {
+  sm: "w-[min(24rem,calc(100vw-2rem))]",
+  md: "w-[min(28rem,calc(100vw-2rem))]",
+  lg: "w-[min(36rem,calc(100vw-2rem))]",
+  xl: "w-[min(42rem,calc(100vw-2rem))]",
+  "2xl": "w-[min(48rem,calc(100vw-2rem))]",
+} as const;
+
+export type DialogContentSize = keyof typeof DIALOG_SIZE_CLASS;
+
+type DialogContentProps = React.ComponentPropsWithoutRef<
+  typeof DialogPrimitive.Content
+> & {
+  /**
+   * 宽度档位。默认 md(28rem)。
+   * 富文本 / 表单较满时用 lg 或 xl。
+   * 也可继续用 className 覆盖 w-*。
+   */
+  size?: DialogContentSize;
+};
+
 /**
  * 弹窗内容壳：严格限制在视口内，禁止被长串/富文本/表格撑出横向滚动。
- * 调用方可用 className 覆盖 max-w（如 max-w-md / max-w-lg），勿再写 sm:w-full。
+ * 用 size 控制宽度；className 可再覆盖。
  */
 export const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  DialogContentProps
+>(({ className, children, size = "md", ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // 尺寸：默认 ≤28rem，且永远不超过 100vw-2rem（避免 sm:w-full 把壳撑破）
-        "dialog-content fixed left-1/2 top-1/2 z-50 box-border flex w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
+        "dialog-content fixed left-1/2 top-1/2 z-50 box-border flex max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
+        DIALOG_SIZE_CLASS[size] ?? DIALOG_SIZE_CLASS.md,
         "max-h-[min(90dvh,900px)] min-h-0 min-w-0 gap-4 overflow-x-hidden overflow-y-auto overscroll-contain",
         "rounded-xl border border-border bg-card p-4 shadow-xl sm:p-6",
         // 直接子级收缩，避免 grid/flex 子项 min-content 撑宽

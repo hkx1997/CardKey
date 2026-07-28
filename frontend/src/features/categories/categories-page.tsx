@@ -84,8 +84,13 @@ export function CategoriesPage() {
   function openEdit(c: Category) {
     setEdit(c);
     setName(c.name);
-    setDescription(c.description);
-    setIcon(c.icon);
+    setDescription(c.description ?? "");
+    setIcon(
+      c.icon ?? {
+        kind: "lucide",
+        value: "ticket",
+      },
+    );
     setErrors({});
   }
 
@@ -340,7 +345,7 @@ export function CategoriesPage() {
           else setOpen(true);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>新建类别</DialogTitle>
             <DialogDescription>
@@ -382,6 +387,7 @@ export function CategoriesPage() {
             </FormField>
             <FormField label="描述（富文本）">
               <RichTextEditor
+                key="create-desc"
                 value={description}
                 onChange={setDescription}
                 placeholder="展示在兑换端对应 Tab 下方"
@@ -407,10 +413,14 @@ export function CategoriesPage() {
       <Dialog
         open={!!edit}
         onOpenChange={(v) => {
-          if (!v) setEdit(null);
+          if (!v) {
+            setEdit(null);
+            setDescription("");
+            setErrors({});
+          }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>编辑类别</DialogTitle>
             <DialogDescription className="break-all font-mono text-xs">
@@ -423,6 +433,7 @@ export function CategoriesPage() {
             </FormField>
             <FormField label="描述（富文本）">
               <RichTextEditor
+                key={edit?.id ?? "edit-desc"}
                 value={description}
                 onChange={setDescription}
                 placeholder="展示在兑换端对应 Tab 下方"

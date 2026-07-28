@@ -9,6 +9,34 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**在线演示：** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API 文档](https://cardkey.ai-service.top/docs) · [管理端](https://cardkey.ai-service.top/admin)
+
+## 界面预览
+
+截图来自演示站 [cardkey.ai-service.top](https://cardkey.ai-service.top/)（随版本迭代 UI 可能略有差异）。
+
+### 公开兑换端
+
+| 单码兑换 | 批量兑换 |
+|:---:|:---:|
+| ![公开兑换](docs/screenshots/redeem.png) | ![批量兑换](docs/screenshots/redeem-batch.png) |
+
+按类别切换、输入卡密一键兑换；批量模式支持多码与结果导出。
+
+### 兑换端 API 文档
+
+| 文档首页（Base URL） | 接口总表 |
+|:---:|:---:|
+| ![API 文档](docs/screenshots/api-docs.png) | ![接口列表](docs/screenshots/api-docs-endpoints.png) |
+
+公开路径 `/docs`：接口总表 + 多语言请求示例；Base URL 为站点 origin，路径自带 `/api/v1` 前缀。管理端另有完整「管理 API」文档。
+
+### 管理端
+
+![管理端登录](docs/screenshots/admin-login.png)
+
+安装完成后访问 `/admin` 登录控制台：类别 / 卡密 / 批次 / 密钥 / 设置 / 审计 / 在线更新等。
+
 ## 功能概览
 
 - **公开兑换**：按类别 Tab、单码/批量兑换、结果 ZIP 导出

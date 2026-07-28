@@ -176,7 +176,7 @@ export function SystemVersion({ className }: { className?: string }) {
           setOpen(v);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent size="md">
           <DialogHeader>
             <DialogTitle className="flex min-w-0 flex-wrap items-center gap-2">
               系统更新
