@@ -193,7 +193,7 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     auth: "JWT / admin:api",
     desc: "导出卡密编码；format=txt 或 Accept:text/plain 时流式纯文本（X-Export-Total）；JSON 返回 codes[]",
     body: '{ "ids"?: [], "status"?, "q"?, "category"?, "batchId"?, "format"?: "txt" }',
-  }
+  },
   {
     method: "GET",
     path: "{prefix}/admin/batches",
