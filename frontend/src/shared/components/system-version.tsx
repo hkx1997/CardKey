@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/shared/components/confirm-dialog";
+import { ReloadCountdown } from "@/shared/components/reload-countdown";
 import { TaskProgress } from "@/shared/components/task-progress";
 import {
   useApplyUpdate,
@@ -25,6 +26,7 @@ import { formatDateTime } from "@/shared/lib/format";
 import { getErrorMessage } from "@/shared/lib/api-toast";
 import {
   isLikelyRestartDisconnect,
+  RELOAD_COUNTDOWN_SEC,
   waitForRestartAndReload,
   type RestartWaitState,
 } from "@/shared/lib/wait-for-restart";
@@ -42,18 +44,16 @@ export function SystemVersion({ className }: { className?: string }) {
   const [restartWait, setRestartWait] = useState<RestartWaitState | null>(
     null,
   );
-  /** 应用/回滚进行中（含等待重启），禁用重复点击 */
   const [busy, setBusy] = useState(false);
 
   const check = checkM.data;
   const hasUpdate = !!check?.hasUpdate;
   const waitingRestart =
-    busy || (!!restartWait && restartWait.phase !== "timeout");
+    busy ||
+    (!!restartWait &&
+      restartWait.phase !== "timeout" &&
+      restartWait.phase !== "ready");
 
-  /**
-   * 提交更新/回滚后始终进入「等重启 → 硬刷新」。
-   * 下载完成后进程会退出，客户端常见 Failed to fetch / 502，不能只依赖 onSuccess。
-   */
   const runApplyOrRollback = useCallback(
     async (opts: {
       action: () => Promise<unknown>;
@@ -61,10 +61,9 @@ export function SystemVersion({ className }: { className?: string }) {
       label: string;
       failLabel: string;
     }) => {
-      const previousVersion = infoQ.data?.version;
       setBusy(true);
       setRestartWait({
-        phase: "waiting_down",
+        phase: "applying",
         attempt: 0,
         message: `${opts.label}中，请勿关闭页面…`,
       });
@@ -75,9 +74,8 @@ export function SystemVersion({ className }: { className?: string }) {
         submitted = true;
       } catch (err) {
         if (isLikelyRestartDisconnect(err)) {
-          // 进程可能已退出并替换成功
           submitted = true;
-          toast.message("连接已中断，正在检测服务是否完成重启…");
+          toast.message("连接已中断，即将开始倒计时刷新…");
         } else {
           setBusy(false);
           setRestartWait(null);
@@ -91,25 +89,24 @@ export function SystemVersion({ className }: { className?: string }) {
         return;
       }
 
-      toast.message(`${opts.label}已提交，将自动检测恢复并刷新…`);
-      const ok = await waitForRestartAndReload({
+      toast.message(
+        `${opts.label}已提交，${RELOAD_COUNTDOWN_SEC} 秒后自动刷新页面`,
+      );
+      await waitForRestartAndReload({
         targetVersion: opts.targetVersion,
-        previousVersion,
+        previousVersion: infoQ.data?.version,
+        countdownSec: RELOAD_COUNTDOWN_SEC,
         onStatus: setRestartWait,
       });
-      if (!ok) {
-        setBusy(false);
-        setRestartWait({
-          phase: "timeout",
-          attempt: 0,
-          message: "等待超时，请手动刷新页面（Ctrl+Shift+R）",
-        });
-        toast.error("自动刷新超时，请手动强制刷新（Ctrl+Shift+R）");
-      }
-      // ok 时页面会 hardReload，不必 setBusy(false)
+      // hardReload 后不会执行到这里
     },
     [infoQ.data?.version],
   );
+
+  const countdownActive =
+    restartWait?.phase === "countdown" || restartWait?.phase === "ready";
+  const remaining = restartWait?.remainingSec ?? RELOAD_COUNTDOWN_SEC;
+  const total = restartWait?.totalSec ?? RELOAD_COUNTDOWN_SEC;
 
   return (
     <>
@@ -135,7 +132,6 @@ export function SystemVersion({ className }: { className?: string }) {
       <Dialog
         open={open}
         onOpenChange={(v) => {
-          // 等待重启时禁止误关
           if (!v && waitingRestart) return;
           setOpen(v);
         }}
@@ -155,6 +151,7 @@ export function SystemVersion({ className }: { className?: string }) {
           </DialogHeader>
 
           <div className="dialog-body space-y-4 text-sm">
+            {/* 无「数据库迁移 / SQL 列表」等运维说明 */}
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -174,22 +171,19 @@ export function SystemVersion({ className }: { className?: string }) {
               </Button>
             </div>
 
-            {restartWait ? (
+            {restartWait?.phase === "applying" ? (
               <TaskProgress
-                active={restartWait.phase !== "timeout" && restartWait.phase !== "ready"}
-                percent={
-                  restartWait.phase === "ready"
-                    ? 100
-                    : restartWait.phase === "timeout"
-                      ? undefined
-                      : undefined
-                }
+                active
                 label={restartWait.message}
-                detail={
-                  restartWait.version
-                    ? `探测 v${restartWait.version} · 第 ${restartWait.attempt} 次`
-                    : `第 ${restartWait.attempt} 次探测`
-                }
+                detail="请勿关闭页面"
+              />
+            ) : null}
+
+            {countdownActive ? (
+              <ReloadCountdown
+                remaining={remaining}
+                total={total}
+                label={restartWait?.message}
               />
             ) : null}
 
@@ -227,7 +221,6 @@ export function SystemVersion({ className }: { className?: string }) {
                     {check.message || "已是最新版本"}
                   </p>
                 )}
-                {/* 仅展示 Release 正文（更新内容），不展示运维说明 */}
                 {check.body ? (
                   <div className="space-y-1">
                     <p className="text-[10px] font-medium text-foreground">
@@ -240,31 +233,7 @@ export function SystemVersion({ className }: { className?: string }) {
                 ) : check.hasUpdate ? (
                   <p className="text-[11px] text-muted-foreground">
                     暂无 Release 说明
-                    {check.releaseUrl ? (
-                      <>
-                        ，可打开{" "}
-                        <a
-                          href={check.releaseUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="underline underline-offset-2"
-                        >
-                          Release 页
-                        </a>
-                      </>
-                    ) : null}
                   </p>
-                ) : null}
-                {applyM.isPending || rollbackM.isPending ? (
-                  <TaskProgress
-                    active
-                    label={
-                      applyM.isPending
-                        ? "正在下载并应用更新…"
-                        : "正在回滚版本…"
-                    }
-                    detail="请勿关闭页面"
-                  />
                 ) : null}
                 {check.hasUpdate &&
                 (check.mode === "binary" || check.mode === "docker") ? (
@@ -276,7 +245,7 @@ export function SystemVersion({ className }: { className?: string }) {
                     onClick={async () => {
                       const ok = await confirm({
                         title: `更新到 v${check.latest}`,
-                        description: "下载并替换当前版本后自动重启，页面将自动刷新。",
+                        description: `下载并替换后重启，约 ${RELOAD_COUNTDOWN_SEC} 秒后自动刷新页面。`,
                         confirmLabel: "一键更新并重启",
                         destructive: true,
                       });
