@@ -141,20 +141,14 @@ func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, erro
 		return nil
 	})
 	g.Go(func() error {
+		// 仅物化列，零扫 cards
 		rows, err := a.Pool.Query(ctx, `
 			SELECT cat.slug, cat.name, cat.icon_kind,
 			       CASE WHEN cat.icon_kind='image' AND length(cat.icon_value)>256 THEN '' ELSE cat.icon_value END,
 			       COALESCE(cat.unused_count, 0),
-			       COALESCE(agg.used_count, 0),
-			       COALESCE(agg.card_count, 0)
+			       COALESCE(cat.used_count, 0),
+			       COALESCE(cat.card_count, 0)
 			FROM categories cat
-			LEFT JOIN (
-				SELECT category_id,
-				       COUNT(*)::int AS card_count,
-				       COUNT(*) FILTER (WHERE status='used')::int AS used_count
-				FROM cards
-				GROUP BY category_id
-			) agg ON agg.category_id = cat.id
 			ORDER BY cat.sort_order`)
 		if err != nil {
 			return nil

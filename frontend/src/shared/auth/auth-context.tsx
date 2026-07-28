@@ -41,6 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // 公开页（兑换/文档）不探活 /admin/auth/me，避免与 public/config 抢连接
+    const path = typeof window !== "undefined" ? window.location.pathname : "";
+    const isPublic =
+      path === "/" ||
+      path === "" ||
+      path.startsWith("/docs") ||
+      path.startsWith("/admin/login") ||
+      path.startsWith("/admin/setup");
+    if (isPublic) {
+      setLoading(false);
+      return;
+    }
     void refresh();
   }, [refresh]);
 

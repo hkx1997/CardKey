@@ -3,15 +3,18 @@ import { NavLink } from "react-router-dom";
 
 import { ADMIN_NAV } from "@/shared/config/admin-nav";
 import { api } from "@/shared/api/client";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { queryKeys } from "@/shared/lib/query-keys";
 import { cn } from "@/shared/lib/cn";
 
-/** 悬停预取：进入页面前热身数据，降低「点了再等」 */
+/** 悬停预取：数据 + 路由 chunk 并行热身 */
 function useNavPrefetch() {
   const qc = useQueryClient();
+  const { pageSize } = usePageSize();
   return (path: string) => {
     const p = path.replace(/\/$/, "") || "/admin";
     if (p === "/admin" || p.endsWith("/admin")) {
+      void import("@/features/dashboard/dashboard-page");
       void qc.prefetchQuery({
         queryKey: [...queryKeys.dashboard, "all"],
         queryFn: () => api.dashboardStats(),
@@ -20,6 +23,7 @@ function useNavPrefetch() {
       return;
     }
     if (p.endsWith("/categories")) {
+      void import("@/features/categories/categories-page");
       void qc.prefetchQuery({
         queryKey: queryKeys.categories,
         queryFn: () => api.listCategories(),
@@ -28,14 +32,15 @@ function useNavPrefetch() {
       return;
     }
     if (p.endsWith("/cards") && !p.includes("import")) {
+      void import("@/features/cards/cards-page");
       void qc.prefetchQuery({
         queryKey: queryKeys.cards({
           page: 1,
-          pageSize: 20,
+          pageSize,
           status: "all",
         }),
         queryFn: () =>
-          api.listCards({ page: 1, pageSize: 20, status: "all" }),
+          api.listCards({ page: 1, pageSize, status: "all" }),
         staleTime: 30_000,
       });
       void qc.prefetchQuery({
@@ -45,7 +50,12 @@ function useNavPrefetch() {
       });
       return;
     }
+    if (p.endsWith("/import")) {
+      void import("@/features/cards/import-page");
+      return;
+    }
     if (p.endsWith("/batches")) {
+      void import("@/features/batches/batches-page");
       void qc.prefetchQuery({
         queryKey: [...queryKeys.batches, "all"],
         queryFn: () => api.listBatches(),
@@ -54,14 +64,16 @@ function useNavPrefetch() {
       return;
     }
     if (p.endsWith("/redeems")) {
+      void import("@/features/redeems/redeems-page");
       void qc.prefetchQuery({
-        queryKey: queryKeys.redeems({ page: 1, pageSize: 20 }),
-        queryFn: () => api.listRedeems({ page: 1, pageSize: 20 }),
+        queryKey: queryKeys.redeems({ page: 1, pageSize }),
+        queryFn: () => api.listRedeems({ page: 1, pageSize }),
         staleTime: 30_000,
       });
       return;
     }
     if (p.endsWith("/api-keys")) {
+      void import("@/features/api-keys/api-keys-page");
       void qc.prefetchQuery({
         queryKey: queryKeys.apiKeys,
         queryFn: () => api.listApiKeys(),
@@ -70,6 +82,7 @@ function useNavPrefetch() {
       return;
     }
     if (p.endsWith("/settings")) {
+      void import("@/features/settings/settings-page");
       void qc.prefetchQuery({
         queryKey: queryKeys.settings,
         queryFn: () => api.getSettings(),
@@ -78,9 +91,10 @@ function useNavPrefetch() {
       return;
     }
     if (p.endsWith("/audit")) {
+      void import("@/features/audit/audit-page");
       void qc.prefetchQuery({
-        queryKey: queryKeys.audit({ page: 1, pageSize: 20 }),
-        queryFn: () => api.listAuditLogs({ page: 1, pageSize: 20 }),
+        queryKey: queryKeys.audit({ page: 1, pageSize }),
+        queryFn: () => api.listAuditLogs({ page: 1, pageSize }),
         staleTime: 30_000,
       });
     }

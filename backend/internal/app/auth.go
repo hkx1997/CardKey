@@ -204,6 +204,9 @@ func (a *App) ParseJWT(ctx context.Context, token string) (*Claims, error) {
 	return claims, nil
 }
 
+// jwtOKCache 短缓存「未吊销」的 jti，减少每请求 Redis EXISTS（吊销后最多 2s 窗口）
+var jwtOKCache sync.Map // jti -> time.Time
+
 func (a *App) isJWTBlacklisted(ctx context.Context, jti string) bool {
 	if jti == "" {
 		return false
@@ -212,12 +215,22 @@ func (a *App) isJWTBlacklisted(ctx context.Context, jti string) bool {
 	if a.RDB == nil {
 		return a.Env == "production" || a.RequireRedis
 	}
+	if v, ok := jwtOKCache.Load(jti); ok {
+		if t, ok := v.(time.Time); ok && time.Since(t) < 2*time.Second {
+			return false
+		}
+	}
 	n, err := a.RDB.Exists(ctx, "jwt:bl:"+jti).Result()
 	if err != nil {
 		// 查询失败：fail-closed，当作已吊销
 		return true
 	}
-	return n > 0
+	if n > 0 {
+		jwtOKCache.Delete(jti)
+		return true
+	}
+	jwtOKCache.Store(jti, time.Now())
+	return false
 }
 
 // RevokeJWT 将 jti 加入黑名单直至过期。
@@ -238,6 +251,7 @@ func (a *App) RevokeJWT(ctx context.Context, token string) {
 	if !ok || claims.ID == "" {
 		return
 	}
+	jwtOKCache.Delete(claims.ID)
 	ttl := 24 * time.Hour
 	if claims.ExpiresAt != nil {
 		ttl = time.Until(claims.ExpiresAt.Time)

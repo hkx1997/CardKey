@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cardkey/cardkey/internal/domain"
@@ -60,21 +61,14 @@ func (a *App) listCategories(ctx context.Context, light bool) ([]domain.Category
 		return out, nil
 	}
 
-	// 完整列表：物化 unused + 一次 cards 聚合（避免 JOIN 行放大）
+	// 完整列表：仅读物化计数，禁止扫 cards
 	rows, err := a.Pool.Query(ctx, `
 		SELECT c.id, c.name, c.slug, c.code_prefix, c.description, c.enabled, c.sort_order,
 		       c.icon_kind, c.icon_value, c.created_at,
 		       COALESCE(c.unused_count, 0),
-		       COALESCE(agg.card_count, 0),
-		       COALESCE(agg.used_count, 0)
+		       COALESCE(c.card_count, 0),
+		       COALESCE(c.used_count, 0)
 		FROM categories c
-		LEFT JOIN (
-			SELECT category_id,
-			       COUNT(*)::int AS card_count,
-			       COUNT(*) FILTER (WHERE status='used')::int AS used_count
-			FROM cards
-			GROUP BY category_id
-		) agg ON agg.category_id = c.id
 		ORDER BY c.sort_order, c.created_at`)
 	if err != nil {
 		return nil, err
@@ -104,22 +98,19 @@ func (a *App) listCategories(ctx context.Context, light bool) ([]domain.Category
 func (a *App) getCategoryRow(ctx context.Context, id string) (domain.Category, error) {
 	var c domain.Category
 	var created time.Time
-	var unused int
+	var unused, cardCount, used int
 	err := a.Pool.QueryRow(ctx, `
 		SELECT c.id, c.name, c.slug, c.code_prefix, c.description, c.enabled, c.sort_order,
-		       c.icon_kind, c.icon_value, c.created_at, COALESCE(c.unused_count, 0)
+		       c.icon_kind, c.icon_value, c.created_at,
+		       COALESCE(c.unused_count, 0), COALESCE(c.card_count, 0), COALESCE(c.used_count, 0)
 		FROM categories c WHERE c.id=$1`, id).
 		Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
-			&c.Icon.Kind, &c.Icon.Value, &created, &unused)
+			&c.Icon.Kind, &c.Icon.Value, &created, &unused, &cardCount, &used)
 	if err != nil {
 		return domain.Category{}, apperr.NotFound("类别不存在")
 	}
 	c.CreatedAt = formatTS(created)
 	c.UnusedCount = &unused
-	var cardCount, used int
-	_ = a.Pool.QueryRow(ctx, `
-		SELECT COUNT(*)::int, COUNT(*) FILTER (WHERE status='used')::int
-		FROM cards WHERE category_id=$1`, id).Scan(&cardCount, &used)
 	c.CardCount = &cardCount
 	c.UsedCount = &used
 	return c, nil
@@ -159,6 +150,7 @@ func (a *App) CreateCategory(ctx context.Context, name, slug, prefix, desc strin
 		}
 		return domain.Category{}, err
 	}
+	a.invalidateCategorySlugCache()
 	a.Audit(ctx, "admin", actor, "create_category", "category:"+id, name+" ("+prefix+")", ip)
 	z := 0
 	return domain.Category{
@@ -199,6 +191,7 @@ func (a *App) UpdateCategory(ctx context.Context, id string, name, desc *string,
 		}
 		return domain.Category{}, err
 	}
+	a.invalidateCategorySlugCache()
 	a.Audit(ctx, "admin", actor, "update_category", "category:"+id, cur.Name, ip)
 	return cur, nil
 }
@@ -244,21 +237,72 @@ func (a *App) DeleteCategory(ctx context.Context, id, actor, ip string) error {
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	a.invalidateCategorySlugCache()
 	a.Audit(ctx, "admin", actor, "delete_category", "category:"+id, name, ip)
 	return nil
 }
 
+// FindCategoryBySlug 兑换热路径：不读 icon_value（可能是超大 data URL）。
 func (a *App) FindCategoryBySlug(ctx context.Context, slug string) (domain.Category, error) {
+	return a.findCategoryBySlug(ctx, slug, false)
+}
+
+// FindCategoryBySlugFull 管理端需要图标时用。
+func (a *App) FindCategoryBySlugFull(ctx context.Context, slug string) (domain.Category, error) {
+	return a.findCategoryBySlug(ctx, slug, true)
+}
+
+func (a *App) findCategoryBySlug(ctx context.Context, slug string, withIcon bool) (domain.Category, error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return domain.Category{}, apperr.NotFound("类别不存在")
+	}
+	// 进程缓存 30s（兑换热路径）
+	if !withIcon {
+		if v, ok := catSlugCache.Load(slug); ok {
+			e := v.(catSlugCacheEntry)
+			if time.Since(e.at) < 30*time.Second {
+				return e.c, nil
+			}
+		}
+	}
 	var c domain.Category
 	var created time.Time
-	err := a.Pool.QueryRow(ctx, `
-		SELECT id, name, slug, code_prefix, description, enabled, sort_order, icon_kind, icon_value, created_at
-		FROM categories WHERE slug=$1`, slug).
-		Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
-			&c.Icon.Kind, &c.Icon.Value, &created)
+	var err error
+	if withIcon {
+		err = a.Pool.QueryRow(ctx, `
+			SELECT id, name, slug, code_prefix, description, enabled, sort_order, icon_kind, icon_value, created_at
+			FROM categories WHERE slug=$1`, slug).
+			Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
+				&c.Icon.Kind, &c.Icon.Value, &created)
+	} else {
+		err = a.Pool.QueryRow(ctx, `
+			SELECT id, name, slug, code_prefix, description, enabled, sort_order, icon_kind, created_at
+			FROM categories WHERE slug=$1`, slug).
+			Scan(&c.ID, &c.Name, &c.Slug, &c.CodePrefix, &c.Description, &c.Enabled, &c.SortOrder,
+				&c.Icon.Kind, &created)
+		c.Icon.Value = ""
+	}
 	if err != nil {
 		return domain.Category{}, apperr.NotFound("类别不存在")
 	}
 	c.CreatedAt = formatTS(created)
+	if !withIcon {
+		catSlugCache.Store(slug, catSlugCacheEntry{c: c, at: time.Now()})
+	}
 	return c, nil
+}
+
+type catSlugCacheEntry struct {
+	c  domain.Category
+	at time.Time
+}
+
+var catSlugCache sync.Map
+
+func (a *App) invalidateCategorySlugCache() {
+	catSlugCache.Range(func(k, _ any) bool {
+		catSlugCache.Delete(k)
+		return true
+	})
 }

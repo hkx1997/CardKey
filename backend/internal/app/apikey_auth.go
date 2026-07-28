@@ -89,8 +89,22 @@ func (a *App) AuthenticateAPIKeyIdentity(ctx context.Context, plain string, need
 			return nil, apperr.RateLimited("API Key 请求过于频繁")
 		}
 	}
-	_, _ = a.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at=now() WHERE id=$1`, id)
+	// last_used_at 最多每 60s 写一次，避免高 RPS 写放大
+	a.touchAPIKeyLastUsed(ctx, id)
 	return &APIKeyIdentity{ID: id, Name: name, Prefix: prefix, Scopes: scopes}, nil
+}
+
+func (a *App) touchAPIKeyLastUsed(ctx context.Context, id string) {
+	if id == "" || id == "system-redeem" {
+		return
+	}
+	if a.RDB != nil {
+		ok, err := a.RDB.SetNX(ctx, "apikey:touch:"+id, "1", 60*time.Second).Result()
+		if err == nil && !ok {
+			return
+		}
+	}
+	_, _ = a.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at=now() WHERE id=$1`, id)
 }
 
 // scopeAllows need 是否被 scopes 覆盖。

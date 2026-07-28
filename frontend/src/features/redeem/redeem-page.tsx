@@ -43,10 +43,10 @@ import {
 } from "@/shared/lib/card-content";
 import { CategoryIconView } from "@/shared/lib/category-icons";
 import { cn } from "@/shared/lib/cn";
+import { parseRedeemCodes } from "@/shared/lib/redeem-codes";
 import {
   buildRedeemZip,
   downloadBlob,
-  parseRedeemCodes,
   type BatchRedeemItem,
 } from "@/shared/lib/redeem-zip";
 import { isEmptyHtml } from "@/shared/lib/sanitize-html";

@@ -10,6 +10,21 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("react-dom") || id.includes("/react/")) return "react-vendor";
+          if (id.includes("@tanstack")) return "query";
+          if (id.includes("@radix-ui")) return "radix";
+          if (id.includes("react-markdown") || id.includes("remark")) return "markdown";
+          if (id.includes("highlight.js")) return "highlight";
+          if (id.includes("jszip")) return "jszip";
+        },
+      },
+    },
+  },
   server: {
     host: "127.0.0.1",
     port: 5173,

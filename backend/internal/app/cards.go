@@ -304,7 +304,7 @@ func (a *App) CreateCardWithPayload(ctx context.Context, in CreateCardPayload, a
 	if err != nil {
 		return domain.Card{}, err
 	}
-	a.bumpUnusedCount(ctx, in.CategoryID, 1)
+	a.bumpCardStats(ctx, in.CategoryID, 1, 0, 1)
 	a.Audit(ctx, "admin", actor, "create_card", "card:"+id, fmt.Sprintf("创建 %s type=%s size=%d", code, typ, size), ip)
 	return domain.Card{
 		ID: id, CategoryID: in.CategoryID, Code: code, Type: typ, Status: domain.StatusUnused,
@@ -406,7 +406,16 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 		if err != nil {
 			return nil, err
 		}
-		for _, content := range lines[i:end] {
+		// 预生成编码 + 批量 INSERT，减少往返
+		type row struct {
+			code, content string
+			enc, nonce    []byte
+			fn, mime      string
+			sz            int64
+		}
+		chunkLines := lines[i:end]
+		rowsBuf := make([]row, 0, len(chunkLines))
+		for _, content := range chunkLines {
 			code, err := a.uniqueCodeTx(ctx, tx, categoryID, cat.CodePrefix)
 			if err != nil {
 				_ = tx.Rollback(ctx)
@@ -417,26 +426,40 @@ func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domai
 				_ = tx.Rollback(ctx)
 				return nil, err
 			}
-			fn := defaultFilename(typ, code)
-			mime := defaultMimeForType(typ)
-			sz := int64(len(content))
-			_, err = tx.Exec(ctx, `
+			rowsBuf = append(rowsBuf, row{
+				code: code, content: content, enc: enc, nonce: nonce,
+				fn: defaultFilename(typ, code), mime: defaultMimeForType(typ), sz: int64(len(content)),
+			})
+		}
+		b := &pgx.Batch{}
+		for _, r := range rowsBuf {
+			b.Queue(`
 				INSERT INTO cards(category_id, code, content_enc, content_nonce, type, batch_id, status, note,
 				                  content_filename, content_mime, content_size)
 				VALUES($1,$2,$3,$4,$5,$6,'unused',$7,$8,$9,$10)`,
-				categoryID, code, enc, nonce, typ, batchID, note, fn, mime, sz)
-			if err != nil {
+				categoryID, r.code, r.enc, r.nonce, typ, batchID, note, r.fn, r.mime, r.sz)
+		}
+		br := tx.SendBatch(ctx, b)
+		for range rowsBuf {
+			if _, err := br.Exec(); err != nil {
+				_ = br.Close()
 				_ = tx.Rollback(ctx)
 				return nil, err
 			}
-			codes = append(codes, code)
+		}
+		if err := br.Close(); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
+		for _, r := range rowsBuf {
+			codes = append(codes, r.code)
+		}
 		reportProgress(len(codes))
 	}
-	a.bumpUnusedCount(ctx, categoryID, len(codes))
+	a.bumpCardStats(ctx, categoryID, len(codes), 0, len(codes))
 	a.Audit(ctx, "admin", actor, "import", "category:"+categoryID, fmt.Sprintf("导入 %d 条 → %s", len(codes), cat.Name), ip)
 	return map[string]any{
 		"batch":    batch,
@@ -495,21 +518,31 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 		}
 		n := int(tag.RowsAffected())
 		for _, p := range bumps {
-			a.bumpUnusedCount(ctx, p.id, -p.n)
+			a.bumpCardStats(ctx, p.id, 0, 0, -p.n)
 		}
 		a.Audit(ctx, "admin", actor, "batch_disable", "cards", fmt.Sprintf("禁用 %d 条", n), ip)
 		return n, nil
 	case domain.BatchEnable, domain.BatchRestore:
-		rows, _ := a.Pool.Query(ctx, `
-			SELECT category_id::text, COUNT(*)::int FROM cards
-			WHERE id = ANY($1) AND status IN ('disabled','used') GROUP BY category_id`, ids)
+		// 分别统计 used / disabled 以便 used_count 正确
 		type pair struct{ id string; n int }
-		var bumps []pair
-		if rows != nil {
+		var fromUsed, fromDis []pair
+		if rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status='used' GROUP BY category_id`, ids); rows != nil {
 			for rows.Next() {
 				var p pair
 				_ = rows.Scan(&p.id, &p.n)
-				bumps = append(bumps, p)
+				fromUsed = append(fromUsed, p)
+			}
+			rows.Close()
+		}
+		if rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status='disabled' GROUP BY category_id`, ids); rows != nil {
+			for rows.Next() {
+				var p pair
+				_ = rows.Scan(&p.id, &p.n)
+				fromDis = append(fromDis, p)
 			}
 			rows.Close()
 		}
@@ -525,23 +558,35 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 			return 0, err
 		}
 		n := int(tag.RowsAffected())
-		for _, p := range bumps {
-			a.bumpUnusedCount(ctx, p.id, p.n)
+		for _, p := range fromUsed {
+			a.bumpCardStats(ctx, p.id, 0, -p.n, p.n)
+		}
+		for _, p := range fromDis {
+			a.bumpCardStats(ctx, p.id, 0, 0, p.n)
 		}
 		a.Audit(ctx, "admin", actor, "batch_enable", "cards",
 			fmt.Sprintf("启用/复原 %d 条（含已兑换复原）", n), ip)
 		return n, nil
 	case domain.BatchDelete:
-		rows, _ := a.Pool.Query(ctx, `
-			SELECT category_id::text, COUNT(*)::int FROM cards
-			WHERE id = ANY($1) AND status='unused' GROUP BY category_id`, ids)
 		type pair struct{ id string; n int }
-		var bumps []pair
-		if rows != nil {
+		var unusedB, disB []pair
+		if rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status='unused' GROUP BY category_id`, ids); rows != nil {
 			for rows.Next() {
 				var p pair
 				_ = rows.Scan(&p.id, &p.n)
-				bumps = append(bumps, p)
+				unusedB = append(unusedB, p)
+			}
+			rows.Close()
+		}
+		if rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status='disabled' GROUP BY category_id`, ids); rows != nil {
+			for rows.Next() {
+				var p pair
+				_ = rows.Scan(&p.id, &p.n)
+				disB = append(disB, p)
 			}
 			rows.Close()
 		}
@@ -552,8 +597,11 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 			return 0, err
 		}
 		n := int(tag.RowsAffected())
-		for _, p := range bumps {
-			a.bumpUnusedCount(ctx, p.id, -p.n)
+		for _, p := range unusedB {
+			a.bumpCardStats(ctx, p.id, -p.n, 0, -p.n)
+		}
+		for _, p := range disB {
+			a.bumpCardStats(ctx, p.id, -p.n, 0, 0)
 		}
 		a.Audit(ctx, "admin", actor, "batch_delete", "cards", fmt.Sprintf("删除 %d 条", n), ip)
 		return n, nil

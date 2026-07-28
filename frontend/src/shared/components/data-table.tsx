@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -52,16 +52,6 @@ function alignClass(align?: "left" | "right") {
   return align === "right" ? "text-right" : undefined;
 }
 
-const bpHiddenTable = {
-  sm: "hidden sm:block",
-  md: "hidden md:block",
-} as const;
-
-const bpShowCards = {
-  sm: "sm:hidden",
-  md: "md:hidden",
-} as const;
-
 export function DataTable<T>({
   columns,
   rows,
@@ -103,9 +93,22 @@ export function DataTable<T>({
   const items = rows ?? [];
   const colCount = emptyColSpan ?? columns.length;
   const isEmpty = !loading && items.length === 0;
-  const useMobile = mobileCard != null || mobileBreakpoint != null;
-  const tableVisibility = useMobile ? bpHiddenTable[mobileBreakpoint] : undefined;
-  const cardsVisibility = useMobile ? bpShowCards[mobileBreakpoint] : "hidden";
+  // 只渲染一种布局，避免桌面+移动双倍 cell 开销
+  const mq =
+    mobileBreakpoint === "sm"
+      ? "(max-width: 639px)"
+      : "(max-width: 767px)";
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const m = window.matchMedia(mq);
+    const apply = () => setIsNarrow(m.matches);
+    apply();
+    m.addEventListener("change", apply);
+    return () => m.removeEventListener("change", apply);
+  }, [mq]);
+  const useMobileLayout =
+    (mobileCard != null || mobileBreakpoint != null) && isNarrow;
 
   const mobileCols = columns.filter((c) => c.mobile !== false);
 
@@ -136,9 +139,8 @@ export function DataTable<T>({
     <div className={cn("space-y-0", className)}>
       {toolbar ? <div className="mb-3">{toolbar}</div> : null}
 
-      {/* 窄屏卡片 */}
-      {useMobile ? (
-        <div className={cn("space-y-2", cardsVisibility)}>
+      {useMobileLayout ? (
+        <div className="space-y-2">
           {loading
             ? Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={`msk-${i}`} className="h-24 w-full rounded-xl" />
@@ -154,84 +156,83 @@ export function DataTable<T>({
             </EmptyState>
           ) : null}
         </div>
-      ) : null}
+      ) : (
+        <div className="-mx-1">
+          <Table
+            className={cn(minWidth != null && "min-w-[var(--dt-min)]")}
+            style={
+              minWidth != null
+                ? ({
+                    ["--dt-min" as string]:
+                      typeof minWidth === "number" ? `${minWidth}px` : minWidth,
+                  } as CSSProperties)
+                : undefined
+            }
+          >
+            <TableHeader>
+              <TableRow>
+                {columns.map((col) => (
+                  <TableHead
+                    key={col.id}
+                    className={cn(
+                      showFromClass[col.showFrom ?? "always"],
+                      alignClass(col.align),
+                      col.headClassName,
+                    )}
+                  >
+                    {col.header}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading
+                ? Array.from({ length: 5 }).map((_, i) => (
+                    <TableRow key={`sk-${i}`}>
+                      {columns.map((col) => (
+                        <TableCell
+                          key={col.id}
+                          className={cn(
+                            showFromClass[col.showFrom ?? "always"],
+                            col.cellClassName,
+                          )}
+                        >
+                          <Skeleton className="h-4 w-full max-w-[8rem]" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                : null}
 
-      {/* 桌面表格 */}
-      <div className={cn("-mx-1", tableVisibility)}>
-        <Table
-          className={cn(minWidth != null && "min-w-[var(--dt-min)]")}
-          style={
-            minWidth != null
-              ? ({
-                  ["--dt-min" as string]:
-                    typeof minWidth === "number" ? `${minWidth}px` : minWidth,
-                } as CSSProperties)
-              : undefined
-          }
-        >
-          <TableHeader>
-            <TableRow>
-              {columns.map((col) => (
-                <TableHead
-                  key={col.id}
-                  className={cn(
-                    showFromClass[col.showFrom ?? "always"],
-                    alignClass(col.align),
-                    col.headClassName,
-                  )}
-                >
-                  {col.header}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading
-              ? Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={`sk-${i}`}>
+              {!loading &&
+                items.map((row) => (
+                  <TableRow key={rowKey(row)}>
                     {columns.map((col) => (
                       <TableCell
                         key={col.id}
                         className={cn(
                           showFromClass[col.showFrom ?? "always"],
+                          alignClass(col.align),
                           col.cellClassName,
                         )}
                       >
-                        <Skeleton className="h-4 w-full max-w-[8rem]" />
+                        {col.cell(row)}
                       </TableCell>
                     ))}
                   </TableRow>
-                ))
-              : null}
+                ))}
 
-            {!loading &&
-              items.map((row) => (
-                <TableRow key={rowKey(row)}>
-                  {columns.map((col) => (
-                    <TableCell
-                      key={col.id}
-                      className={cn(
-                        showFromClass[col.showFrom ?? "always"],
-                        alignClass(col.align),
-                        col.cellClassName,
-                      )}
-                    >
-                      {col.cell(row)}
-                    </TableCell>
-                  ))}
+              {isEmpty ? (
+                <TableRow>
+                  <TableCell colSpan={colCount} className="p-0">
+                    <EmptyState className="h-28">{empty ?? "暂无数据"}</EmptyState>
+                  </TableCell>
                 </TableRow>
-              ))}
-
-            {isEmpty ? (
-              <TableRow>
-                <TableCell colSpan={colCount} className="p-0">
-                  <EmptyState className="h-28">{empty ?? "暂无数据"}</EmptyState>
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </div>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {pagination ? (
         <PaginationBar

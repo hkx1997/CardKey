@@ -1,5 +1,3 @@
-import JSZip from "jszip";
-
 import type { RedeemResult } from "@/entities/types";
 import {
   base64ToUint8Array,
@@ -13,6 +11,8 @@ export type BatchRedeemItem = {
   result?: RedeemResult;
   error?: string;
 };
+
+export { parseRedeemCodes } from "@/shared/lib/redeem-codes";
 
 /** 文件名安全：去掉路径与非法字符 */
 export function safeFileName(code: string, index: number, ext = ".txt"): string {
@@ -84,11 +84,12 @@ export function formatRedeemFile(item: BatchRedeemItem): string {
   return lines.join("\n");
 }
 
-/** 将批量结果打包为 ZIP Blob（二进制类型写入真实文件） */
+/** 将批量结果打包为 ZIP Blob（二进制类型写入真实文件）；JSZip 动态加载 */
 export async function buildRedeemZip(
   items: BatchRedeemItem[],
   opts?: { folderName?: string },
 ): Promise<Blob> {
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const folder = opts?.folderName
     ? zip.folder(opts.folderName) ?? zip
@@ -156,14 +157,3 @@ export function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 2_000);
 }
 
-export function parseRedeemCodes(raw: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const line of raw.split(/\r?\n/)) {
-    const code = line.trim().toUpperCase();
-    if (!code || seen.has(code)) continue;
-    seen.add(code);
-    out.push(code);
-  }
-  return out;
-}

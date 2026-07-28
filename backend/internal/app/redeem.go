@@ -254,12 +254,19 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 			if err := tx.Commit(ctx); err != nil {
 				return domain.RedeemResult{}, err
 			}
-			a.bumpUnusedCount(ctx, cat.ID, -1)
+			a.bumpCardStats(ctx, cat.ID, 0, 0, -1)
 		}
 		return domain.RedeemResult{}, apperr.New(410, "CARD_EXPIRED", "该卡密已过期")
 	case domain.RedeemNotUnused:
 		return domain.RedeemResult{}, apperr.New(403, "CARD_INVALID", "卡密无效或不可用")
 	}
+
+	// 已兑且不允许再查：不解密
+	if status == domain.StatusUsed && !s.AllowRequery {
+		return domain.RedeemResult{}, apperr.New(409, "CARD_USED", "该卡密已兑换")
+	}
+
+	// 确认可返回内容后再解密（缩短 FOR UPDATE 锁内无效路径）
 	raw, err := a.DecryptBytes(enc, nonce)
 	if err != nil {
 		return domain.RedeemResult{}, apperr.Internal("解密失败")
@@ -276,9 +283,8 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 	content, encoding := packPayloadForAPI(typ, raw, filename, mime, size)
 
 	if status == domain.StatusUsed {
-		if !s.AllowRequery {
-			return domain.RedeemResult{}, apperr.New(409, "CARD_USED", "该卡密已兑换")
-		}
+		// AllowRequery：释放锁后返回
+		_ = tx.Rollback(ctx)
 		ra := time.Now().UTC()
 		if usedAt != nil {
 			ra = *usedAt
@@ -291,6 +297,7 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 	}
 
 	now := time.Now().UTC()
+	// 事务内扣库存，减少漂移与对账压力
 	tag, err := tx.Exec(ctx, `
 		UPDATE cards SET status='used', used_at=$1, used_ip=NULLIF($2,'')::inet, updated_at=now(), version=version+1
 		WHERE id=$3 AND status='unused'`, now, ip, cardID)
@@ -301,6 +308,15 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 		return domain.RedeemResult{}, apperr.New(409, "CARD_USED", "该卡密已兑换")
 	}
 	_, err = tx.Exec(ctx, `
+		UPDATE categories SET
+			unused_count = GREATEST(0, unused_count - 1),
+			used_count = used_count + 1,
+			updated_at = now()
+		WHERE id=$1::uuid`, cat.ID)
+	if err != nil {
+		return domain.RedeemResult{}, err
+	}
+	_, err = tx.Exec(ctx, `
 		INSERT INTO redeem_records(category_id, card_id, code, ip, user_agent, created_at)
 		VALUES($1,$2,$3,NULLIF($4,'')::inet,$5,$6)`, cat.ID, cardID, cardCode, ip, ua, now)
 	if err != nil {
@@ -309,7 +325,7 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 	if err := tx.Commit(ctx); err != nil {
 		return domain.RedeemResult{}, err
 	}
-	a.bumpUnusedCount(ctx, cat.ID, -1)
+	a.invalidateStockCaches(ctx)
 	result := domain.RedeemResult{
 		Status: "success", Category: cat.Slug, CategoryName: cat.Name,
 		Code: cardCode, Type: typ, Content: content, ContentEncoding: encoding,

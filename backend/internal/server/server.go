@@ -24,6 +24,8 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	// 客户端 IP 仅由 ClientIPMiddleware(TrustProxy) 解析。
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(60 * time.Second))
+	// API/SPA JSON 与文本 gzip（BestSpeed），显著减传输
+	r.Use(middleware.Gzip)
 	r.Use(middleware.SecurityHeaders)
 	// 卡密文件创建可走 base64 JSON / multipart，上限约 5MB 原文 ≈ 7MB base64
 	r.Use(middleware.BodyLimit(12 << 20))
