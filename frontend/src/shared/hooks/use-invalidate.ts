@@ -33,8 +33,8 @@ export function useInvalidate() {
       categories: () =>
         bump(
           queryKeys.categories,
+          queryKeys.publicConfig, // 兑换端类别/图标/启停
           queryKeys.publicCategoryStock,
-          // 类别变更会影响筛选与看板分类，但不同步刷全部卡密列表
           queryKeys.dashboard,
         ),
 

@@ -55,9 +55,7 @@ func (a *App) MarkExpiredCards(ctx context.Context) (int64, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	if a.RDB != nil {
-		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
-	}
+	a.InvalidatePublicStockCache(ctx)
 	return tag.RowsAffected(), nil
 }
 

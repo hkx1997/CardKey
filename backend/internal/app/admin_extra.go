@@ -406,7 +406,8 @@ func (a *App) RotateAPIKey(ctx context.Context, id, actor, ip string) (domain.Ap
 }
 
 func (a *App) SetPublicRedeemKey(ctx context.Context, mode, custom, actor, ip string) (string, error) {
-	s, err := a.GetSettings(ctx)
+	// 必须用 raw：GetSettings 会脱敏 SMTP/Webhook，回写会误清空
+	s, err := a.loadSettingsRaw(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -426,6 +427,7 @@ func (a *App) SetPublicRedeemKey(ctx context.Context, mode, custom, actor, ip st
 	if err := a.SaveSettings(ctx, s); err != nil {
 		return "", err
 	}
+	// SaveSettings 已 InvalidatePublicConfigCache；再清一次库存键无害
 	prefix := plain
 	if len(prefix) > 14 {
 		prefix = prefix[:14]
@@ -603,9 +605,9 @@ func (a *App) ListAudit(ctx context.Context, page, pageSize int, cursor string) 
 	}, nil
 }
 
-// cardStatusCountsCached 卡密按状态计数，Redis 20s。
+// cardStatusCountsCached 卡密按状态计数，Redis 短缓存（写卡密会 invalidateStockCaches）。
 func (a *App) cardStatusCountsCached(ctx context.Context) (map[string]int, error) {
-	const key = "cardkey:card_status_counts_v1"
+	key := redisCardStatusCounts
 	if a.RDB != nil {
 		if raw, err := a.RDB.Get(ctx, key).Bytes(); err == nil && len(raw) > 0 {
 			// format: unused=1,used=2,...

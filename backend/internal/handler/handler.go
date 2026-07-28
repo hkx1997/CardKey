@@ -59,6 +59,8 @@ func (h *Handler) GetPublicConfig(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, err)
 		return
 	}
+	// 密钥/文案/类别等变更后必须立刻可见，禁止 CDN/浏览器强缓存
+	w.Header().Set("Cache-Control", "private, no-store")
 	response.OK(w, cfg)
 }
 

@@ -19,10 +19,9 @@ import (
 const availableStockExpr = `c.unused_count`
 
 func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
-	// v3：完整下发自定义图片图标（v2 曾把 >4KB 的 data URL 截成空，兑换 Tab 图标全丢）
-	const cacheKey = "cardkey:public_config_v3"
+	// 缓存键见 redisPublicConfigCurrent；写设置/类别时必须 InvalidatePublicConfigCache
 	if a.RDB != nil {
-		if raw, err := a.RDB.Get(ctx, cacheKey).Bytes(); err == nil && len(raw) > 0 {
+		if raw, err := a.RDB.Get(ctx, redisPublicConfigCurrent).Bytes(); err == nil && len(raw) > 0 {
 			var cached domain.PublicConfig
 			if json.Unmarshal(raw, &cached) == nil {
 				return cached, nil
@@ -91,18 +90,17 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	}
 	if a.RDB != nil {
 		if b, err := json.Marshal(cfg); err == nil {
-			_ = a.RDB.Set(ctx, cacheKey, b, 20*time.Second).Err()
+			_ = a.RDB.Set(ctx, redisPublicConfigCurrent, b, publicConfigRedisTTL).Err()
 		}
 	}
 	return cfg, nil
 }
 
 // PublicCategoryStock 启用类别的可兑换库存快照（供兑换端轮询，轻量无 HTML）。
-// Redis 短缓存 3s，减轻 10s 轮询 + 多实例重复聚合压力。
+// Redis 短缓存；写库存路径走 invalidateStockCaches，禁止只靠 TTL。
 func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, error) {
-	const cacheKey = "cardkey:public_stock_v1"
 	if a.RDB != nil {
-		if raw, err := a.RDB.Get(ctx, cacheKey).Bytes(); err == nil && len(raw) > 0 {
+		if raw, err := a.RDB.Get(ctx, redisPublicStock).Bytes(); err == nil && len(raw) > 0 {
 			var cached domain.PublicStock
 			if json.Unmarshal(raw, &cached) == nil && len(cached.Categories) >= 0 {
 				return cached, nil
@@ -135,7 +133,7 @@ func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, erro
 	}
 	if a.RDB != nil {
 		if b, err := json.Marshal(stock); err == nil {
-			_ = a.RDB.Set(ctx, cacheKey, b, 8*time.Second).Err()
+			_ = a.RDB.Set(ctx, redisPublicStock, b, publicStockRedisTTL).Err()
 		}
 	}
 	return stock, nil

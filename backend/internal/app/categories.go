@@ -305,4 +305,6 @@ func (a *App) invalidateCategorySlugCache() {
 		catSlugCache.Delete(k)
 		return true
 	})
+	// 类别名/图标/启停会影响公开 /public/config 与库存列表
+	a.invalidatePublicFacingCaches(context.Background())
 }

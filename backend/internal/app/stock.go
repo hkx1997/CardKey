@@ -36,8 +36,7 @@ func (a *App) bumpCardStats(ctx context.Context, categoryID string, dCard, dUsed
 
 func (a *App) invalidateStockCaches(ctx context.Context) {
 	if a.RDB != nil {
-		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
-		_ = a.RDB.Del(ctx, "cardkey:card_status_counts_v1").Err()
+		_ = a.RDB.Del(ctx, redisPublicStock, redisCardStatusCounts).Err()
 	}
 	a.InvalidateDashboardCache()
 }

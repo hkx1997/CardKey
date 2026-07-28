@@ -176,10 +176,8 @@ func (a *App) loadSettings(ctx context.Context) (domain.Settings, error) {
 }
 
 func (a *App) InvalidateSettingsCache() {
-	// 同步清公开配置 Redis 缓存
-	if a.RDB != nil {
-		_ = a.RDB.Del(context.Background(), "cardkey:public_config_v2").Err()
-	}
+	// 设置内存缓存 + 公开配置 Redis（键版本必须与 PublicConfig 一致）
+	a.InvalidatePublicConfigCache(context.Background())
 	a.settingsMu.Lock()
 	a.settingsCache = nil
 	a.settingsAt = time.Time{}
@@ -197,10 +195,8 @@ func (a *App) SaveSettings(ctx context.Context, s domain.Settings) error {
 	if err != nil {
 		return err
 	}
-	// 缓存仅存脱敏副本；公开配置 Redis 一并失效
-	if a.RDB != nil {
-		_ = a.RDB.Del(ctx, "cardkey:public_config_v2").Err()
-	}
+	// 缓存仅存脱敏副本；公开配置 Redis 一并失效（兑换文案/密钥/开关等即时可见）
+	a.InvalidatePublicConfigCache(ctx)
 	masked := s
 	masked.SmtpPasswordSet = strings.TrimSpace(s.SmtpPassword) != ""
 	masked.SmtpPassword = ""

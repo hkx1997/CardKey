@@ -13,7 +13,12 @@ export function usePublicConfigQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.publicConfig,
     queryFn: () => api.getPublicConfig(),
-    staleTime: 90_000,
+    // 一致性优先：密钥/文案/类别变更后，聚焦窗口或重挂载应尽快拿到新配置
+    // 后端 Redis 写后失效；此处勿用过长 staleTime（曾 90s 导致文档密钥滞后）
+    staleTime: 15_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
     enabled: opts?.enabled ?? true,
   });
 }
@@ -35,10 +40,11 @@ export function usePublicCategoryStockQuery(opts?: {
     queryKey: queryKeys.publicCategoryStock,
     queryFn: () => api.getPublicCategoryStock(),
     enabled,
-    staleTime: Math.min(12_000, Math.max(0, interval)),
+    staleTime: Math.min(8_000, Math.max(0, interval)),
     refetchInterval: enabled && interval > 0 ? interval : false,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: false,
+    // 切回标签页时同步库存（兑换后另一标签可能已改库存）
+    refetchOnWindowFocus: true,
   });
 }
 

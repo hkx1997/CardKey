@@ -11,7 +11,9 @@ export function useSettingsQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => api.getSettings(),
-    staleTime: 60_000,
+    // 设置/密钥变更频繁对照公开页，不宜过长
+    staleTime: 20_000,
+    refetchOnWindowFocus: true,
     enabled: opts?.enabled ?? true,
   });
 }
@@ -46,8 +48,10 @@ export function useSetPublicRedeemKey() {
       api.setPublicRedeemApiKey(input),
     onSuccess: () => {
       toast.success("密钥已更新");
+      // settings() 已含 publicConfig；apiKeys + public 双保险
       void inv.apiKeys();
       void inv.settings();
+      void inv.public();
     },
     onError: (e) => toastApiError(e, "更新失败"),
   });
