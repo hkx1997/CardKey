@@ -47,7 +47,7 @@ export function AdminLayout() {
 
   const accountBar = (
     <div className="flex h-10 items-center gap-0.5 px-1.5">
-      <span className="min-w-0 flex-1 truncate px-1 text-xs capitalize text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground">
         {user?.username}
       </span>
       <ThemeSwitcher />
