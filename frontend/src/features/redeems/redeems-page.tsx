@@ -18,11 +18,11 @@ import {
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { useRedeemsQuery } from "@/shared/hooks/use-redeems";
 import { formatDateTime } from "@/shared/lib/format";
 
 const ALL = "__all__";
-const PAGE_SIZE = 20;
 
 function toCsv(rows: RedeemRecord[]) {
   const header = ["类别", "编码", "IP", "UA", "时间"];
@@ -44,12 +44,13 @@ export function RedeemsPage() {
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
   const [categorySlug, setCategorySlug] = useState(ALL);
 
   const catsQ = useCategoriesQuery();
   const listQ = useRedeemsQuery({
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     q: query || undefined,
     categorySlug: categorySlug === ALL ? undefined : categorySlug,
   });
@@ -172,9 +173,14 @@ export function RedeemsPage() {
             minWidth={420}
             pagination={{
               page,
-              pageSize: PAGE_SIZE,
+              pageSize,
               total: listQ.data?.total ?? 0,
               onPageChange: setPage,
+              onPageSizeChange: (n) => {
+                setPageSize(n);
+                setPage(1);
+              },
+              pageSizeOptions,
             }}
             mobileCard={(r) => (
               <div className="rounded-xl border border-border/70 p-3">

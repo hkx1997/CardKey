@@ -64,11 +64,11 @@ import {
   downloadCodesTxt,
   exportFilename,
 } from "@/shared/lib/export-codes";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { formatDateTime } from "@/shared/lib/format";
 import { CardStatusBadge } from "@/shared/lib/status";
 
 const ALL = "__all__";
-const PAGE_SIZE = 20;
 
 /** 可勾选：未使用/禁用（禁用/删除）+ 已兑换（可复原启用） */
 function isSelectable(card: CardEntity) {
@@ -93,6 +93,7 @@ export function CardsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const batchFromUrl = searchParams.get("batch") || undefined;
   const [page, setPage] = useState(1);
+  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
   const [status, setStatus] = useState<CardStatus | "all">("all");
   const [categorySlug, setCategorySlug] = useState(ALL);
   const [q, setQ] = useState("");
@@ -105,7 +106,7 @@ export function CardsPage() {
   const catsQ = useCategoriesQuery();
   const listQ = useCardsQuery({
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
     status,
     q: query || undefined,
     categorySlug: categorySlug === ALL ? undefined : categorySlug,
@@ -552,11 +553,14 @@ export function CardsPage() {
             minWidth={640}
             pagination={{
               page,
-              pageSize: PAGE_SIZE,
+              pageSize,
               total: listQ.data?.total ?? 0,
-              onPageChange: (p) => {
-                setPage(p);
+              onPageChange: setPage,
+              onPageSizeChange: (n) => {
+                setPageSize(n);
+                setPage(1);
               },
+              pageSizeOptions,
             }}
             mobileCard={(card) => (
               <div className="space-y-2.5 rounded-xl border border-border/70 p-3">

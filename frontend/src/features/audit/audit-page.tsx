@@ -10,13 +10,13 @@ import {
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { useAuditQuery } from "@/shared/hooks/use-audit";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { formatDateTime } from "@/shared/lib/format";
-
-const PAGE_SIZE = 20;
 
 export function AuditPage() {
   const [page, setPage] = useState(1);
-  const q = useAuditQuery({ page, pageSize: PAGE_SIZE });
+  const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
+  const q = useAuditQuery({ page, pageSize });
 
   const columns = useMemo<DataTableColumn<AuditLog>[]>(
     () => [
@@ -78,9 +78,14 @@ export function AuditPage() {
             minWidth={480}
             pagination={{
               page,
-              pageSize: PAGE_SIZE,
+              pageSize,
               total: q.data?.total ?? 0,
               onPageChange: setPage,
+              onPageSizeChange: (n) => {
+                setPageSize(n);
+                setPage(1);
+              },
+              pageSizeOptions,
             }}
             mobileCard={(log) => (
               <div className="space-y-1 rounded-xl border border-border/70 p-3">

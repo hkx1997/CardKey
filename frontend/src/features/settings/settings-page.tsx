@@ -4,6 +4,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Tabs,
   TabsContent,
   TabsList,
@@ -25,6 +32,7 @@ import {
   useTestMail,
   useUpdateSettings,
 } from "@/shared/hooks/use-settings";
+import { usePageSize } from "@/shared/hooks/use-page-size";
 import { resolveApiBase } from "@/shared/lib/api-base";
 import { cn } from "@/shared/lib/cn";
 
@@ -133,13 +141,31 @@ export function SettingsPage() {
           <TabsTrigger value="general" className="px-4">
             基本设置
           </TabsTrigger>
+          <TabsTrigger value="security" className="px-4">
+            安全 · 2FA
+          </TabsTrigger>
           <TabsTrigger value="mail" className="px-4">
             邮件提醒
           </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="security" className="space-y-4">
+          <SettingsSection
+            title="两步验证（TOTP）"
+            description="登录时除密码外再输入 Authenticator 动态码。绑定后登录需密码 + 6 位动态码。"
+          >
+            <TotpSecurityPanel />
+          </SettingsSection>
+        </TabsContent>
+
         {/* —— 基本设置（原有内容） —— */}
         <TabsContent value="general" className="space-y-4">
+          <SettingsSection
+            title="列表显示"
+            description="卡密 / 兑换记录 / 审计列表共用；也可在各列表页底栏随时切换。保存在本机浏览器。"
+          >
+            <PageSizeSettingsPanel />
+          </SettingsSection>
           <SettingsSection title="品牌">
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField label="站点名称">
@@ -226,9 +252,8 @@ export function SettingsPage() {
             </div>
           </SettingsSection>
 
-          <SettingsSection title="安全">
+          <SettingsSection title="兑换安全">
             <div className="space-y-3">
-              <TotpSecurityPanel />
               <ToggleRow
                 label="允许已兑再查"
                 checked={form.allowRequery}
@@ -679,6 +704,33 @@ export function SettingsPage() {
         </TabsContent>
       </Tabs>
     </PageContainer>
+  );
+}
+
+function PageSizeSettingsPanel() {
+  const { pageSize, setPageSize, options } = usePageSize();
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="text-xs text-muted-foreground">当前每页</span>
+      <Select
+        value={String(pageSize)}
+        onValueChange={(v) => setPageSize(Number(v))}
+      >
+        <SelectTrigger className="w-28">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((n) => (
+            <SelectItem key={n} value={String(n)}>
+              {n} 条
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <span className="text-[11px] text-muted-foreground">
+        列表页底栏也可随时切换
+      </span>
+    </div>
   );
 }
 
