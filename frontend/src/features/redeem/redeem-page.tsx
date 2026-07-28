@@ -25,6 +25,7 @@ import { RichTextView } from "@/shared/components/rich-text-view";
 import { SiteBrand } from "@/shared/components/site-brand";
 import { ThemeToggleButton } from "@/shared/components/theme-toggle-button";
 import {
+  PUBLIC_STOCK_POLL_MS,
   useBatchRedeemMutation,
   usePublicCategoryStockQuery,
   usePublicConfigQuery,
@@ -55,10 +56,30 @@ export function RedeemPage() {
   } | null>(null);
   const [exporting, setExporting] = useState(false);
 
+  const stockPollMs = PUBLIC_STOCK_POLL_MS;
+  const stockPollSec = Math.max(1, Math.round(stockPollMs / 1000));
+
   const configQ = usePublicConfigQuery();
-  const stockQ = usePublicCategoryStockQuery({ intervalMs: 15_000 });
+  const stockQ = usePublicCategoryStockQuery({ intervalMs: stockPollMs });
   const redeemM = useRedeemMutation();
   const batchM = useBatchRedeemMutation();
+
+  /** 距下次库存刷新的剩余秒数（动态倒计时） */
+  const [stockCountdown, setStockCountdown] = useState(stockPollSec);
+  useEffect(() => {
+    const tick = () => {
+      if (!stockQ.dataUpdatedAt) {
+        setStockCountdown(stockPollSec);
+        return;
+      }
+      const elapsed = Date.now() - stockQ.dataUpdatedAt;
+      const leftMs = Math.max(0, stockPollMs - elapsed);
+      setStockCountdown(Math.max(0, Math.ceil(leftMs / 1000)));
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [stockQ.dataUpdatedAt, stockPollMs, stockPollSec]);
 
   const cfg = configQ.data;
   const stockMap = useMemo(() => {
@@ -320,12 +341,19 @@ export function RedeemPage() {
                   "选择类别查看库存"
                 )}
                 <span className="mx-1.5 opacity-40">·</span>
-                约 15 秒自动刷新
                 {stockQ.isFetching && !stockQ.isLoading ? (
-                  <span className="ml-1 inline-flex items-center gap-0.5 opacity-70">
+                  <span className="inline-flex items-center gap-1">
                     <Loader2 className="size-3 animate-spin" />
+                    刷新中
                   </span>
-                ) : null}
+                ) : (
+                  <>
+                    <span className="tabular-nums font-medium text-foreground">
+                      {stockCountdown}
+                    </span>{" "}
+                    秒后刷新
+                  </>
+                )}
               </p>
             ) : null}
           </div>
