@@ -558,8 +558,16 @@ func (a *App) canApplyUpdate() bool {
 	}
 }
 
+// persistentBinaryPath Docker 数据卷上的持久二进制（重建容器后 entrypoint 仍可启动）
+func (a *App) persistentBinaryPath() string {
+	if a.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(a.DataDir, "bin", "cardkey")
+}
+
 func (a *App) currentBinaryPath() (string, error) {
-	// 始终优先当前进程真实路径（Docker 入口 /app/cardkey；勿用已失效的 UPDATE_BINARY_PATH）
+	// 始终优先当前进程真实路径（Docker 入口 /app/cardkey 或 data/bin/cardkey）
 	exe, err := os.Executable()
 	if err == nil {
 		if resolved, e2 := filepath.EvalSymlinks(exe); e2 == nil {
@@ -811,19 +819,33 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 		}
 	}
 	_ = os.Chmod(binPath, 0o755)
+	// Docker：再写一份到数据卷，避免 compose recreate 后镜像旧 exe 把 UI 打回旧版
+	if persist := a.persistentBinaryPath(); persist != "" && !sameFile(persist, binPath) {
+		_ = os.MkdirAll(filepath.Dir(persist), 0o755)
+		if err := copyFile(binPath, persist); err != nil {
+			if a.Log != nil {
+				a.Log.Warn("persist binary to data volume failed", "path", persist, "err", err)
+			}
+		} else {
+			_ = os.Chmod(persist, 0o755)
+			if a.Log != nil {
+				a.Log.Info("persisted updated binary on data volume", "path", persist)
+			}
+		}
+	}
 	a.pruneReleases()
 	a.Audit(ctx, "admin", actor, "update_apply", "system", "apply "+targetVer+" mode="+a.UpdateMode, ip)
 	a.setUpdateStatus(UpdateStatus{
 		State:    "restarting",
-		Message:  "即将重启：新版本内嵌的数据库迁移会在启动时自动执行（不删库）…",
+		Message:  "即将重启：新版本内嵌 SPA+迁移会在启动时生效（不删库）…",
 		Progress: 95,
 	})
-	// Docker: restart policy 会拉起同容器（可写层已换二进制）；systemd 同理
-	// 重启后 main 会 MigrateFS(migrations.FS)，新 SQL 随二进制一并生效。
+	// Docker: restart policy 会拉起同容器；entrypoint 优先 data/bin/cardkey
+	// 重启后 main 会 MigrateFS + SyncToDir(静态)，UI 与 API 一并更新。
 	go func() {
 		time.Sleep(900 * time.Millisecond)
 		if a.Log != nil {
-			a.Log.Info("exiting for update restart (embedded migrations apply on boot)",
+			a.Log.Info("exiting for update restart (embedded migrations+SPA apply on boot)",
 				"version", targetVer, "mode", a.UpdateMode, "bin", binPath)
 		}
 		os.Exit(0)

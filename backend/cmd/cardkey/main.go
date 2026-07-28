@@ -22,7 +22,41 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// maybeExecPersistentBinary 若 DATA_DIR/bin/cardkey 存在且不是当前进程文件，则切换过去。
+// 解决：compose recreate 后镜像仍是旧 ENTRYPOINT/旧 exe，一键更新写在数据卷上却跑不起来。
+func maybeExecPersistentBinary() {
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/app/data"
+	}
+	persist := filepath.Join(dataDir, "bin", "cardkey")
+	st, err := os.Stat(persist)
+	if err != nil || st.IsDir() || st.Size() < 1_000_000 {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if resolved, e2 := filepath.EvalSymlinks(exe); e2 == nil {
+		exe = resolved
+	}
+	if resolved, e2 := filepath.EvalSymlinks(persist); e2 == nil {
+		persist = resolved
+	}
+	if filepath.Clean(exe) == filepath.Clean(persist) {
+		return
+	}
+	// 已经是数据卷二进制则不再切换
+	args := append([]string{persist}, os.Args[1:]...)
+	_ = syscall.Exec(persist, args, os.Environ())
+	// Exec 失败则继续用当前二进制
+}
+
 func main() {
+	// Docker 一键更新：若数据卷上有更新后的二进制，优先切换执行（无需新镜像 entrypoint）
+	maybeExecPersistentBinary()
+
 	cfg := config.Load()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
@@ -131,6 +165,14 @@ func main() {
 				staticDir = c
 				break
 			}
+		}
+	}
+	// 一键更新后把嵌入 SPA 同步到磁盘，避免镜像层旧 /app/static 残留
+	if webstatic.HasDist() && staticDir != "" {
+		if n, err := webstatic.SyncToDir(staticDir); err != nil {
+			log.Warn("sync embedded spa to disk failed", "dir", staticDir, "err", err)
+		} else if n > 0 {
+			log.Info("synced embedded spa to disk", "dir", staticDir, "files", n)
 		}
 	}
 

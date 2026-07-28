@@ -35,9 +35,12 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 WORKDIR /app
 COPY --from=backend /out/cardkey /app/cardkey
 COPY --from=backend /src/migrations /app/migrations
-# 兼容旧部署：磁盘 static 仍拷一份；运行时优先用二进制内嵌 SPA
+# 兼容旧部署：磁盘 static 仍拷一份；启动时会用嵌入 SPA 再同步一次
 COPY --from=frontend /fe/dist /app/static
-RUN mkdir -p /app/data/uploads && chown -R cardkey:cardkey /app
+COPY deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh \
+  && mkdir -p /app/data/uploads /app/data/bin \
+  && chown -R cardkey:cardkey /app
 USER cardkey
 ENV HTTP_ADDR=:8080
 ENV MIGRATIONS_DIR=/app/migrations
@@ -48,4 +51,5 @@ EXPOSE 8080
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=5 \
   CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
-ENTRYPOINT ["/app/cardkey"]
+# 优先 /app/data/bin/cardkey（一键更新落盘），否则镜像内 /app/cardkey
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

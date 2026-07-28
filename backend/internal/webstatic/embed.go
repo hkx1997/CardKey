@@ -45,6 +45,68 @@ func FS() (fs.FS, error) {
 	return fs.Sub(Dist, "dist")
 }
 
+// SyncToDir 将嵌入的 SPA 全量写出到 dir（可写时）。
+// 解决：一键更新换了二进制后 /app/static 仍是镜像旧文件、或反代读磁盘旧资源。
+// 返回写出的文件数；dir 不可写时返回 0, nil。
+func SyncToDir(dir string) (int, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return 0, nil
+	}
+	sub, err := FS()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := os.Stat(dir); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return 0, nil // 不可写则跳过，不阻断启动
+		}
+	}
+	// 写探针
+	probe := filepath.Join(dir, ".cardkey-static-write-probe")
+	if err := os.WriteFile(probe, []byte("1"), 0o600); err != nil {
+		return 0, nil
+	}
+	_ = os.Remove(probe)
+
+	n := 0
+	err = fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(sub, p)
+		if err != nil {
+			return err
+		}
+		dest := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		// 仅内容变化时写入，减少 IO
+		if old, err := os.ReadFile(dest); err == nil && string(old) == string(data) {
+			n++
+			return nil
+		}
+		tmp := dest + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o644); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, dest); err != nil {
+			_ = os.Remove(tmp)
+			// Windows/跨设备
+			if err2 := os.WriteFile(dest, data, 0o644); err2 != nil {
+				return err2
+			}
+		}
+		n++
+		return nil
+	})
+	return n, err
+}
+
 // Handler SPA 静态服务。
 // diskFallback：可选磁盘目录（如 /app/static），embed 缺文件时回退，避免只更到一半。
 // 关键：/assets/* 永不回退 HTML（否则 MIME=text/html 导致模块脚本失败）。

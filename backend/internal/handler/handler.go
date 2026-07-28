@@ -14,6 +14,7 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/cardkey/cardkey/internal/pkg/httpx"
 	"github.com/cardkey/cardkey/internal/pkg/response"
+	"github.com/cardkey/cardkey/internal/version"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -680,7 +681,12 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	response.OK(w, map[string]string{"status": "ok"})
+	// 附带版本，便于确认一键更新是否真的切到新二进制（不查库）
+	response.OK(w, map[string]string{
+		"status":  "ok",
+		"version": version.Version,
+		"commit":  version.Commit,
+	})
 }
 
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
