@@ -220,6 +220,8 @@ type Settings struct {
 	MailHealthErrorRatePct float64 `json:"mailHealthErrorRatePct"`
 	// 卡密：任一类别未使用库存 ≤ 阈值触发；0 表示仅在库存为 0 时
 	MailCardUnusedThreshold int `json:"mailCardUnusedThreshold"`
+	// 需要库存预警的类别 ID 列表；空 = 全部启用类别
+	MailCardAlertCategoryIds []string `json:"mailCardAlertCategoryIds"`
 	// 同类预警冷却（分钟），防刷信
 	MailAlertCooldownMinutes int `json:"mailAlertCooldownMinutes"`
 }

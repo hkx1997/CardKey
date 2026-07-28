@@ -328,13 +328,15 @@ func (a *App) EvaluateMailAlerts(ctx context.Context) {
 		cooldown = 60
 	}
 
+	nowStr := formatMailTime(time.Now())
+
 	if s.MailHealthAlertEnabled {
 		if issues := a.collectHealthIssues(ctx, s); len(issues) > 0 {
 			if a.mailCooldownOK(ctx, "health", cooldown) {
 				body := "【平台健康预警】" + site + "\n\n检测到以下问题：\n- " +
 					strings.Join(issues, "\n- ") +
 					"\n\n请尽快检查服务状态（Postgres / Redis / 错误率等）。\n时间：" +
-					time.Now().Format(time.RFC3339) + "\n"
+					nowStr + "\n"
 				if err := a.SendMail(ctx, to, "["+site+"] 平台健康预警", body); err != nil {
 					if a.Log != nil {
 						a.Log.Warn("mail health alert failed", "err", err)
@@ -351,8 +353,8 @@ func (a *App) EvaluateMailAlerts(ctx context.Context) {
 			if a.mailCooldownOK(ctx, "card", cooldown) {
 				body := "【卡密库存预警】" + site + "\n\n以下类别库存偏低或已耗尽：\n- " +
 					strings.Join(lines, "\n- ") +
-					"\n\n阈值：未使用 ≤ " + fmt.Sprintf("%d", s.MailCardUnusedThreshold) +
-					"\n时间：" + time.Now().Format(time.RFC3339) + "\n"
+					"\n\n阈值：可兑库存 ≤ " + fmt.Sprintf("%d", s.MailCardUnusedThreshold) +
+					"\n时间：" + nowStr + "\n"
 				if err := a.SendMail(ctx, to, "["+site+"] 卡密库存预警", body); err != nil {
 					if a.Log != nil {
 						a.Log.Warn("mail card alert failed", "err", err)
@@ -363,6 +365,15 @@ func (a *App) EvaluateMailAlerts(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// formatMailTime 邮件正文时间：本地可读格式（无 RFC3339 的 T/Z）
+func formatMailTime(t time.Time) string {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.Local
+	}
+	return t.In(loc).Format("2006-01-02 15:04:05")
 }
 
 func (a *App) collectHealthIssues(ctx context.Context, s domain.Settings) []string {
@@ -398,8 +409,17 @@ func (a *App) collectHealthIssues(ctx context.Context, s domain.Settings) []stri
 
 func (a *App) collectCardStockIssues(ctx context.Context, s domain.Settings) ([]string, bool) {
 	thr := s.MailCardUnusedThreshold
+	// 勾选列表；空 = 全部启用类别
+	filterIDs := map[string]struct{}{}
+	for _, id := range s.MailCardAlertCategoryIds {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			filterIDs[id] = struct{}{}
+		}
+	}
 	rows, err := a.Pool.Query(ctx, `
-		SELECT c.name, c.slug, COUNT(cards.id) FILTER (WHERE cards.status='unused') AS unused
+		SELECT c.id::text, c.name, c.slug,
+		       `+availableStockExpr+` AS unused
 		FROM categories c
 		LEFT JOIN cards ON cards.category_id = c.id
 		WHERE c.enabled = true
@@ -411,13 +431,18 @@ func (a *App) collectCardStockIssues(ctx context.Context, s domain.Settings) ([]
 	defer rows.Close()
 	var lines []string
 	for rows.Next() {
-		var name, slug string
+		var id, name, slug string
 		var unused int
-		if err := rows.Scan(&name, &slug, &unused); err != nil {
+		if err := rows.Scan(&id, &name, &slug, &unused); err != nil {
 			continue
 		}
+		if len(filterIDs) > 0 {
+			if _, ok := filterIDs[id]; !ok {
+				continue
+			}
+		}
 		if unused <= thr {
-			lines = append(lines, fmt.Sprintf("%s (%s)：未使用 %d", name, slug, unused))
+			lines = append(lines, fmt.Sprintf("%s (%s)：可兑库存 %d", name, slug, unused))
 		}
 	}
 	return lines, len(lines) > 0

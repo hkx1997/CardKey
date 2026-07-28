@@ -272,6 +272,8 @@ export interface Settings {
   mailHealthErrorRatePct: number;
   /** 未使用库存 ≤ 该值告警 */
   mailCardUnusedThreshold: number;
+  /** 需要库存预警的类别 id；空数组 = 全部启用类别 */
+  mailCardAlertCategoryIds: string[];
   /** 同类预警冷却分钟 */
   mailAlertCooldownMinutes: number;
 }

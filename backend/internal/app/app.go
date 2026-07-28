@@ -123,6 +123,7 @@ func (a *App) DefaultSettings() domain.Settings {
 		MailCardAlertEnabled:        false,
 		MailHealthErrorRatePct:      10,
 		MailCardUnusedThreshold:     10,
+		MailCardAlertCategoryIds:    []string{},
 		MailAlertCooldownMinutes:    60,
 	}
 }

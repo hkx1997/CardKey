@@ -328,6 +328,25 @@ func (a *App) UpdateSettings(ctx context.Context, patch domain.Settings, actor, 
 	if patch.MailCardUnusedThreshold < 0 {
 		patch.MailCardUnusedThreshold = 0
 	}
+	if patch.MailCardAlertCategoryIds == nil {
+		patch.MailCardAlertCategoryIds = []string{}
+	} else {
+		// 去空、去重
+		seen := map[string]struct{}{}
+		clean := make([]string, 0, len(patch.MailCardAlertCategoryIds))
+		for _, id := range patch.MailCardAlertCategoryIds {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			clean = append(clean, id)
+		}
+		patch.MailCardAlertCategoryIds = clean
+	}
 	// preserve secrets if empty in patch
 	cur, _ := a.loadSettings(ctx) // 含密码明文（load 后再 mask 的是 GetSettings）
 	// loadSettings already masks - need raw password from DB

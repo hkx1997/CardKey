@@ -410,6 +410,7 @@ function createDb(): MockDb {
       mailCardAlertEnabled: false,
       mailHealthErrorRatePct: 10,
       mailCardUnusedThreshold: 10,
+      mailCardAlertCategoryIds: [],
       mailAlertCooldownMinutes: 60,
     },
     categories: [catVip, catCdk, catGift, catGame, catSpark, catAcc],

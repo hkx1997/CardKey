@@ -17,15 +17,18 @@ import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { SettingsSection } from "@/shared/components/settings-section";
 import { ToggleRow } from "@/shared/components/toggle-row";
+import { useCategoriesQuery } from "@/shared/hooks/use-categories";
 import {
   useSettingsQuery,
   useTestMail,
   useUpdateSettings,
 } from "@/shared/hooks/use-settings";
 import { resolveApiBase } from "@/shared/lib/api-base";
+import { cn } from "@/shared/lib/cn";
 
 export function SettingsPage() {
   const q = useSettingsQuery();
+  const catsQ = useCategoriesQuery();
   const m = useUpdateSettings();
   const testMailM = useTestMail();
   const [form, setForm] = useState<Settings | null>(null);
@@ -35,15 +38,19 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!q.data) return;
+    const normalized: Settings = {
+      ...q.data,
+      mailCardAlertCategoryIds: q.data.mailCardAlertCategoryIds ?? [],
+    };
     if (!form || !baseline) {
-      setForm(q.data);
-      setBaseline(q.data);
+      setForm(normalized);
+      setBaseline(normalized);
       return;
     }
     const isDirty = JSON.stringify(form) !== JSON.stringify(baseline);
     if (!isDirty) {
-      setForm(q.data);
-      setBaseline(q.data);
+      setForm(normalized);
+      setBaseline(normalized);
     }
   }, [q.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -524,7 +531,7 @@ export function SettingsPage() {
 
           <SettingsSection
             title="卡密库存预警"
-            description="独立开关。任一启用类别的「未使用」库存 ≤ 阈值时发信"
+            description="独立开关。勾选需要监控的类别；可兑库存 ≤ 阈值时发信"
           >
             <ToggleRow
               label="启用卡密库存预警"
@@ -532,8 +539,8 @@ export function SettingsPage() {
               onChange={(v) => set("mailCardAlertEnabled", v)}
             />
             <FormField
-              label="未使用库存阈值"
-              hint="例如 10：某类别剩余 ≤10 张即告警；0 表示仅在耗尽时告警"
+              label="可兑库存阈值"
+              hint="例如 10：勾选类别剩余 ≤10 张即告警；0 表示仅在耗尽时告警"
               className="mt-3 max-w-xs"
             >
               <Input
@@ -548,6 +555,83 @@ export function SettingsPage() {
                 }
                 disabled={!form.mailCardAlertEnabled}
               />
+            </FormField>
+            <FormField
+              label="监控类别"
+              hint={
+                (form.mailCardAlertCategoryIds?.length ?? 0) === 0
+                  ? "未勾选 = 监控全部启用类别"
+                  : `已选 ${form.mailCardAlertCategoryIds.length} 个类别`
+              }
+              className="mt-3"
+            >
+              <div
+                className={cn(
+                  "max-h-56 space-y-1 overflow-auto rounded-lg border border-border/70 p-2",
+                  !form.mailCardAlertEnabled && "opacity-60 pointer-events-none",
+                )}
+              >
+                {catsQ.isLoading ? (
+                  <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                    加载类别…
+                  </p>
+                ) : (catsQ.data ?? []).length === 0 ? (
+                  <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                    暂无类别
+                  </p>
+                ) : (
+                  (catsQ.data ?? []).map((c) => {
+                    const ids = form.mailCardAlertCategoryIds ?? [];
+                    const on = ids.includes(c.id);
+                    return (
+                      <label
+                        key={c.id}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors",
+                          on
+                            ? "bg-secondary/70"
+                            : "hover:bg-secondary/40",
+                          !c.enabled && "opacity-50",
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="size-3.5 accent-primary"
+                          checked={on}
+                          disabled={!form.mailCardAlertEnabled}
+                          onChange={() => {
+                            const next = on
+                              ? ids.filter((x) => x !== c.id)
+                              : [...ids, c.id];
+                            set("mailCardAlertCategoryIds", next);
+                          }}
+                        />
+                        <span className="min-w-0 flex-1 truncate font-medium">
+                          {c.name}
+                        </span>
+                        <code className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                          {c.slug}
+                        </code>
+                        {!c.enabled ? (
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            已停用
+                          </span>
+                        ) : null}
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              {(form.mailCardAlertCategoryIds?.length ?? 0) > 0 ? (
+                <button
+                  type="button"
+                  className="mt-1.5 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                  disabled={!form.mailCardAlertEnabled}
+                  onClick={() => set("mailCardAlertCategoryIds", [])}
+                >
+                  清除勾选（恢复监控全部）
+                </button>
+              ) : null}
             </FormField>
           </SettingsSection>
 
