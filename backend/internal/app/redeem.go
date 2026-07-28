@@ -216,16 +216,28 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 		}
 		return domain.RedeemResult{}, apperr.New(404, "CARD_INVALID", msg)
 	}
-	// 懒过期：未标记但已过期的卡密即时转为 expired
+	// 懒过期：未标记但已过期的卡密即时转为 expired（须 Commit 后再改物化库存，避免 defer Rollback 丢状态却已 -1）
+	lazyExpired := false
 	if status == domain.StatusUnused && expiresAt != nil && expiresAt.Before(time.Now().UTC()) {
-		_, _ = tx.Exec(ctx, `UPDATE cards SET status='expired', updated_at=now() WHERE id=$1 AND status='unused'`, cardID)
+		tag, e := tx.Exec(ctx, `UPDATE cards SET status='expired', updated_at=now() WHERE id=$1 AND status='unused'`, cardID)
+		if e != nil {
+			return domain.RedeemResult{}, e
+		}
+		if tag.RowsAffected() == 1 {
+			lazyExpired = true
+		}
 		status = domain.StatusExpired
-		a.bumpUnusedCount(ctx, cat.ID, -1)
 	}
 	switch domain.EvaluateRedeemStatus(status) {
 	case domain.RedeemDisabled:
 		return domain.RedeemResult{}, apperr.New(403, "CARD_INVALID", "卡密无效或不可用")
 	case domain.RedeemExpired:
+		if lazyExpired {
+			if err := tx.Commit(ctx); err != nil {
+				return domain.RedeemResult{}, err
+			}
+			a.bumpUnusedCount(ctx, cat.ID, -1)
+		}
 		return domain.RedeemResult{}, apperr.New(410, "CARD_EXPIRED", "该卡密已过期")
 	case domain.RedeemNotUnused:
 		return domain.RedeemResult{}, apperr.New(403, "CARD_INVALID", "卡密无效或不可用")

@@ -215,6 +215,11 @@ func (a *App) uniqueCode(ctx context.Context, categoryID, prefix string) (string
 }
 
 func (a *App) ImportCards(ctx context.Context, categoryID, raw string, typ domain.CardType, batchName, note, actor, ip string) (map[string]any, error) {
+	return a.importCards(ctx, categoryID, raw, typ, batchName, note, actor, ip, "")
+}
+
+// importCards 可选 jobID：异步任务时每 chunk 回写 done_lines。
+func (a *App) importCards(ctx context.Context, categoryID, raw string, typ domain.CardType, batchName, note, actor, ip, jobID string) (map[string]any, error) {
 	typ = normalizeCardType(typ)
 	if domain.IsBinaryCardType(typ) {
 		return nil, apperr.Validation("批量导入仅支持文本类（text/txt/json/account）；文件请单条上传")
@@ -301,6 +306,11 @@ func (a *App) ImportCards(ctx context.Context, categoryID, raw string, typ domai
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
+		}
+		if jobID != "" {
+			_, _ = a.Pool.Exec(ctx, `
+				UPDATE import_jobs SET done_lines=$2, success_count=$2, updated_at=now()
+				WHERE id=$1::uuid AND status='running'`, jobID, len(codes))
 		}
 	}
 	a.bumpUnusedCount(ctx, categoryID, len(codes))

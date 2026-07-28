@@ -107,21 +107,27 @@ func (a *App) ProcessPendingImportJobs(ctx context.Context, limit int) {
 	}
 }
 
-// RunImportJob 执行导入（幂等：仅 pending 可跑）。
+// RunImportJob 执行导入（CAS：仅 pending → running，防 go 与周期 job 双跑）。
 func (a *App) RunImportJob(ctx context.Context, jobID string) error {
-	var categoryID, raw, batchName, note, typStr, status string
-	err := a.Pool.QueryRow(ctx, `
-		SELECT category_id::text, raw_text, batch_name, note, card_type, status
-		FROM import_jobs WHERE id=$1::uuid`, jobID).
-		Scan(&categoryID, &raw, &batchName, &note, &typStr, &status)
+	// 抢占任务：只有 pending 能变成 running
+	tag, err := a.Pool.Exec(ctx, `
+		UPDATE import_jobs SET status='running', updated_at=now()
+		WHERE id=$1::uuid AND status='pending'`, jobID)
 	if err != nil {
 		return err
 	}
-	if status != "pending" && status != "running" {
-		return nil
+	if tag.RowsAffected() != 1 {
+		return nil // 已被其他 worker 抢走或已完成
 	}
-	_, _ = a.Pool.Exec(ctx, `UPDATE import_jobs SET status='running', updated_at=now() WHERE id=$1::uuid`, jobID)
-	res, err := a.ImportCards(ctx, categoryID, raw, domain.CardType(typStr), batchName, note, "import-job", "")
+	var categoryID, raw, batchName, note, typStr string
+	err = a.Pool.QueryRow(ctx, `
+		SELECT category_id::text, raw_text, batch_name, note, card_type
+		FROM import_jobs WHERE id=$1::uuid`, jobID).
+		Scan(&categoryID, &raw, &batchName, &note, &typStr)
+	if err != nil {
+		return err
+	}
+	res, err := a.importCards(ctx, categoryID, raw, domain.CardType(typStr), batchName, note, "import-job", "", jobID)
 	if err != nil {
 		_, _ = a.Pool.Exec(ctx, `
 			UPDATE import_jobs SET status='failed', error_report=$2, updated_at=now(), finished_at=now()
@@ -129,8 +135,13 @@ func (a *App) RunImportJob(ctx context.Context, jobID string) error {
 		return err
 	}
 	total := 0
-	if t, ok := res["total"].(int); ok {
+	switch t := res["total"].(type) {
+	case int:
 		total = t
+	case int64:
+		total = int(t)
+	case float64:
+		total = int(t)
 	}
 	_, _ = a.Pool.Exec(ctx, `
 		UPDATE import_jobs SET status='success', done_lines=$2, success_count=$2, error_count=0,
