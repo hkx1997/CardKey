@@ -1,7 +1,7 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import type { CategoryIcon } from "@/entities/types";
+import type { Category, CategoryIcon } from "@/entities/types";
 import { api } from "@/shared/api/client";
 import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { toastApiError } from "@/shared/lib/api-toast";
@@ -14,7 +14,17 @@ export function useCategoriesQuery() {
   });
 }
 
+function upsertCategory(list: Category[] | undefined, cat: Category): Category[] {
+  if (!list?.length) return [cat];
+  const i = list.findIndex((c) => c.id === cat.id);
+  if (i < 0) return [cat, ...list];
+  const next = list.slice();
+  next[i] = { ...list[i], ...cat };
+  return next;
+}
+
 export function useCreateCategory() {
+  const qc = useQueryClient();
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (input: {
@@ -24,15 +34,26 @@ export function useCreateCategory() {
       description: string;
       icon: CategoryIcon;
     }) => api.createCategory(input),
-    onSuccess: async () => {
+    onSuccess: (cat) => {
+      // 立刻写入缓存，列表瞬间出现，不等二次请求
+      qc.setQueryData<Category[]>(queryKeys.categories, (prev) =>
+        upsertCategory(prev, {
+          ...cat,
+          cardCount: cat.cardCount ?? 0,
+          unusedCount: cat.unusedCount ?? 0,
+          usedCount: cat.usedCount ?? 0,
+        }),
+      );
       toast.success("类别已创建");
-      await inv.categories();
+      // 后台对齐服务端 + 关联页
+      void inv.categories();
     },
     onError: (e) => toastApiError(e, "创建失败"),
   });
 }
 
 export function useUpdateCategory() {
+  const qc = useQueryClient();
   const inv = useInvalidate();
   return useMutation({
     mutationFn: ({
@@ -45,21 +66,28 @@ export function useUpdateCategory() {
       icon?: CategoryIcon;
       enabled?: boolean;
     }) => api.updateCategory(id, patch),
-    onSuccess: async () => {
+    onSuccess: (cat) => {
+      qc.setQueryData<Category[]>(queryKeys.categories, (prev) =>
+        upsertCategory(prev, cat),
+      );
       toast.success("已保存");
-      await inv.categories();
+      void inv.categories();
     },
     onError: (e) => toastApiError(e, "保存失败"),
   });
 }
 
 export function useDeleteCategory() {
+  const qc = useQueryClient();
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.deleteCategory(id),
-    onSuccess: async () => {
+    onSuccess: (_void, id) => {
+      qc.setQueryData<Category[]>(queryKeys.categories, (prev) =>
+        (prev ?? []).filter((c) => c.id !== id),
+      );
       toast.success("类别已删除");
-      await inv.categories();
+      void inv.categories();
     },
     onError: (e) => toastApiError(e, "删除失败"),
   });

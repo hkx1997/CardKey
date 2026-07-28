@@ -1,7 +1,7 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import type { CardStatus, CardType } from "@/entities/types";
+import type { Card, CardStatus, CardType, PageResult } from "@/entities/types";
 import { api } from "@/shared/api/client";
 import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { toastApiError } from "@/shared/lib/api-toast";
@@ -39,7 +39,7 @@ export function useBatchCardAction() {
       ids: string[];
       action: "disable" | "enable" | "delete";
     }) => api.batchAction(ids, action),
-    onSuccess: async (n, v) => {
+    onSuccess: (n, v) => {
       const label =
         v.action === "disable"
           ? "禁用"
@@ -47,15 +47,16 @@ export function useBatchCardAction() {
             ? "启用"
             : "删除";
       toast.success(`已${label} ${n} 条`);
-      await inv.cards();
-      // 详情弹窗若打开，同步刷掉
-      await Promise.all(v.ids.map((id) => inv.card(id)));
+      // 列表为主，详情后台 bump
+      void inv.cards();
+      for (const id of v.ids) inv.card(id);
     },
     onError: (e) => toastApiError(e),
   });
 }
 
 export function useCreateCard() {
+  const qc = useQueryClient();
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (input: {
@@ -67,9 +68,25 @@ export function useCreateCard() {
       filename?: string;
       mime?: string;
     }) => api.createCard(input),
-    onSuccess: async () => {
+    onSuccess: (card) => {
+      // 当前打开的卡密列表：插到第一页缓存（若有）
+      qc.setQueriesData<PageResult<Card>>(
+        { queryKey: queryKeys.cards(), exact: false },
+        (prev) => {
+          if (!prev?.items) return prev;
+          // 仅在第 1 页插入，避免分页错乱
+          if (prev.page !== 1) {
+            return { ...prev, total: prev.total + 1 };
+          }
+          return {
+            ...prev,
+            total: prev.total + 1,
+            items: [card, ...prev.items].slice(0, prev.pageSize),
+          };
+        },
+      );
       toast.success("创建成功");
-      await inv.cards();
+      void inv.cards();
     },
     onError: (e) => toastApiError(e, "创建失败"),
   });
@@ -85,10 +102,10 @@ export function useImportCards() {
       batchName: string;
       note?: string;
     }) => api.importCards(input),
-    onSuccess: async (res) => {
+    onSuccess: (res) => {
       toast.success(`成功导入 ${res.total} 条到「${res.category.name}」`);
-      await inv.cards();
-      await inv.batches();
+      void inv.cards();
+      void inv.batches();
     },
     onError: (e) => toastApiError(e, "导入失败"),
   });

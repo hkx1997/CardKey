@@ -43,13 +43,10 @@ export function useRedeemMutation() {
   return useMutation({
     mutationFn: (input: { category: string; code: string }) =>
       api.redeem(input),
-    onSuccess: async () => {
-      await qc.invalidateQueries({
+    onSuccess: () => {
+      void qc.invalidateQueries({
         queryKey: queryKeys.publicCategoryStock,
-      });
-      await qc.refetchQueries({
-        queryKey: queryKeys.publicCategoryStock,
-        type: "active",
+        refetchType: "active",
       });
     },
     onError: (e: unknown) => {
@@ -90,13 +87,10 @@ export function useBatchRedeemMutation() {
       }
       return items;
     },
-    onSettled: async () => {
-      await qc.invalidateQueries({
+    onSettled: () => {
+      void qc.invalidateQueries({
         queryKey: queryKeys.publicCategoryStock,
-      });
-      await qc.refetchQueries({
-        queryKey: queryKeys.publicCategoryStock,
-        type: "active",
+        refetchType: "active",
       });
     },
   });

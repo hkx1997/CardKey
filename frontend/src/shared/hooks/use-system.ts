@@ -19,8 +19,11 @@ export function useCheckUpdates() {
   return useMutation({
     // 手动点击始终 force，避免陈旧缓存把更旧版本标成「可更新」
     mutationFn: () => api.checkUpdates(true),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.systemInfo });
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.systemInfo,
+        refetchType: "active",
+      });
     },
     onError: (e) => toastApiError(e, "检测失败"),
   });
@@ -39,9 +42,9 @@ export function useApplyUpdate() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (version?: string) => api.applyUpdate(version),
-    onSuccess: async () => {
+    onSuccess: () => {
       toast.message("更新已提交，服务即将重启…");
-      await inv.system();
+      inv.system();
     },
     onError: (e) => toastApiError(e, "更新失败"),
   });
@@ -51,9 +54,9 @@ export function useRollbackUpdate() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (version?: string) => api.rollbackUpdate(version),
-    onSuccess: async () => {
+    onSuccess: () => {
       toast.message("回滚已提交，服务即将重启…");
-      await inv.system();
+      inv.system();
     },
     onError: (e) => toastApiError(e, "回滚失败"),
   });

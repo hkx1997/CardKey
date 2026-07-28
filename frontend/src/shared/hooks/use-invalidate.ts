@@ -4,25 +4,38 @@ import { useCallback, useMemo } from "react";
 import { queryKeys } from "@/shared/lib/query-keys";
 
 /**
- * 统一失效 + 立即 refetch 活跃查询。
- * 页面 mutation 成功后必须走这里，避免「操作成功但列表不刷新」。
+ * 统一缓存刷新策略（优先体感速度）：
+ * - bump：标记过期 + 后台刷新活跃查询（不 await）
+ * - refetchActive：仅 await 当前页主列表，避免串行等一堆无关接口
  */
 export function useInvalidate() {
   const qc = useQueryClient();
 
-  /** 标记过期并强制拉取当前挂载中的查询 */
-  const refresh = useCallback(
+  /** 不阻塞 UI：失效并后台 refetch 活跃查询 */
+  const bump = useCallback(
+    (...keys: readonly (readonly unknown[])[]) => {
+      for (const key of keys) {
+        void qc.invalidateQueries({
+          queryKey: [...key],
+          exact: false,
+          refetchType: "active",
+        });
+      }
+    },
+    [qc],
+  );
+
+  /** 只等主列表（当前挂载的查询） */
+  const refetchActive = useCallback(
     async (...keys: readonly (readonly unknown[])[]) => {
       await Promise.all(
-        keys.map(async (key) => {
-          const queryKey = [...key];
-          await qc.invalidateQueries({ queryKey, exact: false });
-          await qc.refetchQueries({
-            queryKey,
+        keys.map((key) =>
+          qc.refetchQueries({
+            queryKey: [...key],
             type: "active",
             exact: false,
-          });
-        }),
+          }),
+        ),
       );
     },
     [qc],
@@ -31,68 +44,90 @@ export function useInvalidate() {
   return useMemo(
     () => ({
       qc,
-      refresh,
-      /** 类别增删改：列表、公开配置/库存、仪表盘、卡密筛选、批次 */
-      categories: () =>
-        refresh(
-          queryKeys.categories,
+      bump,
+      refetchActive,
+
+      /** 类别：先闪主列表，其它后台 */
+      categories: async () => {
+        await refetchActive(queryKeys.categories);
+        bump(
           queryKeys.publicConfig,
           queryKeys.publicCategoryStock,
           queryKeys.dashboard,
           queryKeys.cards(),
           queryKeys.batches,
-        ),
-      /** 卡密创建/导入/批量操作 */
-      cards: () =>
-        refresh(
-          queryKeys.cards(),
+        );
+      },
+
+      /** 卡密：先闪卡密列表 */
+      cards: async () => {
+        await refetchActive(queryKeys.cards());
+        bump(
           queryKeys.dashboard,
           queryKeys.categories,
           queryKeys.batches,
           queryKeys.publicCategoryStock,
           queryKeys.publicConfig,
-        ),
-      /** 单卡详情（reveal 等） */
-      card: (id: string) =>
-        refresh(queryKeys.card(id, false), queryKeys.card(id, true)),
-      /** 批次删除等 */
-      batches: () =>
-        refresh(
-          queryKeys.batches,
+        );
+      },
+
+      card: (id: string) => {
+        bump(queryKeys.card(id, false), queryKeys.card(id, true));
+      },
+
+      batches: async () => {
+        await refetchActive(queryKeys.batches);
+        bump(
           queryKeys.cards(),
           queryKeys.dashboard,
           queryKeys.categories,
           queryKeys.publicCategoryStock,
-        ),
-      settings: () =>
-        refresh(
-          queryKeys.settings,
+        );
+      },
+
+      settings: async () => {
+        await refetchActive(queryKeys.settings);
+        bump(
           queryKeys.publicConfig,
           queryKeys.publicCategoryStock,
           queryKeys.apiKeys,
-        ),
-      apiKeys: () =>
-        refresh(
-          queryKeys.apiKeys,
+        );
+      },
+
+      apiKeys: async () => {
+        await refetchActive(queryKeys.apiKeys);
+        bump(
           queryKeys.dashboard,
           queryKeys.settings,
           queryKeys.publicConfig,
-        ),
-      dashboard: () =>
-        refresh(queryKeys.dashboard, queryKeys.runtimeMetrics),
-      redeems: () =>
-        refresh(queryKeys.redeems(), queryKeys.dashboard, queryKeys.categories),
-      system: () =>
-        refresh(
+        );
+      },
+
+      dashboard: () => {
+        bump(queryKeys.dashboard, queryKeys.runtimeMetrics);
+      },
+
+      redeems: async () => {
+        await refetchActive(queryKeys.redeems());
+        bump(queryKeys.dashboard, queryKeys.categories);
+      },
+
+      system: () => {
+        bump(
           queryKeys.systemInfo,
           queryKeys.updateHistory,
           queryKeys.runtimeMetrics,
-        ),
-      audit: () => refresh(queryKeys.audit()),
-      /** 公开兑换端配置与库存 */
-      public: () =>
-        refresh(queryKeys.publicConfig, queryKeys.publicCategoryStock),
+        );
+      },
+
+      audit: () => {
+        bump(queryKeys.audit());
+      },
+
+      public: () => {
+        bump(queryKeys.publicConfig, queryKeys.publicCategoryStock);
+      },
     }),
-    [qc, refresh],
+    [qc, bump, refetchActive],
   );
 }

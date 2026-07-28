@@ -1,6 +1,7 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import type { Batch } from "@/entities/types";
 import { api } from "@/shared/api/client";
 import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { toastApiError } from "@/shared/lib/api-toast";
@@ -14,12 +15,18 @@ export function useBatchesQuery(categorySlug?: string) {
 }
 
 export function useDeleteBatch() {
+  const qc = useQueryClient();
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.deleteBatch(id),
-    onSuccess: async () => {
+    onSuccess: (_void, id) => {
+      // 立刻从所有批次列表缓存移除
+      qc.setQueriesData<Batch[]>(
+        { queryKey: queryKeys.batches, exact: false },
+        (prev) => (prev ?? []).filter((b) => b.id !== id),
+      );
       toast.success("批次已删除");
-      await inv.batches();
+      void inv.batches();
     },
     onError: (e) => toastApiError(e, "删除失败"),
   });

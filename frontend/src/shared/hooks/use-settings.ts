@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import type { Settings } from "@/entities/types";
@@ -11,19 +11,20 @@ export function useSettingsQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => api.getSettings(),
-    staleTime: 60_000,
+    staleTime: 30_000,
     enabled: opts?.enabled ?? true,
   });
 }
 
 export function useUpdateSettings() {
+  const qc = useQueryClient();
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (patch: Partial<Settings>) => api.updateSettings(patch),
-    onSuccess: async (data) => {
+    onSuccess: (data) => {
+      // 表单页立刻用返回值
+      qc.setQueryData(queryKeys.settings, data);
       toast.success("已保存");
-      await inv.settings();
-      // 立刻把 favicon/标题刷到标签栏，不等 public config 回流
       void import("@/shared/lib/document-meta").then(({ applyDocumentMeta }) => {
         applyDocumentMeta({
           documentTitle: data.documentTitle,
@@ -32,6 +33,7 @@ export function useUpdateSettings() {
           faviconVersion: data.siteFavicon || String(Date.now()),
         });
       });
+      void inv.settings();
     },
     onError: (e) => toastApiError(e, "保存失败"),
   });
@@ -42,10 +44,10 @@ export function useSetPublicRedeemKey() {
   return useMutation({
     mutationFn: (input: { mode: "rotate" | "custom"; customKey?: string }) =>
       api.setPublicRedeemApiKey(input),
-    onSuccess: async () => {
+    onSuccess: () => {
       toast.success("密钥已更新");
-      await inv.apiKeys();
-      await inv.settings();
+      void inv.apiKeys();
+      void inv.settings();
     },
     onError: (e) => toastApiError(e, "更新失败"),
   });
