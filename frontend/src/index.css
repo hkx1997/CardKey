@@ -653,32 +653,18 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
     color: transparent;
   }
 
-  .redeem-icon-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0.65rem;
-    background: color-mix(in oklab, var(--background) 55%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent);
-    transition:
-      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-      background-color 0.22s ease,
-      box-shadow 0.22s ease;
-  }
-
-  .tab-pill.is-active .redeem-icon-chip {
-    background: color-mix(in oklab, var(--primary-foreground) 16%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary-foreground) 18%, transparent);
-  }
-
-  .tab-pill:hover .redeem-icon-chip {
-    transform: scale(1.05);
-  }
-
   .tab-pill.is-active {
     box-shadow:
-      0 1px 0 color-mix(in oklab, var(--primary-foreground) 12%, transparent),
-      0 8px 22px color-mix(in oklab, var(--primary) 28%, transparent);
+      0 1px 0 color-mix(in oklab, var(--primary-foreground) 10%, transparent),
+      0 6px 16px color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+
+  .tab-pill:hover :where(svg, img) {
+    transform: scale(1.06);
+  }
+
+  .tab-pill :where(svg, img) {
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .success-pop {
@@ -852,8 +838,8 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
     .interactive-press,
     .ui-lift,
     .tab-pill,
+    .tab-pill :where(svg, img),
     .redeem-card,
-    .redeem-icon-chip,
     .redeem-field-focus,
     .nav-active-bar::before,
     .header-elevated,

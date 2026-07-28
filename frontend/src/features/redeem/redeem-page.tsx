@@ -271,13 +271,13 @@ export function RedeemPage() {
             <Skeleton className="mx-auto h-4 w-64 max-w-full rounded-md" />
           </div>
           <div className="rounded-2xl border border-border/70 bg-card p-6 sm:p-8">
-            <div className="mb-7 flex flex-wrap justify-center gap-2.5">
+            <div className="mb-6 flex flex-wrap justify-center gap-2">
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-32 rounded-2xl" />
+                <Skeleton key={i} className="h-10 w-24 rounded-full" />
               ))}
             </div>
-            <Skeleton className="mx-auto h-[128px] w-full max-w-md rounded-xl" />
-            <Skeleton className="mx-auto mt-3.5 h-12 w-full max-w-md rounded-xl" />
+            <Skeleton className="mx-auto h-[120px] w-full max-w-md rounded-lg" />
+            <Skeleton className="mx-auto mt-3 h-11 w-full max-w-md rounded-lg" />
           </div>
         </main>
       </div>
@@ -319,13 +319,13 @@ export function RedeemPage() {
           aria-label="兑换"
           className="fade-in fade-in-delay-1 redeem-card w-full rounded-2xl p-6 sm:p-8"
         >
-          <div className="mb-7">
+          <div className="mb-6">
             {categories.length === 0 ? (
               <p className="text-center text-sm text-muted-foreground">
                 暂无可用类别
               </p>
             ) : (
-              <div className="flex flex-wrap justify-center gap-2.5">
+              <div className="flex flex-wrap justify-center gap-2">
                 {primaryTabs.map((c, i) => (
                   <CategoryTab
                     key={c.slug}
@@ -342,31 +342,30 @@ export function RedeemPage() {
                       <button
                         type="button"
                         className={cn(
-                          "tab-pill interactive-press inline-flex h-12 items-center gap-1.5 rounded-2xl px-4 text-sm font-medium",
+                          "tab-pill interactive-press inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm",
                           inMore
-                            ? "is-active bg-primary text-primary-foreground"
-                            : "bg-secondary/80 text-muted-foreground hover:bg-secondary hover:text-foreground",
+                            ? "is-active bg-primary text-primary-foreground shadow-sm"
+                            : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
                         )}
                       >
                         更多
-                        <ChevronDown className="size-4 opacity-70" />
+                        <ChevronDown className="size-3.5 opacity-70" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="center" className="w-60 p-1.5">
+                    <DropdownMenuContent align="center" className="w-52">
                       {moreTabs.map((c) => (
                         <DropdownMenuItem
                           key={c.slug}
                           onClick={() => selectCategory(c.slug)}
                           className={cn(
-                            "gap-2.5 rounded-xl px-2.5 py-2.5",
+                            "justify-between gap-2",
                             category === c.slug && "bg-accent",
                           )}
                         >
-                          <span className="redeem-icon-chip size-9 shrink-0">
-                            <CategoryIconView icon={c.icon} size={22} />
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                            {c.name}
+                          <span className="inline-flex min-w-0 items-center gap-2">
+                            {/* 图标本身 20px，无额外大底托 */}
+                            <CategoryIconView icon={c.icon} size={20} />
+                            <span className="truncate">{c.name}</span>
                           </span>
                           <StockBadge
                             count={c.unusedCount ?? 0}
@@ -632,16 +631,14 @@ export function RedeemPage() {
             aria-label={`${selected.name} 说明`}
             className="fade-in fade-in-delay-2 redeem-card w-full rounded-2xl p-6 sm:p-8"
           >
-            <div className="mb-4 flex items-center gap-3 border-b border-border/50 pb-4">
-              <span className="redeem-icon-chip size-11 shrink-0">
-                <CategoryIconView icon={selected.icon} size={28} />
-              </span>
-              <div className="min-w-0">
-                <h2 className="truncate text-[15px] font-semibold tracking-tight">
-                  {selected.name}
-                </h2>
-                <p className="text-[11px] text-muted-foreground">类别说明</p>
-              </div>
+            <div className="mb-3 flex items-center gap-2.5 border-b border-border/50 pb-3">
+              <CategoryIconView icon={selected.icon} size={24} />
+              <h2 className="min-w-0 truncate text-sm font-medium">
+                {selected.name}
+                <span className="ml-1.5 font-normal text-muted-foreground">
+                  说明
+                </span>
+              </h2>
             </div>
             <RichTextView
               html={selected.description}
@@ -780,21 +777,19 @@ function CategoryTab({
       onClick={onClick}
       style={{ "--stagger": stagger } as CSSProperties}
       className={cn(
-        "stagger-in tab-pill interactive-press inline-flex h-12 items-center gap-2.5 rounded-2xl px-3.5 text-sm font-medium sm:px-4",
+        // 高度/内边距与原先接近，只把图标从 16 提到 20，避免整颗 Tab 被撑宽
+        "stagger-in tab-pill interactive-press inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm sm:px-3.5",
         active
-          ? "is-active bg-primary text-primary-foreground"
-          : "bg-secondary/80 text-muted-foreground hover:bg-secondary hover:text-foreground",
+          ? "is-active bg-primary text-primary-foreground shadow-sm"
+          : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
       )}
     >
-      <span
-        className={cn(
-          "redeem-icon-chip size-9 shrink-0 sm:size-10",
-          active && "text-primary-foreground",
-        )}
-      >
-        <CategoryIconView icon={cat.icon} size={22} />
-      </span>
-      <span className="max-w-[7.5rem] truncate sm:max-w-[9rem]">{cat.name}</span>
+      <CategoryIconView
+        icon={cat.icon}
+        size={20}
+        className="shrink-0"
+      />
+      <span className="max-w-[5.5rem] truncate sm:max-w-[6.5rem]">{cat.name}</span>
       <StockBadge count={stock} active={active} />
     </button>
   );
