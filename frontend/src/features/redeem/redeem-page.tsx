@@ -6,12 +6,13 @@ import {
   Loader2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -258,9 +259,27 @@ export function RedeemPage() {
 
   if (configQ.isLoading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 size-4 animate-spin" />
-        加载兑换页…
+      <div className="flex min-h-dvh flex-col bg-background">
+        <header className="border-b border-border/50">
+          <div className="mx-auto flex h-14 w-full max-w-3xl items-center px-5">
+            <Skeleton className="h-7 w-28 rounded-md" />
+          </div>
+        </header>
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-5 py-10 sm:py-14">
+          <div className="space-y-3 text-center">
+            <Skeleton className="mx-auto h-9 w-48 rounded-lg" />
+            <Skeleton className="mx-auto h-4 w-64 max-w-full rounded-md" />
+          </div>
+          <div className="rounded-2xl border border-border/70 bg-card p-6 sm:p-8">
+            <div className="mb-6 flex flex-wrap justify-center gap-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-24 rounded-full" />
+              ))}
+            </div>
+            <Skeleton className="mx-auto h-[120px] w-full max-w-md rounded-lg" />
+            <Skeleton className="mx-auto mt-3 h-11 w-full max-w-md rounded-lg" />
+          </div>
+        </main>
       </div>
     );
   }
@@ -278,22 +297,11 @@ export function RedeemPage() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      <header className="sticky top-0 z-20 border-b border-border/50 bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between px-5">
-          <SiteBrand name={siteName} logo={cfg?.siteLogo} />
-          <div className="flex items-center gap-1">
-            {cfg?.showApiDocsEntry ? (
-              <Button variant="ghost" size="sm" asChild className="text-xs">
-                <Link to="/docs">
-                  <BookOpen className="size-3.5" />
-                  API
-                </Link>
-              </Button>
-            ) : null}
-            <ThemeToggleButton />
-          </div>
-        </div>
-      </header>
+      <RedeemHeader
+        siteName={siteName}
+        logo={cfg?.siteLogo}
+        showDocs={!!cfg?.showApiDocsEntry}
+      />
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-5 py-10 sm:gap-6 sm:py-14">
         <div className="fade-in text-center">
@@ -309,7 +317,7 @@ export function RedeemPage() {
 
         <section
           aria-label="兑换"
-          className="fade-in ui-lift w-full rounded-2xl border border-border/70 bg-card p-6 shadow-sm sm:p-8"
+          className="fade-in fade-in-delay-1 ui-lift w-full rounded-2xl border border-border/70 bg-card p-6 shadow-sm sm:p-8"
         >
           <div className="mb-6">
             {categories.length === 0 ? (
@@ -318,13 +326,14 @@ export function RedeemPage() {
               </p>
             ) : (
               <div className="flex flex-wrap justify-center gap-2">
-                {primaryTabs.map((c) => (
+                {primaryTabs.map((c, i) => (
                   <CategoryTab
                     key={c.slug}
                     cat={c}
                     stock={c.unusedCount ?? 0}
                     active={category === c.slug}
                     onClick={() => selectCategory(c.slug)}
+                    stagger={i}
                   />
                 ))}
                 {moreTabs.length > 0 && (
@@ -374,16 +383,10 @@ export function RedeemPage() {
                 {selected ? (
                   <>
                     当前「{selected.name}」剩余{" "}
-                    <span
-                      className={cn(
-                        "font-medium tabular-nums",
-                        (selected.unusedCount ?? 0) <= 0
-                          ? "text-destructive"
-                          : "text-foreground",
-                      )}
-                    >
-                      {selected.unusedCount ?? 0}
-                    </span>{" "}
+                    <StockCount
+                      value={selected.unusedCount ?? 0}
+                      empty={(selected.unusedCount ?? 0) <= 0}
+                    />{" "}
                     张
                   </>
                 ) : (
@@ -494,7 +497,7 @@ export function RedeemPage() {
 
           {/* 单条结果 */}
           {singleResult ? (
-            <div className="fade-in mx-auto mt-6 max-w-md space-y-2">
+            <div className="result-reveal mx-auto mt-6 max-w-md space-y-2">
               <div className="flex items-center gap-1.5 text-sm font-medium">
                 <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
                 {singleResult.status === "success"
@@ -525,7 +528,7 @@ export function RedeemPage() {
 
           {/* 多条结果 + ZIP */}
           {batchItems ? (
-            <div className="fade-in mx-auto mt-6 max-w-md space-y-3">
+            <div className="result-reveal mx-auto mt-6 max-w-md space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <Badge variant="success">成功 {batchOk}</Badge>
@@ -554,10 +557,11 @@ export function RedeemPage() {
                 ZIP 内每个卡密一个结果文件，并含 _summary.txt 汇总
               </p>
               <ul className="max-h-80 space-y-2 overflow-y-auto rounded-xl border border-border/60 p-2">
-                {batchItems.map((item) => (
+                {batchItems.map((item, idx) => (
                   <li
                     key={item.code}
-                    className="space-y-1.5 rounded-lg px-2 py-1.5 text-xs hover:bg-secondary/40"
+                    className="stagger-in space-y-1.5 rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-secondary/40"
+                    style={{ "--stagger": Math.min(idx, 10) } as CSSProperties}
                   >
                     <div className="flex items-start gap-2">
                       {item.ok ? (
@@ -619,7 +623,7 @@ export function RedeemPage() {
         {selected && !isEmptyHtml(selected.description) ? (
           <section
             aria-label={`${selected.name} 说明`}
-            className="fade-in w-full rounded-2xl border border-border/70 bg-card p-6 shadow-sm sm:p-8"
+            className="fade-in fade-in-delay-2 w-full rounded-2xl border border-border/70 bg-card p-6 shadow-sm sm:p-8"
           >
             <div className="mb-3 flex items-center gap-2 border-b border-border/50 pb-3">
               <CategoryIconView icon={selected.icon} size={16} />
@@ -647,6 +651,66 @@ export function RedeemPage() {
   );
 }
 
+function RedeemHeader({
+  siteName,
+  logo,
+  showDocs,
+}: {
+  siteName: string;
+  logo?: string | null;
+  showDocs: boolean;
+}) {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  return (
+    <header
+      className={cn(
+        "header-elevated sticky top-0 z-20 border-b border-border/50 bg-background/90 backdrop-blur",
+        scrolled && "is-scrolled",
+      )}
+    >
+      <div className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between px-5">
+        <SiteBrand name={siteName} logo={logo} />
+        <div className="flex items-center gap-1">
+          {showDocs ? (
+            <Button variant="ghost" size="sm" asChild className="text-xs">
+              <Link to="/docs">
+                <BookOpen className="size-3.5" />
+                API
+              </Link>
+            </Button>
+          ) : null}
+          <ThemeToggleButton />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function StockCount({ value, empty }: { value: number; empty?: boolean }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    setTick((t) => t + 1);
+  }, [value]);
+  return (
+    <span
+      key={tick}
+      className={cn(
+        "num-tick font-medium tabular-nums",
+        empty ? "text-destructive" : "text-foreground",
+      )}
+    >
+      {value}
+    </span>
+  );
+}
+
 function StockBadge({
   count,
   active,
@@ -657,10 +721,15 @@ function StockBadge({
   compact?: boolean;
 }) {
   const empty = count <= 0;
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    setTick((t) => t + 1);
+  }, [count]);
   return (
     <span
+      key={tick}
       className={cn(
-        "tabular-nums",
+        "num-tick tabular-nums",
         compact
           ? "text-[10px] font-medium"
           : "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
@@ -688,18 +757,21 @@ function CategoryTab({
   stock,
   active,
   onClick,
+  stagger = 0,
 }: {
   cat: PublicCategory;
   stock: number;
   active: boolean;
   onClick: () => void;
+  stagger?: number;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      style={{ "--stagger": stagger } as CSSProperties}
       className={cn(
-        "interactive-press inline-flex h-10 items-center gap-2 rounded-full px-3.5 text-sm transition-colors sm:px-4",
+        "stagger-in tab-pill interactive-press inline-flex h-10 items-center gap-2 rounded-full px-3.5 text-sm sm:px-4",
         active
           ? "bg-primary text-primary-foreground shadow-sm"
           : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",

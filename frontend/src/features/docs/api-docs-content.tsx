@@ -39,18 +39,44 @@ const METHOD_CLASS: Record<string, string> = {
   DELETE: "bg-red-500/15 text-red-700 dark:text-red-400",
 };
 
+/** 公开文档用：无 scope / 管理端话术 */
+const PUBLIC_REDEEM_ROWS: ApiEndpoint[] = [
+  {
+    method: "GET",
+    path: "{prefix}/public/config",
+    auth: "无需",
+    desc: "站点配置与启用中的类别",
+  },
+  {
+    method: "GET",
+    path: "{prefix}/public/category-stock",
+    auth: "无需",
+    desc: "各类别可兑换库存（支持缓存）",
+  },
+  {
+    method: "POST",
+    path: "{prefix}/public/redeem",
+    auth: "一般无需；若站点开启密钥校验则带 Bearer",
+    desc: "兑换卡密，返回内容与元数据",
+    body: '{ "category": "slug", "code": "XXX-..." }',
+  },
+];
+
 function EndpointTable({
   title,
   items,
   prefix,
   id,
   subtitle,
+  showAuth = true,
 }: {
   title: string;
   items: ApiEndpoint[];
   prefix: string;
   id?: string;
   subtitle?: string;
+  /** 公开文档可隐藏鉴权列，减少噪声 */
+  showAuth?: boolean;
 }) {
   return (
     <section id={id} className="scroll-mt-20 space-y-2">
@@ -64,12 +90,19 @@ function EndpointTable({
         <p className="text-[11px] text-muted-foreground">{subtitle}</p>
       ) : null}
       <div className="overflow-x-auto rounded-xl border border-border shadow-sm">
-        <table className="w-full min-w-[720px] text-left text-xs">
+        <table
+          className={cn(
+            "w-full text-left text-xs",
+            showAuth ? "min-w-[720px]" : "min-w-[560px]",
+          )}
+        >
           <thead className="bg-secondary/50 text-muted-foreground">
             <tr>
               <th className="px-3 py-2.5 font-medium w-20">方法</th>
               <th className="px-3 py-2.5 font-medium">路径</th>
-              <th className="px-3 py-2.5 font-medium w-36">鉴权</th>
+              {showAuth ? (
+                <th className="px-3 py-2.5 font-medium w-36">鉴权</th>
+              ) : null}
               <th className="px-3 py-2.5 font-medium">说明</th>
             </tr>
           </thead>
@@ -106,7 +139,11 @@ function EndpointTable({
                       </p>
                     ) : null}
                   </td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{ep.auth}</td>
+                  {showAuth ? (
+                    <td className="px-3 py-2.5 text-muted-foreground">
+                      {ep.auth}
+                    </td>
+                  ) : null}
                   <td className="px-3 py-2.5 text-muted-foreground">{ep.desc}</td>
                 </tr>
               );
@@ -135,6 +172,7 @@ export function ApiDocsContent({
   const [lang, setLang] = useState<LangId>("curl");
   const { baseRoot, apiPrefix, redeemUrl } = resolveApiBase(cfg);
 
+  const isAdmin = scope === "admin";
   const showKey = forceShowKey || !!cfg.publicRedeemApiKey;
   const key =
     cfg.publicRedeemApiKey || "ck_xxxxxxxxxxxxxxxxxxxxxxxx";
@@ -145,112 +183,145 @@ export function ApiDocsContent({
     : "VIP-XXXX-XXXX-XXXX-XXXX";
 
   const snippets = useMemo(
-    () => buildSnippets({ url: redeemUrl, key, cat, code: codeSample }),
-    [redeemUrl, key, cat, codeSample],
+    () =>
+      buildSnippets({
+        url: redeemUrl,
+        key,
+        cat,
+        code: codeSample,
+        // 公开文档：仅在展示密钥时带 Authorization
+        withAuth: isAdmin || showKey,
+      }),
+    [redeemUrl, key, cat, codeSample, isAdmin, showKey],
   );
-
-  const isAdmin = scope === "admin";
 
   const adminTotal =
     ADMIN_AUTH_ENDPOINTS.length + ADMIN_API_ENDPOINTS.length;
+
+  const publicErrors = [
+    ["RATE_LIMITED", "429", "请求过于频繁"],
+    ["CARD_INVALID", "404", "卡密无效"],
+    ["CARD_USED", "409", "已被兑换"],
+    ["CARD_EXPIRED", "410", "已过期"],
+    ["UNAUTHORIZED", "401", "密钥无效（若开启校验）"],
+    ["VALIDATION_ERROR", "400", "参数错误"],
+  ] as const;
+
+  const adminErrors = [
+    ["RATE_LIMITED", "429", "限流"],
+    ["CARD_INVALID", "404", "无效"],
+    ["CARD_USED", "409", "已兑换"],
+    ["CARD_EXPIRED", "410", "已过期"],
+    ["UNAUTHORIZED", "401", "密钥/登录无效"],
+    ["FORBIDDEN", "403", "权限不足 / 需先改密"],
+    ["VALIDATION_ERROR", "400", "参数错误"],
+    ["CONFLICT", "409", "冲突（如类别不可删）"],
+    ["NOT_FOUND", "404", "资源不存在"],
+  ] as const;
 
   return (
     <div className={cn("space-y-8", className)}>
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-medium">Base URL</h2>
-          <Badge variant="outline" className="font-mono text-[10px]">
-            {isAdmin ? "管理端 · 完整 API" : "兑换端 · 仅兑换相关"}
-          </Badge>
+          {isAdmin ? (
+            <Badge variant="outline" className="font-mono text-[10px]">
+              管理端 · 完整 API
+            </Badge>
+          ) : null}
         </div>
         {/* 仅 origin：路径里已含 /api/v1 等前缀，勿再拼进 Base URL */}
         <CodeBlock lang="text" code={baseRoot} heightClass="h-16" />
         <p className="text-[11px] text-muted-foreground">
-          可在「系统设置 → API → 对外 API 地址」配置 origin；留空则用当前站点域名。
-          完整请求地址 ={" "}
-          <code className="font-mono">Base URL</code> + 下表路径（路径已含前缀{" "}
-          <code className="font-mono">{apiPrefix}</code>
-          ，例如{" "}
-          <code className="font-mono">
-            {baseRoot}
-            {apiPrefix}/public/redeem
-          </code>
-          ）。
+          {isAdmin ? (
+            <>
+              可在「系统设置 → API → 对外 API 地址」配置 origin；留空则用当前站点域名。
+              完整请求地址 ={" "}
+              <code className="font-mono">Base URL</code> + 下表路径（路径已含前缀{" "}
+              <code className="font-mono">{apiPrefix}</code>
+              ）。
+            </>
+          ) : (
+            <>
+              完整地址 = Base URL + 路径，例如{" "}
+              <code className="font-mono">
+                {baseRoot}
+                {apiPrefix}/public/redeem
+              </code>
+            </>
+          )}
         </p>
       </section>
 
-      {/* 权限边界说明 */}
-      <section className="space-y-1.5 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2.5 text-[11px] text-muted-foreground">
-        <p className="font-medium text-foreground">权限边界</p>
-        {isAdmin ? (
-          <>
-            <p>
-              · <strong className="text-foreground">兑换端</strong>（scope{" "}
-              <code className="font-mono">redeem:api</code>
-              ）：仅{" "}
-              <code className="font-mono">{apiPrefix}/public/config</code>、
-              <code className="font-mono">
-                {apiPrefix}/public/category-stock
-              </code>
-              、
-              <code className="font-mono">{apiPrefix}/public/redeem</code>
-              。系统固定兑换密钥仅有此权限。
-            </p>
-            <p>
-              · <strong className="text-foreground">管理端</strong>（Cookie JWT 或
-              scope <code className="font-mono">admin:api</code>
-              ）：全部{" "}
-              <code className="font-mono">{apiPrefix}/admin/*</code>
-              ；
-              <code className="font-mono">admin:api</code> 可覆盖兑换权限。
-            </p>
-            <p>
-              · 浏览器管理台：Cookie{" "}
-              <code className="font-mono">cardkey_token</code>
-              ；脚本：{" "}
-              <code className="font-mono">
-                Authorization: Bearer &lt;API_KEY&gt;
-              </code>
-            </p>
-          </>
-        ) : (
-          <>
-            <p>
-              · 本页列出<strong className="text-foreground">兑换端接口</strong>
-              与请求/响应说明，供对接使用。
-            </p>
-            <p>
-              · 鉴权：默认无需密钥；若开启「强制兑换密钥」，请求头{" "}
-              <code className="font-mono">
-                Authorization: Bearer &lt;密钥&gt;
-              </code>
-              ，权限须含{" "}
-              <code className="font-mono">redeem:api</code>。
-            </p>
-            <p>
-              · 完整管理端 API 请登录后台 →「管理 API」查看。
-            </p>
-          </>
-        )}
-        <p>
-          · 统一响应：{" "}
-          <code className="font-mono">
-            {`{ "success": true, "data": ... }`}
-          </code>{" "}
-          或{" "}
-          <code className="font-mono">
-            {`{ "success": false, "error": { "code", "message" } }`}
-          </code>
-        </p>
-      </section>
+      {isAdmin ? (
+        <section className="space-y-1.5 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2.5 text-[11px] text-muted-foreground">
+          <p className="font-medium text-foreground">权限边界</p>
+          <p>
+            · <strong className="text-foreground">兑换端</strong>（scope{" "}
+            <code className="font-mono">redeem:api</code>
+            ）：仅{" "}
+            <code className="font-mono">{apiPrefix}/public/config</code>、
+            <code className="font-mono">
+              {apiPrefix}/public/category-stock
+            </code>
+            、
+            <code className="font-mono">{apiPrefix}/public/redeem</code>
+            。系统固定兑换密钥仅有此权限。
+          </p>
+          <p>
+            · <strong className="text-foreground">管理端</strong>（Cookie JWT 或
+            scope <code className="font-mono">admin:api</code>
+            ）：全部{" "}
+            <code className="font-mono">{apiPrefix}/admin/*</code>
+            ；
+            <code className="font-mono">admin:api</code> 可覆盖兑换权限。
+          </p>
+          <p>
+            · 浏览器管理台：Cookie{" "}
+            <code className="font-mono">cardkey_token</code>
+            ；脚本：{" "}
+            <code className="font-mono">
+              Authorization: Bearer &lt;API_KEY&gt;
+            </code>
+          </p>
+          <p>
+            · 统一响应：{" "}
+            <code className="font-mono">
+              {`{ "success": true, "data": ... }`}
+            </code>{" "}
+            或{" "}
+            <code className="font-mono">
+              {`{ "success": false, "error": { "code", "message" } }`}
+            </code>
+          </p>
+        </section>
+      ) : (
+        <section className="space-y-1 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2.5 text-[11px] text-muted-foreground">
+          <p>
+            响应统一为{" "}
+            <code className="font-mono text-foreground">
+              {`{ "success": true, "data": … }`}
+            </code>{" "}
+            或{" "}
+            <code className="font-mono text-foreground">
+              {`{ "success": false, "error": { "code", "message" } }`}
+            </code>
+          </p>
+          <p>
+            若站点开启了密钥校验，在请求头加上{" "}
+            <code className="font-mono text-foreground">
+              Authorization: Bearer &lt;密钥&gt;
+            </code>
+          </p>
+        </section>
+      )}
 
-      {/* 目录导航：兑换端 / 管理端同一套样式 */}
       <nav className="flex flex-wrap gap-2 text-[11px]">
         <a
           href="#endpoints-redeem"
           className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
         >
-          兑换端 · {REDEEM_ENDPOINTS.length}
+          {isAdmin ? `兑换端 · ${REDEEM_ENDPOINTS.length}` : "接口列表"}
         </a>
         {isAdmin ? (
           <>
@@ -284,27 +355,27 @@ export function ApiDocsContent({
           href="#redeem-detail"
           className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
         >
-          兑换详解
+          兑换示例
         </a>
         {isAdmin ? (
           <span className="self-center text-muted-foreground/80">
             管理 {adminTotal} · 兑换 {REDEEM_ENDPOINTS.length} · 运维{" "}
             {PUBLIC_OPS_ENDPOINTS.length}
           </span>
-        ) : (
-          <span className="self-center text-muted-foreground/80">
-            兑换 {REDEEM_ENDPOINTS.length} 个接口
-          </span>
-        )}
+        ) : null}
       </nav>
 
-      {/* 接口总表：兑换端与管理端同一表格样式 */}
       <EndpointTable
         id="endpoints-redeem"
-        title="兑换端接口"
-        subtitle="仅兑换相关；scope=redeem:api 可调用（若强制密钥）"
-        items={REDEEM_ENDPOINTS}
+        title={isAdmin ? "兑换端接口" : "接口列表"}
+        subtitle={
+          isAdmin
+            ? "仅兑换相关；scope=redeem:api 可调用（若强制密钥）"
+            : undefined
+        }
+        items={isAdmin ? REDEEM_ENDPOINTS : PUBLIC_REDEEM_ROWS}
         prefix={apiPrefix}
+        showAuth={isAdmin}
       />
       {isAdmin ? (
         <>
@@ -397,7 +468,6 @@ export function ApiDocsContent({
         </>
       ) : null}
 
-      {/* 兑换详解（公开文档主体；管理端文档亦保留） */}
       <section
         id="redeem-detail"
         className={cn(
@@ -405,7 +475,9 @@ export function ApiDocsContent({
           isAdmin && "border-t border-border/60 pt-6",
         )}
       >
-        <h2 className="text-base font-semibold">兑换接口详解</h2>
+        <h2 className="text-base font-semibold">
+          {isAdmin ? "兑换接口详解" : "兑换示例"}
+        </h2>
         <p className="font-mono text-xs text-muted-foreground">
           POST {apiPrefix}/public/redeem
         </p>
@@ -413,7 +485,9 @@ export function ApiDocsContent({
 
       {showKey ? (
         <section className="space-y-2">
-          <h2 className="text-sm font-medium">固定兑换密钥</h2>
+          <h2 className="text-sm font-medium">
+            {isAdmin ? "固定兑换密钥" : "API 密钥"}
+          </h2>
           <SecretField
             value={key}
             actions={
@@ -423,9 +497,20 @@ export function ApiDocsContent({
             }
           />
           <p className="text-[11px] text-muted-foreground">
-            Header：Authorization: Bearer {"<密钥>"} · 权限{" "}
-            <code className="font-mono">redeem:api</code>
-            （无法调用管理接口）
+            {isAdmin ? (
+              <>
+                Header：Authorization: Bearer {"<密钥>"} · 权限{" "}
+                <code className="font-mono">redeem:api</code>
+                （无法调用管理接口）
+              </>
+            ) : (
+              <>
+                请求头：{" "}
+                <code className="font-mono">
+                  Authorization: Bearer {"<密钥>"}
+                </code>
+              </>
+            )}
           </p>
         </section>
       ) : null}
@@ -592,23 +677,15 @@ export function ApiDocsContent({
               </tr>
             </thead>
             <tbody>
-              {[
-                ["RATE_LIMITED", "429", "限流"],
-                ["CARD_INVALID", "404", "无效"],
-                ["CARD_USED", "409", "已兑换"],
-                ["CARD_EXPIRED", "410", "已过期"],
-                ["UNAUTHORIZED", "401", "密钥/登录无效"],
-                ["FORBIDDEN", "403", "权限不足 / 需先改密"],
-                ["VALIDATION_ERROR", "400", "参数错误"],
-                ["CONFLICT", "409", "冲突（如类别不可删）"],
-                ["NOT_FOUND", "404", "资源不存在"],
-              ].map(([code, http, msg]) => (
-                <tr key={code} className="border-t border-border/60">
-                  <td className="px-3 py-2 font-mono">{code}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{http}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{msg}</td>
-                </tr>
-              ))}
+              {(isAdmin ? adminErrors : publicErrors).map(
+                ([code, http, msg]) => (
+                  <tr key={code} className="border-t border-border/60">
+                    <td className="px-3 py-2 font-mono">{code}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{http}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{msg}</td>
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         </div>
@@ -622,6 +699,7 @@ function buildSnippets(p: {
   key: string;
   cat: string;
   code: string;
+  withAuth?: boolean;
 }): Record<LangId, string> {
   const body = JSON.stringify({ category: p.cat, code: p.code }, null, 2);
   const bodyOneLine = JSON.stringify({ category: p.cat, code: p.code });
@@ -629,12 +707,13 @@ function buildSnippets(p: {
     .split("\n")
     .map((line, i) => (i === 0 ? line : `  ${line}`))
     .join("\n");
+  const auth = !!p.withAuth;
 
   return {
     curl: [
       `curl -X POST '${p.url}' \\`,
       `  -H 'Content-Type: application/json' \\`,
-      `  -H 'Authorization: Bearer ${p.key}' \\`,
+      ...(auth ? [`  -H 'Authorization: Bearer ${p.key}' \\`] : []),
       `  -d '${bodyOneLine}'`,
     ].join("\n"),
     js: [
@@ -642,7 +721,7 @@ function buildSnippets(p: {
       `  method: "POST",`,
       `  headers: {`,
       `    "Content-Type": "application/json",`,
-      `    Authorization: "Bearer ${p.key}",`,
+      ...(auth ? [`    Authorization: "Bearer ${p.key}",`] : []),
       `  },`,
       `  body: JSON.stringify({`,
       `    category: "${p.cat}",`,
@@ -659,7 +738,9 @@ function buildSnippets(p: {
       `    "${p.url}",`,
       `    headers={`,
       `        "Content-Type": "application/json",`,
-      `        "Authorization": "Bearer ${p.key}",`,
+      ...(auth
+        ? [`        "Authorization": "Bearer ${p.key}",`]
+        : []),
       `    },`,
       `    json={`,
       `        "category": "${p.cat}",`,
@@ -681,7 +762,9 @@ function buildSnippets(p: {
       `  body := []byte(\`${bodyIndented}\`)`,
       `  req, _ := http.NewRequest(http.MethodPost, "${p.url}", bytes.NewReader(body))`,
       `  req.Header.Set("Content-Type", "application/json")`,
-      `  req.Header.Set("Authorization", "Bearer ${p.key}")`,
+      ...(auth
+        ? [`  req.Header.Set("Authorization", "Bearer ${p.key}")`]
+        : []),
       `  resp, err := http.DefaultClient.Do(req)`,
       `  _ = resp`,
       `  _ = err`,
@@ -691,7 +774,9 @@ function buildSnippets(p: {
       `HttpRequest request = HttpRequest.newBuilder()`,
       `    .uri(URI.create("${p.url}"))`,
       `    .header("Content-Type", "application/json")`,
-      `    .header("Authorization", "Bearer ${p.key}")`,
+      ...(auth
+        ? [`    .header("Authorization", "Bearer ${p.key}")`]
+        : []),
       `    .POST(HttpRequest.BodyPublishers.ofString("""`,
       `${body}`,
       `"""))`,
@@ -707,7 +792,7 @@ function buildSnippets(p: {
       `  CURLOPT_POST => true,`,
       `  CURLOPT_HTTPHEADER => [`,
       `    "Content-Type: application/json",`,
-      `    "Authorization: Bearer ${p.key}",`,
+      ...(auth ? [`    "Authorization: Bearer ${p.key}",`] : []),
       `  ],`,
       `  CURLOPT_POSTFIELDS => '${bodyOneLine}',`,
       `  CURLOPT_RETURNTRANSFER => true,`,

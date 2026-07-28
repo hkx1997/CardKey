@@ -39,11 +39,12 @@ export function CategoryIconView({
   className,
   size = 16,
 }: {
-  icon: CategoryIcon;
+  icon?: CategoryIcon | null;
   className?: string;
   size?: number;
 }) {
-  if (icon.kind === "image" && icon.value) {
+  // 兼容 icon 缺失 / 自定义图 value 被截断为空 → 回退默认 lucide
+  if (icon?.kind === "image" && icon.value) {
     return (
       <img
         src={icon.value}
@@ -55,7 +56,9 @@ export function CategoryIconView({
       />
     );
   }
-  const Icon = LUCIDE_ICON_MAP[icon.value] ?? Ticket;
+  const lucideName =
+    icon?.kind === "lucide" && icon.value ? icon.value : "ticket";
+  const Icon = LUCIDE_ICON_MAP[lucideName] ?? Ticket;
   return (
     <Icon
       className={cn("shrink-0", className)}

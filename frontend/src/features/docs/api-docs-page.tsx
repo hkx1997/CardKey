@@ -44,11 +44,9 @@ export function ApiDocsPage() {
 
       <PageContainer className="fade-in max-w-6xl space-y-6 px-4 py-8 sm:px-6 sm:py-10">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            兑换端 API 文档
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">API 文档</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            接口总表 · 请求示例与响应说明 · 权限 redeem:api（不含管理端）
+            接口列表、请求示例与响应说明
           </p>
         </div>
         <ApiDocsContent cfg={cfg} scope="public" />

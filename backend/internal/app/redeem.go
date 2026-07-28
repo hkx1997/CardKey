@@ -19,7 +19,8 @@ import (
 const availableStockExpr = `c.unused_count`
 
 func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
-	const cacheKey = "cardkey:public_config_v2"
+	// v3：完整下发自定义图片图标（v2 曾把 >4KB 的 data URL 截成空，兑换 Tab 图标全丢）
+	const cacheKey = "cardkey:public_config_v3"
 	if a.RDB != nil {
 		if raw, err := a.RDB.Get(ctx, cacheKey).Bytes(); err == nil && len(raw) > 0 {
 			var cached domain.PublicConfig
@@ -32,11 +33,10 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	if err != nil {
 		return domain.PublicConfig{}, err
 	}
-	// 配置接口不再全表聚合库存（由 /category-stock 轮询承担），避免冷启动双倍扫表
-	// 大 data URL 图标截断，降低首包体积
+	// 配置接口不再全表聚合库存（由 /category-stock 轮询承担）。
+	// 图标必须完整返回：自定义图多为 data URL（通常 >4KB），截断会导致兑换页无图标。
 	rows, err := a.Pool.Query(ctx, `
-		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind,
-		       CASE WHEN c.icon_kind='image' AND length(c.icon_value) > 4096 THEN '' ELSE c.icon_value END
+		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind, c.icon_value
 		FROM categories c
 		WHERE c.enabled = true
 		ORDER BY c.sort_order, c.created_at`)

@@ -12,7 +12,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex h-24 items-center justify-center text-sm text-muted-foreground",
+        "fade-in flex h-24 items-center justify-center text-sm text-muted-foreground",
         className,
       )}
     >

@@ -143,8 +143,7 @@ func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, erro
 	g.Go(func() error {
 		// 仅物化列，零扫 cards
 		rows, err := a.Pool.Query(ctx, `
-			SELECT cat.slug, cat.name, cat.icon_kind,
-			       CASE WHEN cat.icon_kind='image' AND length(cat.icon_value)>256 THEN '' ELSE cat.icon_value END,
+			SELECT cat.slug, cat.name, cat.icon_kind, cat.icon_value,
 			       COALESCE(cat.unused_count, 0),
 			       COALESCE(cat.used_count, 0),
 			       COALESCE(cat.card_count, 0)

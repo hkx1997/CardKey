@@ -205,10 +205,15 @@ export function DataTable<T>({
                 : null}
 
               {!loading &&
-                items.map((row) => (
+                items.map((row, rowIndex) => (
                   <TableRow
                     key={rowKey(row)}
-                    className="[content-visibility:auto] [contain-intrinsic-size:auto_48px]"
+                    className="stagger-in [content-visibility:auto] [contain-intrinsic-size:auto_48px]"
+                    style={
+                      {
+                        "--stagger": Math.min(rowIndex, 12),
+                      } as CSSProperties
+                    }
                   >
                     {columns.map((col) => (
                       <TableCell

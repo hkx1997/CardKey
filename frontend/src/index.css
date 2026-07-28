@@ -522,6 +522,110 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
   .fade-in-delay-3 {
     animation-delay: 0.12s;
   }
+  .fade-in-delay-4 {
+    animation-delay: 0.16s;
+  }
+  .fade-in-delay-5 {
+    animation-delay: 0.2s;
+  }
+
+  /* 列表/Tab 错峰入场（配合 style --stagger） */
+  .stagger-in {
+    animation: ui-stagger 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--stagger, 0) * 36ms);
+  }
+
+  @keyframes ui-stagger {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* 兑换结果 / 展开面板 */
+  .result-reveal {
+    animation: result-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: top center;
+  }
+
+  @keyframes result-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* 数字变化轻闪 */
+  .num-tick {
+    animation: num-tick 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes num-tick {
+    0% {
+      transform: scale(1);
+    }
+    40% {
+      transform: scale(1.08);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* 类别 Tab 切换更顺滑 */
+  .tab-pill {
+    transition:
+      background-color 0.22s cubic-bezier(0.25, 0, 0.2, 1),
+      color 0.22s ease,
+      box-shadow 0.22s ease,
+      transform 0.15s ease,
+      border-color 0.2s ease,
+      filter 0.15s ease;
+  }
+
+  /* 侧栏激活指示条 */
+  .nav-active-bar {
+    position: relative;
+  }
+  .nav-active-bar::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 0;
+    border-radius: 999px;
+    background: var(--primary);
+    transform: translateY(-50%);
+    opacity: 0;
+    transition:
+      height 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.18s ease;
+  }
+  .nav-active-bar.is-active::before {
+    height: 1.1rem;
+    opacity: 1;
+  }
+
+  /* 表头轻微景深 */
+  .header-elevated {
+    transition:
+      box-shadow 0.25s ease,
+      border-color 0.25s ease,
+      background-color 0.25s ease;
+  }
+  .header-elevated.is-scrolled {
+    box-shadow: 0 8px 24px color-mix(in oklab, var(--foreground) 5%, transparent);
+    border-color: color-mix(in oklab, var(--border) 80%, transparent);
+  }
 
   .animate-in-fade {
     animation: ui-fade-in 0.16s ease-out both;
@@ -610,6 +714,11 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
     .fade-in-delay-1,
     .fade-in-delay-2,
     .fade-in-delay-3,
+    .fade-in-delay-4,
+    .fade-in-delay-5,
+    .stagger-in,
+    .result-reveal,
+    .num-tick,
     .page-enter,
     .skeleton-shimmer::after,
     .animate-in-fade,
@@ -622,6 +731,9 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
 
     .interactive-press,
     .ui-lift,
+    .tab-pill,
+    .nav-active-bar::before,
+    .header-elevated,
     .theme-toggle__sun,
     .theme-toggle__sun-beams,
     .theme-toggle__moon-cut {
