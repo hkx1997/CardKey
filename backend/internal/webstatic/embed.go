@@ -46,9 +46,9 @@ func FS() (fs.FS, error) {
 }
 
 // SyncToDir 将嵌入的 SPA 全量写出到 dir（可写时）。
-// 解决：一键更新换了二进制后 /app/static 仍是镜像旧文件、或反代读磁盘旧资源。
-// 返回写出的文件数；dir 不可写时返回 0, nil。
-func SyncToDir(dir string) (int, error) {
+// stamp 非空时写入 .cardkey-spa-stamp；若磁盘 stamp 已相同则跳过整树同步（加速启动）。
+// 返回写出/已对齐的文件数；dir 不可写时返回 0, nil。
+func SyncToDir(dir, stamp string) (int, error) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return 0, nil
@@ -68,6 +68,14 @@ func SyncToDir(dir string) (int, error) {
 		return 0, nil
 	}
 	_ = os.Remove(probe)
+
+	stampPath := filepath.Join(dir, ".cardkey-spa-stamp")
+	if stamp != "" {
+		if old, err := os.ReadFile(stampPath); err == nil && string(old) == stamp {
+			// 版本未变：快速路径，不扫盘写文件
+			return AssetCount(), nil
+		}
+	}
 
 	n := 0
 	err = fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
@@ -104,7 +112,13 @@ func SyncToDir(dir string) (int, error) {
 		n++
 		return nil
 	})
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	if stamp != "" {
+		_ = os.WriteFile(stampPath, []byte(stamp), 0o644)
+	}
+	return n, nil
 }
 
 // Handler SPA 静态服务。

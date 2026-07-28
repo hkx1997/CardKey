@@ -290,37 +290,64 @@
   }
 }
 
-/* —— 整页内容可见的圆形主题切换（View Transition）—— */
+/* —— 整页内容可见的圆形主题切换（View Transition + CSS 关键帧）—— */
 html {
   view-transition-name: root;
 }
 
-/* 关掉默认淡入淡出，只保留我们的 clip-path 圆 */
+/* 关闭浏览器默认交叉淡入，改用我们的 clip-path 圆 */
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation: none !important;
   mix-blend-mode: normal;
-  /* 快照是完整渲染的界面（含文字/卡片），不是纯色 */
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: both;
 }
 
 /*
- * 黑切白：动画新层展开 → 新层必须在上
- * 白切黑：动画旧层收缩 → 旧层在上才能看见圆收
+ * expand（切到浅色）：新层从点击点圆形展开
+ * shrink（切到深色）：旧层向点击点圆形收缩
+ * 用 CSS 动画挂在伪元素上，浏览器会等动画结束再拆过渡层（比 ready 后再 WAAPI 更稳）
  */
+@keyframes theme-circle-expand {
+  from {
+    clip-path: circle(0px at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+  to {
+    clip-path: circle(var(--theme-r, 100vmax) at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+}
+
+@keyframes theme-circle-shrink {
+  from {
+    clip-path: circle(var(--theme-r, 100vmax) at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+  to {
+    clip-path: circle(0px at var(--theme-x, 50%) var(--theme-y, 50%));
+  }
+}
+
 html[data-theme-circle="expand"]::view-transition-old(root) {
   z-index: 1;
+  animation-name: none;
+  animation-duration: 0.01ms;
 }
 html[data-theme-circle="expand"]::view-transition-new(root) {
   z-index: 2147483646;
+  animation-name: theme-circle-expand;
 }
 
 html[data-theme-circle="shrink"]::view-transition-old(root) {
   z-index: 2147483646;
+  animation-name: theme-circle-shrink;
 }
 html[data-theme-circle="shrink"]::view-transition-new(root) {
   z-index: 1;
+  animation-name: none;
+  animation-duration: 0.01ms;
 }
 
+/* 过渡期间关掉其它 CSS transition，避免和圆形抢 */
 html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
     .theme-toggle *
   ) {
@@ -330,6 +357,10 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
 @media (prefers-reduced-motion: reduce) {
   html {
     view-transition-name: none;
+  }
+  html[data-theme-circle="expand"]::view-transition-new(root),
+  html[data-theme-circle="shrink"]::view-transition-old(root) {
+    animation: none !important;
   }
 }
 

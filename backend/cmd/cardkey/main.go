@@ -174,12 +174,13 @@ func main() {
 			}
 		}
 	}
-	// 一键更新后把嵌入 SPA 同步到磁盘，避免镜像层旧 /app/static 残留
+	// 一键更新后把嵌入 SPA 同步到磁盘；同版本 stamp 命中则跳过（加速启动）
 	if webstatic.HasDist() && staticDir != "" {
-		if n, err := webstatic.SyncToDir(staticDir); err != nil {
+		spaStamp := version.Version + ":" + version.Commit
+		if n, err := webstatic.SyncToDir(staticDir, spaStamp); err != nil {
 			log.Warn("sync embedded spa to disk failed", "dir", staticDir, "err", err)
 		} else if n > 0 {
-			log.Info("synced embedded spa to disk", "dir", staticDir, "files", n)
+			log.Info("synced embedded spa to disk", "dir", staticDir, "files", n, "stamp", spaStamp)
 		}
 	}
 
