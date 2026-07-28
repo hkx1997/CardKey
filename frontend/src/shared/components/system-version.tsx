@@ -328,60 +328,93 @@ export function SystemVersion({ className }: { className?: string }) {
             <div>
               <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium">
                 <History className="size-3.5" />
-                本地历史 / 回滚
+                版本历史 / 回滚
               </div>
+              <p className="mb-2 text-[10px] text-muted-foreground leading-relaxed">
+                合并本机归档与 GitHub Release。本机无包时将从远程下载后切换；迁移不可逆时请谨慎回滚。
+              </p>
               {historyQ.isLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              ) : (historyQ.data ?? []).length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">暂无版本记录</p>
               ) : (
-                <ul className="max-h-40 space-y-1 overflow-auto text-xs">
-                  {(historyQ.data ?? []).map((h) => (
-                    <li
-                      key={h.version + (h.path ?? "")}
-                      className="flex items-center justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
-                    >
-                      <span className="font-mono">
-                        v{h.version}
-                        {h.isCurrent ? (
-                          <span className="ml-1 text-muted-foreground">
-                            (当前)
-                          </span>
-                        ) : null}
-                      </span>
-                      {!h.isCurrent &&
+                <ul className="max-h-52 space-y-1 overflow-auto text-xs">
+                  {(historyQ.data ?? []).map((h) => {
+                    const sourceLabel =
+                      h.source === "remote"
+                        ? "GitHub"
+                        : h.source === "both"
+                          ? "本机+远程"
+                          : h.source === "local"
+                            ? "本机"
+                            : "";
+                    const canSwitch =
+                      !h.isCurrent &&
+                      h.canInstall !== false &&
                       (infoQ.data?.updateMode === "binary" ||
-                        infoQ.data?.updateMode === "docker") ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 text-[11px]"
-                          disabled={busy || rollbackM.isPending}
-                          onClick={async () => {
-                            const ok = await confirm({
-                              title: `回滚到 v${h.version}`,
-                              description:
-                                "将切换到该版本并重启。恢复后页面会自动强制刷新。若数据库迁移不可逆，请谨慎操作。",
-                              confirmLabel: "回滚",
-                              destructive: true,
-                            });
-                            if (!ok) return;
-                            await runApplyOrRollback({
-                              action: () => rollbackM.mutateAsync(h.version),
-                              targetVersion: h.version,
-                              label: "回滚",
-                              failLabel: "回滚失败",
-                            });
-                          }}
-                        >
-                          回滚
-                        </Button>
-                      ) : null}
-                      {h.modTime ? (
-                        <span className="hidden text-[10px] text-muted-foreground sm:inline">
-                          {formatDateTime(h.modTime)}
-                        </span>
-                      ) : null}
-                    </li>
-                  ))}
+                        infoQ.data?.updateMode === "docker");
+                    return (
+                      <li
+                        key={h.version + (h.path ?? "") + (h.source ?? "")}
+                        className="flex items-center justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                      >
+                        <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+                          <span className="font-mono">v{h.version}</span>
+                          {h.isCurrent ? (
+                            <Badge
+                              variant="secondary"
+                              className="h-4 px-1 text-[9px]"
+                            >
+                              当前
+                            </Badge>
+                          ) : null}
+                          {sourceLabel ? (
+                            <Badge
+                              variant="outline"
+                              className="h-4 px-1 text-[9px] font-normal"
+                            >
+                              {sourceLabel}
+                            </Badge>
+                          ) : null}
+                          {h.modTime ? (
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatDateTime(h.modTime)}
+                            </span>
+                          ) : null}
+                        </div>
+                        {canSwitch ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 shrink-0 text-[11px]"
+                            disabled={busy || rollbackM.isPending}
+                            onClick={async () => {
+                              const fromRemote =
+                                h.source === "remote" || h.source === "both";
+                              const ok = await confirm({
+                                title: `切换到 v${h.version}`,
+                                description: fromRemote
+                                  ? "将优先使用本机归档；若无则从 GitHub Release 下载该版本二进制并重启。数据库迁移若不可逆请谨慎。恢复后页面会自动刷新。"
+                                  : "将使用本机归档切换到该版本并重启。恢复后页面会自动刷新。",
+                                confirmLabel:
+                                  h.source === "remote" ? "下载并回滚" : "回滚",
+                                destructive: true,
+                              });
+                              if (!ok) return;
+                              await runApplyOrRollback({
+                                action: () => rollbackM.mutateAsync(h.version),
+                                targetVersion: h.version,
+                                label: "回滚",
+                                failLabel: "回滚失败",
+                              });
+                            }}
+                          >
+                            回滚
+                          </Button>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {infoQ.data?.updateMode === "binary" ||
@@ -393,10 +426,10 @@ export function SystemVersion({ className }: { className?: string }) {
                   disabled={busy || rollbackM.isPending}
                   onClick={async () => {
                     const ok = await confirm({
-                      title: "回滚到上一备份",
+                      title: "回滚到上一备份 (.bak)",
                       description:
-                        "使用 .bak 替换当前二进制并重启；恢复后页面会自动强制刷新。",
-                      confirmLabel: "回滚",
+                        "使用本机最近一次更新留下的 .bak 替换当前二进制并重启；与 GitHub 版本列表无关。",
+                      confirmLabel: "回滚 .bak",
                       destructive: true,
                     });
                     if (!ok) return;

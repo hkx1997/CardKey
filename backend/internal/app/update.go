@@ -51,6 +51,10 @@ type UpdateHistoryItem struct {
 	Path      string `json:"path,omitempty"`
 	ModTime   string `json:"modTime,omitempty"`
 	IsCurrent bool   `json:"isCurrent"`
+	// Source: local | remote | both — 本机归档 / GitHub Release / 两者皆有
+	Source string `json:"source,omitempty"`
+	// CanInstall 是否可一键切换（本机有包或可从 GitHub 下载）
+	CanInstall bool `json:"canInstall"`
 }
 
 type UpdateStatus struct {
@@ -488,61 +492,156 @@ func extractReleaseTag(loc string) string {
 	return tag
 }
 
-func (a *App) ListUpdateHistory() ([]UpdateHistoryItem, error) {
+func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error) {
 	cur := normalizeVer(version.Version)
-	dir := a.UpdateReleasesDir
-	if dir == "" {
-		return []UpdateHistoryItem{{Version: cur, IsCurrent: true}}, nil
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []UpdateHistoryItem{{Version: cur, IsCurrent: true}}, nil
-		}
-		return nil, err
-	}
-	var items []UpdateHistoryItem
-	seen := map[string]bool{}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() {
-			ver := normalizeVer(name)
-			p := filepath.Join(dir, name, "cardkey")
-			if _, err := os.Stat(p); err != nil {
+	byVer := map[string]*UpdateHistoryItem{}
+
+	// 1) 本机归档（DATA_DIR/releases 等）
+	dir := a.writableReleasesDir()
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			var ver, p, mt string
+			if e.IsDir() {
+				ver = normalizeVer(name)
+				p = filepath.Join(dir, name, "cardkey")
+				if _, err := os.Stat(p); err != nil {
+					continue
+				}
+			} else if strings.HasPrefix(name, "cardkey-") {
+				ver = normalizeVer(strings.TrimPrefix(name, "cardkey-"))
+				p = filepath.Join(dir, name)
+			} else {
 				continue
 			}
-			info, _ := e.Info()
-			mt := ""
-			if info != nil {
+			if ver == "" {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info != nil {
 				mt = info.ModTime().UTC().Format(time.RFC3339)
 			}
-			items = append(items, UpdateHistoryItem{
-				Version: ver, Path: p, ModTime: mt, IsCurrent: ver == cur,
-			})
-			seen[ver] = true
-			continue
-		}
-		if strings.HasPrefix(name, "cardkey-") {
-			ver := normalizeVer(strings.TrimPrefix(name, "cardkey-"))
-			p := filepath.Join(dir, name)
-			info, _ := e.Info()
-			mt := ""
-			if info != nil {
-				mt = info.ModTime().UTC().Format(time.RFC3339)
+			byVer[ver] = &UpdateHistoryItem{
+				Version:    ver,
+				Path:       p,
+				ModTime:    mt,
+				IsCurrent:  ver == cur,
+				Source:     "local",
+				CanInstall: true,
 			}
-			items = append(items, UpdateHistoryItem{
-				Version: ver, Path: p, ModTime: mt, IsCurrent: ver == cur,
-			})
-			seen[ver] = true
 		}
 	}
-	if !seen[cur] {
-		items = append(items, UpdateHistoryItem{Version: cur, IsCurrent: true})
+
+	// 2) GitHub Release（远程可回滚目标）
+	if a.UpdateEnabled && a.UpdateGitHubOwner != "" && a.UpdateGitHubRepo != "" {
+		if rels, err := a.fetchReleasesList(ctx, 30); err == nil {
+			for _, rel := range rels {
+				ver := normalizeVer(rel.TagName)
+				if ver == "" {
+					continue
+				}
+				// 仅列出含当前架构 linux 资产的版本（或无资产列表时仍展示 tag）
+				hasLinux := false
+				for _, asset := range rel.Assets {
+					n := strings.ToLower(asset.Name)
+					if strings.Contains(n, "linux") && (strings.Contains(n, runtime.GOARCH) || strings.Contains(n, "amd64") || strings.Contains(n, "arm64")) {
+						hasLinux = true
+						break
+					}
+				}
+				// 资产列表空时仍展示（直链下载可能可用）
+				if len(rel.Assets) > 0 && !hasLinux {
+					// 再放宽：有 cardkey-linux- 即可
+					for _, asset := range rel.Assets {
+						if strings.Contains(strings.ToLower(asset.Name), "cardkey-linux") {
+							hasLinux = true
+							break
+						}
+					}
+					if !hasLinux {
+						continue
+					}
+				}
+				pub := ""
+				if !rel.PublishedAt.IsZero() {
+					pub = rel.PublishedAt.UTC().Format(time.RFC3339)
+				}
+				if it, ok := byVer[ver]; ok {
+					it.Source = "both"
+					it.CanInstall = true
+					if it.ModTime == "" {
+						it.ModTime = pub
+					}
+				} else {
+					byVer[ver] = &UpdateHistoryItem{
+						Version:    ver,
+						ModTime:    pub,
+						IsCurrent:  ver == cur,
+						Source:     "remote",
+						CanInstall: true,
+					}
+				}
+			}
+		}
+	}
+
+	if _, ok := byVer[cur]; !ok {
+		byVer[cur] = &UpdateHistoryItem{
+			Version:    cur,
+			IsCurrent:  true,
+			Source:     "local",
+			CanInstall: false,
+		}
+	} else {
+		byVer[cur].IsCurrent = true
+	}
+
+	items := make([]UpdateHistoryItem, 0, len(byVer))
+	for _, it := range byVer {
+		items = append(items, *it)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return semverGreater(items[i].Version, items[j].Version)
 	})
 	return items, nil
+}
+
+// fetchReleasesList 列出仓库 Release（供历史/回滚选版本）
+func (a *App) fetchReleasesList(ctx context.Context, perPage int) ([]ghRelease, error) {
+	if perPage < 1 {
+		perPage = 20
+	}
+	if perPage > 50 {
+		perPage = 50
+	}
+	url := fmt.Sprintf(
+		"https://api.github.com/repos/%s/%s/releases?per_page=%d",
+		a.UpdateGitHubOwner, a.UpdateGitHubRepo, perPage,
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "CardKey-Updater")
+	if tok := strings.TrimSpace(a.UpdateGitHubToken); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client := &http.Client{Timeout: 25 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return nil, fmt.Errorf("GitHub releases list %d: %s", resp.StatusCode, truncate(string(b), 200))
+	}
+	var list []ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
 // canApplyUpdate docker / binary 均可在线替换可执行文件后退出，由 Docker restart / systemd 拉起。
@@ -871,26 +970,69 @@ func (a *App) RollbackUpdate(ctx context.Context, targetVer, actor, ip string) e
 	if err != nil {
 		return apperr.Internal("无法定位当前可执行文件")
 	}
-	var src string
+
+	// .bak / previous：仅本机上一份备份
 	if targetVer == "" || targetVer == "previous" || targetVer == "bak" {
-		src = binPath + ".bak"
-	} else {
-		src = filepath.Join(a.writableReleasesDir(), targetVer, "cardkey")
+		src := binPath + ".bak"
+		if _, err := os.Stat(src); err != nil {
+			return apperr.NotFound("找不到 .bak 备份，请改用版本列表从本机归档或 GitHub Release 回滚")
+		}
+		return a.installLocalBinaryAndRestart(ctx, src, "previous", actor, ip, "rollback_bak")
 	}
-	if _, err := os.Stat(src); err != nil {
-		return apperr.NotFound("找不到可回滚版本: " + targetVer)
+
+	// 本机归档优先（DATA_DIR/releases/<ver>/cardkey）
+	localSrc := filepath.Join(a.writableReleasesDir(), targetVer, "cardkey")
+	if st, err := os.Stat(localSrc); err == nil && !st.IsDir() && st.Size() > 1_000_000 {
+		return a.installLocalBinaryAndRestart(ctx, localSrc, targetVer, actor, ip, "rollback_local")
 	}
+
+	// 无本机包：从 GitHub Release 下载目标版本（与一键更新同一路径）
+	if a.UpdateGitHubOwner == "" || a.UpdateGitHubRepo == "" {
+		return apperr.NotFound("本机无 v" + targetVer + " 归档，且未配置 GitHub 仓库，无法远程回滚")
+	}
+	a.Audit(ctx, "admin", actor, "update_rollback", "system",
+		"rollback v"+targetVer+" via remote download", ip)
+	a.setUpdateStatus(UpdateStatus{
+		State:    "checking",
+		Message:  "本机无归档，正在从 GitHub 下载 v" + targetVer + "…",
+		Progress: 5,
+	})
+	// ApplyUpdate 会再次 Audit update_apply；流程复用下载/校验/替换/重启
+	return a.ApplyUpdate(ctx, targetVer, actor, ip)
+}
+
+// installLocalBinaryAndRestart 用本机已有二进制替换当前进程文件并退出重启
+func (a *App) installLocalBinaryAndRestart(ctx context.Context, src, label, actor, ip, auditAction string) error {
+	preferred, err := a.currentBinaryPath()
+	if err != nil {
+		return apperr.Internal("无法定位当前可执行文件: " + err.Error())
+	}
+	binPath, err := a.pickWritableBinaryPath(preferred)
+	if err != nil {
+		return apperr.Internal("替换二进制失败: " + err.Error())
+	}
+	a.setUpdateStatus(UpdateStatus{State: "applying", Message: "切换到 v" + label + "…", Progress: 85})
 	if st, err := os.Stat(binPath); err == nil && !st.IsDir() {
 		_ = copyFile(binPath, binPath+".pre-rollback")
+		_ = copyFile(binPath, binPath+".bak")
 	}
 	if err := copyFile(src, binPath); err != nil {
+		a.setUpdateStatus(UpdateStatus{State: "failed", Error: err.Error()})
 		return apperr.Internal("回滚失败: " + err.Error())
 	}
 	_ = os.Chmod(binPath, 0o755)
-	a.Audit(ctx, "admin", actor, "update_rollback", "system", "rollback "+targetVer, ip)
+	if persist := a.persistentBinaryPath(); persist != "" && !sameFile(persist, binPath) {
+		_ = os.MkdirAll(filepath.Dir(persist), 0o755)
+		_ = copyFile(binPath, persist)
+		_ = os.Chmod(persist, 0o755)
+	}
+	a.Audit(ctx, "admin", actor, auditAction, "system", "rollback "+label, ip)
 	a.setUpdateStatus(UpdateStatus{State: "restarting", Message: "回滚完成，即将重启…", Progress: 95})
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
+		if a.Log != nil {
+			a.Log.Info("exiting for rollback restart", "version", label, "bin", binPath)
+		}
 		os.Exit(0)
 	}()
 	return nil

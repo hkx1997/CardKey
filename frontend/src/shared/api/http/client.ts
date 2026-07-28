@@ -469,6 +469,9 @@ export const httpClient = {
         path?: string;
         modTime?: string;
         isCurrent: boolean;
+        /** local | remote | both */
+        source?: string;
+        canInstall?: boolean;
       }>
     >("/api/v1/admin/updates/history"),
 

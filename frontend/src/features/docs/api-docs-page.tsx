@@ -45,7 +45,7 @@ export function ApiDocsPage() {
       <PageContainer narrow className="fade-in">
         <h1 className="text-2xl font-semibold tracking-tight">兑换端 API 文档</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          仅兑换相关接口（config / 库存 / redeem）· 权限 redeem:api · 不含管理接口
+          兑换接口请求示例与响应说明 · 权限 redeem:api · 不含接口总表与管理端
         </p>
         <div className="mt-8">
           <ApiDocsContent cfg={cfg} scope="public" />

@@ -1050,11 +1050,27 @@ export const mockClient = {
       path?: string;
       modTime?: string;
       isCurrent: boolean;
+      source?: string;
+      canInstall?: boolean;
     }>
   > {
     await delay();
     mockStore.requireSession();
-    return [{ version: "0.1.0-mock", isCurrent: true }];
+    return [
+      {
+        version: "0.1.0-mock",
+        isCurrent: true,
+        source: "local",
+        canInstall: false,
+      },
+      {
+        version: "0.0.9-mock",
+        isCurrent: false,
+        source: "remote",
+        canInstall: true,
+        modTime: new Date().toISOString(),
+      },
+    ];
   },
 
   async updateStatus() {

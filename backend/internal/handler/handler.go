@@ -769,7 +769,7 @@ func (h *Handler) CheckUpdates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateHistory(w http.ResponseWriter, r *http.Request) {
-	list, err := h.App.ListUpdateHistory()
+	list, err := h.App.ListUpdateHistory(r.Context())
 	if err != nil {
 		response.Fail(w, err)
 		return
