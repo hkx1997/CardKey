@@ -155,22 +155,6 @@ export function SystemVersion({ className }: { className?: string }) {
           </DialogHeader>
 
           <div className="dialog-body space-y-4 text-sm">
-            {infoQ.data?.migrationsEmbedded ? (
-              <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
-                <p className="font-medium text-foreground">数据库迁移随版本包</p>
-                <p className="mt-0.5">
-                  SQL 嵌入二进制；一键更新替换进程并重启后，会自动执行尚未应用的迁移（不删库、不
-                  down -v）。
-                </p>
-                {infoQ.data.migrationsApplied &&
-                infoQ.data.migrationsApplied.length > 0 ? (
-                  <p className="mt-1 font-mono text-[10px] break-all">
-                    已应用：{infoQ.data.migrationsApplied.join(", ")}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -233,7 +217,7 @@ export function SystemVersion({ className }: { className?: string }) {
                           rel="noreferrer"
                           className="underline underline-offset-2"
                         >
-                          查看 Release
+                          Release
                         </a>
                       </>
                     ) : null}
@@ -243,27 +227,33 @@ export function SystemVersion({ className }: { className?: string }) {
                     {check.message || "已是最新版本"}
                   </p>
                 )}
-                {check.hasUpdate && check.message ? (
-                  <p className="text-muted-foreground whitespace-pre-wrap">
-                    {check.message}
-                  </p>
-                ) : null}
-                {check.fromCache ? (
-                  <p className="text-[10px] text-muted-foreground/80">
-                    含缓存数据；点击「检测更新」会强制刷新
-                  </p>
-                ) : null}
-                {check.tokenRecommended && !check.latest ? (
-                  <p className="text-[10px] text-muted-foreground">
-                    可选配置{" "}
-                    <code className="font-mono">UPDATE_GITHUB_TOKEN</code>{" "}
-                    提高检测成功率（默认已走非 API 通道，无需 Token）。
-                  </p>
-                ) : null}
+                {/* 仅展示 Release 正文（更新内容），不展示运维说明 */}
                 {check.body ? (
-                  <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-background/60 p-2 font-sans text-[11px] text-muted-foreground">
-                    {check.body.slice(0, 2000)}
-                  </pre>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-medium text-foreground">
+                      更新内容
+                    </p>
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border bg-background/60 p-2 font-sans text-[11px] text-muted-foreground">
+                      {check.body.slice(0, 4000)}
+                    </pre>
+                  </div>
+                ) : check.hasUpdate ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    暂无 Release 说明
+                    {check.releaseUrl ? (
+                      <>
+                        ，可打开{" "}
+                        <a
+                          href={check.releaseUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline underline-offset-2"
+                        >
+                          Release 页
+                        </a>
+                      </>
+                    ) : null}
+                  </p>
                 ) : null}
                 {applyM.isPending || rollbackM.isPending ? (
                   <TaskProgress
@@ -276,51 +266,32 @@ export function SystemVersion({ className }: { className?: string }) {
                     detail="请勿关闭页面"
                   />
                 ) : null}
-                {check.hasUpdate ? (
-                  <div className="space-y-2">
-                    {(check.mode === "binary" || check.mode === "docker") && (
-                      <Button
-                        size="sm"
-                        className="w-full"
-                        loading={busy || applyM.isPending}
-                        disabled={busy || applyM.isPending || rollbackM.isPending}
-                        onClick={async () => {
-                          const ok = await confirm({
-                            title: `更新到 v${check.latest}`,
-                            description:
-                              "将下载 Linux 二进制（含内嵌数据库迁移），替换当前进程并自动重启；启动时执行未应用的 SQL。恢复后页面会自动强制刷新。",
-                            confirmLabel: "一键更新并重启",
-                            destructive: true,
-                          });
-                          if (!ok) return;
-                          await runApplyOrRollback({
-                            action: () => applyM.mutateAsync(check.latest),
-                            targetVersion: check.latest,
-                            label: "更新",
-                            failLabel: "更新失败",
-                          });
-                        }}
-                      >
-                        <ArrowUpCircle className="size-3.5" />
-                        一键更新并重启
-                      </Button>
-                    )}
-                    <p className="text-[10px] text-muted-foreground leading-relaxed">
-                      也可在服务器执行{" "}
-                      <code className="font-mono">
-                        bash scripts/upgrade.sh v{check.latest}
-                      </code>
-                      （只重建应用，不删库）。勿使用{" "}
-                      <code className="font-mono">down -v</code>。
-                    </p>
-                  </div>
-                ) : null}
-                {check.mode === "docker" ? (
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    Release 附带{" "}
-                    <code className="font-mono">cardkey-linux-amd64/arm64</code>
-                    ，一键更新会替换容器内二进制并由 restart 拉起。
-                  </p>
+                {check.hasUpdate &&
+                (check.mode === "binary" || check.mode === "docker") ? (
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    loading={busy || applyM.isPending}
+                    disabled={busy || applyM.isPending || rollbackM.isPending}
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: `更新到 v${check.latest}`,
+                        description: "下载并替换当前版本后自动重启，页面将自动刷新。",
+                        confirmLabel: "一键更新并重启",
+                        destructive: true,
+                      });
+                      if (!ok) return;
+                      await runApplyOrRollback({
+                        action: () => applyM.mutateAsync(check.latest),
+                        targetVersion: check.latest,
+                        label: "更新",
+                        failLabel: "更新失败",
+                      });
+                    }}
+                  >
+                    <ArrowUpCircle className="size-3.5" />
+                    一键更新并重启
+                  </Button>
                 ) : null}
               </div>
             ) : null}
@@ -330,9 +301,6 @@ export function SystemVersion({ className }: { className?: string }) {
                 <History className="size-3.5" />
                 版本历史 / 回滚
               </div>
-              <p className="mb-2 text-[10px] text-muted-foreground leading-relaxed">
-                合并本机归档与 GitHub Release。本机无包时将从远程下载后切换；迁移不可逆时请谨慎回滚。
-              </p>
               {historyQ.isLoading ? (
                 <Loader2 className="size-4 animate-spin text-muted-foreground" />
               ) : (historyQ.data ?? []).length === 0 ? (
@@ -394,8 +362,8 @@ export function SystemVersion({ className }: { className?: string }) {
                               const ok = await confirm({
                                 title: `切换到 v${h.version}`,
                                 description: fromRemote
-                                  ? "将优先使用本机归档；若无则从 GitHub Release 下载该版本二进制并重启。数据库迁移若不可逆请谨慎。恢复后页面会自动刷新。"
-                                  : "将使用本机归档切换到该版本并重启。恢复后页面会自动刷新。",
+                                  ? "将切换到该版本（本机无包则从 GitHub 下载）并重启。"
+                                  : "将切换到该版本并重启。",
                                 confirmLabel:
                                   h.source === "remote" ? "下载并回滚" : "回滚",
                                 destructive: true,
@@ -427,8 +395,7 @@ export function SystemVersion({ className }: { className?: string }) {
                   onClick={async () => {
                     const ok = await confirm({
                       title: "回滚到上一备份 (.bak)",
-                      description:
-                        "使用本机最近一次更新留下的 .bak 替换当前二进制并重启；与 GitHub 版本列表无关。",
+                      description: "使用本机 .bak 替换当前版本并重启。",
                       confirmLabel: "回滚 .bak",
                       destructive: true,
                     });

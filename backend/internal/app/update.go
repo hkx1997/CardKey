@@ -146,17 +146,16 @@ func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResul
 	} else if err != nil {
 		lastErr = err
 	}
-	if out.Authenticated {
-		if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
-			c := cand{ver: normalizeVer(rel.TagName), url: rel.HTMLURL, src: "api"}
-			cands = append(cands, c)
-			out.Body = rel.Body
-			if !rel.PublishedAt.IsZero() {
-				out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
-			}
-		} else if err != nil {
-			lastErr = err
+	// 公开/带 Token 均可尝试 API（用于版本号 + Release 正文「更新内容」）
+	if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
+		c := cand{ver: normalizeVer(rel.TagName), url: rel.HTMLURL, src: "api"}
+		cands = append(cands, c)
+		out.Body = rel.Body
+		if !rel.PublishedAt.IsZero() {
+			out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
 		}
+	} else if err != nil {
+		lastErr = err
 	}
 
 	var latest, htmlURL, src string
@@ -176,15 +175,15 @@ func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResul
 	if latest == "" {
 		if cached, ok := a.getUpdateCheckCacheStale(cur, mode); ok {
 			cached = finalizeUpdateResult(cached, cur, mode, true)
-			cached.Message = "远端暂不可达，已用缓存并按当前版本校正"
+			cached.Message = "远端暂不可达，已用缓存"
 			if lastErr != nil {
 				cached.Message += "（" + shortErr(lastErr) + "）"
 			}
 			return cached, nil
 		}
-		out.Message = "暂时无法获取远端版本。Docker 部署请在服务器执行：bash scripts/upgrade.sh"
+		out.Message = "暂时无法获取远端版本"
 		if lastErr != nil {
-			out.Message += " 详情：" + shortErr(lastErr)
+			out.Message += "：" + shortErr(lastErr)
 		}
 		out.TokenRecommended = !out.Authenticated
 		return out, nil
@@ -192,6 +191,18 @@ func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResul
 
 	out.Latest = latest
 	out.ReleaseURL = htmlURL
+	// 若最高版本来自非 API 源，补拉该 tag 的 Release 正文
+	if strings.TrimSpace(out.Body) == "" {
+		if rel, err := a.fetchReleaseByTag(ctx, latest); err == nil && rel != nil {
+			out.Body = rel.Body
+			if out.ReleaseURL == "" {
+				out.ReleaseURL = rel.HTMLURL
+			}
+			if out.PublishedAt == "" && !rel.PublishedAt.IsZero() {
+				out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+			}
+		}
+	}
 	out = finalizeUpdateResult(out, cur, mode, false)
 	if src != "" && a.Log != nil {
 		a.Log.Info("update check ok", "source", src, "latest", latest, "current", cur, "hasUpdate", out.HasUpdate)
@@ -215,14 +226,12 @@ func finalizeUpdateResult(in UpdateCheckResult, cur, mode string, fromCache bool
 	// 远端更旧：不当作更新
 	if out.Latest != "" && semverGreater(out.Current, out.Latest) {
 		out.HasUpdate = false
-		out.Message = "当前版本已新于远端记录（v" + out.Latest + "），无需更新"
+		out.Message = "当前已新于远端（v" + out.Latest + "）"
 	} else if out.HasUpdate {
-		out.Message = "发现新版本 v" + out.Latest +
-			"。一键更新会下载 Linux 二进制（内嵌 DB 迁移），替换后重启并自动执行未应用的 SQL；数据卷不删。" +
-			" 也可用：bash scripts/upgrade.sh v" + out.Latest
+		out.Message = "发现新版本 v" + out.Latest
 		out.ReleaseURL = strings.TrimSpace(out.ReleaseURL)
 	} else {
-		out.Message = "已是最新版本（内嵌迁移已在启动时校验）"
+		out.Message = "已是最新版本"
 	}
 	if fromCache {
 		if !strings.Contains(out.Message, "缓存") {
