@@ -577,11 +577,23 @@ export const mockClient = {
       if (n === 0 && before !== db.cards.length) {
         n = before - db.cards.length;
       }
-    } else {
+    } else if (action === "disable") {
       for (const id of ids) {
         const card = db.cards.find((c) => c.id === id);
-        if (!card || card.status === "used" || card.status === "expired") continue;
-        card.status = action === "disable" ? "disabled" : "unused";
+        if (!card || card.status !== "unused") continue;
+        card.status = "disabled";
+        n++;
+      }
+    } else {
+      // enable / restore: disabled + used → unused
+      for (const id of ids) {
+        const card = db.cards.find((c) => c.id === id);
+        if (!card || (card.status !== "disabled" && card.status !== "used")) {
+          continue;
+        }
+        card.status = "unused";
+        card.usedAt = null;
+        card.usedIp = null;
         n++;
       }
     }

@@ -317,19 +317,36 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 		return 0, apperr.Validation("未选择卡密")
 	}
 	switch action {
-	case "disable", "enable":
-		status := domain.StatusDisabled
-		if action == "enable" {
-			status = domain.StatusUnused
-		}
+	case "disable":
 		tag, err := a.Pool.Exec(ctx, `
 			UPDATE cards SET status=$1, updated_at=now()
-			WHERE id = ANY($2) AND status <> 'used' AND status <> 'expired'`, status, ids)
+			WHERE id = ANY($2) AND status = 'unused'`, domain.StatusDisabled, ids)
 		if err != nil {
 			return 0, err
 		}
 		n := int(tag.RowsAffected())
-		a.Audit(ctx, "admin", actor, "batch_"+action, "cards", fmt.Sprintf("%s %d 条", action, n), ip)
+		a.Audit(ctx, "admin", actor, "batch_disable", "cards", fmt.Sprintf("禁用 %d 条", n), ip)
+		return n, nil
+	case "enable", "restore":
+		// 启用：disabled → unused；复原：used → unused（清空 used_at/used_ip，历史 redeem_records 保留）
+		// 不处理 expired（仍视为失效）
+		tag, err := a.Pool.Exec(ctx, `
+			UPDATE cards SET
+				status = 'unused',
+				used_at = NULL,
+				used_ip = NULL,
+				updated_at = now(),
+				version = version + 1
+			WHERE id = ANY($1) AND status IN ('disabled', 'used')`, ids)
+		if err != nil {
+			return 0, err
+		}
+		n := int(tag.RowsAffected())
+		a.Audit(ctx, "admin", actor, "batch_enable", "cards",
+			fmt.Sprintf("启用/复原 %d 条（含已兑换复原）", n), ip)
+		if a.RDB != nil {
+			_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
+		}
 		return n, nil
 	case "delete":
 		// 仅允许删除未使用/已禁用；已兑换与过期保留审计与历史
@@ -343,7 +360,7 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 		a.Audit(ctx, "admin", actor, "batch_delete", "cards", fmt.Sprintf("删除 %d 条", n), ip)
 		return n, nil
 	default:
-		return 0, apperr.Validation("无效操作：支持 enable / disable / delete")
+		return 0, apperr.Validation("无效操作：支持 enable / disable / delete / restore")
 	}
 }
 

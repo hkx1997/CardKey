@@ -12,6 +12,8 @@ import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
+import { CopyIconButton } from "@/shared/components/copy-button";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -68,8 +70,22 @@ import { CardStatusBadge } from "@/shared/lib/status";
 const ALL = "__all__";
 const PAGE_SIZE = 20;
 
+/** 可勾选：未使用/禁用（禁用/删除）+ 已兑换（可复原启用） */
 function isSelectable(card: CardEntity) {
-  return card.status === "unused" || card.status === "disabled";
+  return (
+    card.status === "unused" ||
+    card.status === "disabled" ||
+    card.status === "used"
+  );
+}
+
+function copyCode(code: string, e?: React.MouseEvent) {
+  e?.stopPropagation();
+  e?.preventDefault();
+  void navigator.clipboard.writeText(code).then(
+    () => toast.success("已复制卡密"),
+    () => toast.error("复制失败"),
+  );
 }
 
 export function CardsPage() {
@@ -217,6 +233,24 @@ export function CardsPage() {
       });
       if (!ok) return;
     }
+    if (action === "enable") {
+      const usedN = pageItems.filter(
+        (c) => selected.has(c.id) && c.status === "used",
+      ).length;
+      const ok = await confirm({
+        title: `启用 / 复原 ${ids.length} 条卡密`,
+        description:
+          usedN > 0
+            ? `其中约 ${usedN} 条为已兑换，将清空兑换时间并恢复为「未使用」，可再次被兑换。历史兑换记录仍保留在「兑换记录」中。`
+            : "将选中的已禁用卡密恢复为「未使用」。",
+        confirmLabel: usedN > 0 ? "启用并复原" : "启用",
+        destructive: usedN > 0,
+      });
+      if (!ok) return;
+    }
+    if (action === "disable") {
+      // 只对未使用生效；已兑换不会被改
+    }
     actionM.mutate(
       { ids, action },
       { onSuccess: () => setSelected(new Set()) },
@@ -253,8 +287,24 @@ export function CardsPage() {
       {
         id: "code",
         header: "编码",
-        cellClassName: "font-mono text-xs max-w-[140px] truncate sm:max-w-none",
-        cell: (card) => card.code,
+        cellClassName: "max-w-[200px] sm:max-w-none",
+        cell: (card) => (
+          <div className="flex min-w-0 items-center gap-0.5">
+            <button
+              type="button"
+              title="点击复制"
+              className="min-w-0 truncate text-left font-mono text-xs text-foreground hover:text-primary hover:underline"
+              onClick={(e) => copyCode(card.code, e)}
+            >
+              {card.code}
+            </button>
+            <CopyIconButton
+              value={card.code}
+              label="复制卡密"
+              className="size-7 shrink-0"
+            />
+          </div>
+        ),
       },
       {
         id: "category",
@@ -331,7 +381,7 @@ export function CardsPage() {
         description={
           batchFromUrl
             ? "当前按批次筛选 · 可清除筛选后查看全部"
-            : "按类别隔离的库存；支持批量导出/启用/禁用/删除"
+            : "按类别隔离的库存；支持批量导出、启用/复原（含已兑换）、禁用、删除"
         }
         actions={
           <>
@@ -409,7 +459,7 @@ export function CardsPage() {
                       disabled={actionM.isPending}
                     >
                       <CheckCircle />
-                      启用
+                      启用/复原
                     </Button>
                     <Button
                       variant="destructive"
@@ -511,10 +561,22 @@ export function CardsPage() {
             mobileCard={(card) => (
               <div className="space-y-2.5 rounded-xl border border-border/70 p-3">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-mono text-xs font-medium">
-                      {card.code}
-                    </p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        title="点击复制"
+                        className="min-w-0 truncate text-left font-mono text-xs font-medium hover:text-primary hover:underline"
+                        onClick={(e) => copyCode(card.code, e)}
+                      >
+                        {card.code}
+                      </button>
+                      <CopyIconButton
+                        value={card.code}
+                        label="复制卡密"
+                        className="size-7 shrink-0"
+                      />
+                    </div>
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       <Badge variant="secondary">
                         {card.categoryName ?? card.categorySlug}
@@ -575,8 +637,26 @@ export function CardsPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>卡密详情</DialogTitle>
-            <DialogDescription className="break-all font-mono text-xs">
-              {detailQ.data?.code}
+            <DialogDescription asChild>
+              <div className="flex items-start gap-1">
+                <button
+                  type="button"
+                  title="点击复制"
+                  className="min-w-0 flex-1 break-all text-left font-mono text-xs text-muted-foreground hover:text-primary hover:underline"
+                  onClick={(e) =>
+                    detailQ.data?.code && copyCode(detailQ.data.code, e)
+                  }
+                >
+                  {detailQ.data?.code}
+                </button>
+                {detailQ.data?.code ? (
+                  <CopyIconButton
+                    value={detailQ.data.code}
+                    label="复制卡密"
+                    className="size-7 shrink-0"
+                  />
+                ) : null}
+              </div>
             </DialogDescription>
           </DialogHeader>
           {detailQ.data && (
@@ -633,49 +713,70 @@ export function CardsPage() {
               </div>
               {isSelectable(detailQ.data) ? (
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={actionM.isPending}
-                    onClick={() => {
-                      actionM.mutate(
-                        {
-                          ids: [detailQ.data!.id],
-                          action:
-                            detailQ.data!.status === "disabled"
-                              ? "enable"
-                              : "disable",
-                        },
-                        {
-                          onSuccess: () => {
-                            setDetailId(null);
-                          },
-                        },
-                      );
-                    }}
-                  >
-                    {detailQ.data.status === "disabled" ? "启用" : "禁用"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={actionM.isPending}
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: "删除该卡密",
-                        description: `确认删除 ${detailQ.data!.code}？不可恢复。`,
-                        confirmLabel: "删除",
-                        destructive: true,
-                      });
-                      if (!ok) return;
-                      actionM.mutate(
-                        { ids: [detailQ.data!.id], action: "delete" },
-                        { onSuccess: () => setDetailId(null) },
-                      );
-                    }}
-                  >
-                    删除
-                  </Button>
+                  {detailQ.data.status === "unused" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={actionM.isPending}
+                      onClick={() => {
+                        actionM.mutate(
+                          { ids: [detailQ.data!.id], action: "disable" },
+                          { onSuccess: () => setDetailId(null) },
+                        );
+                      }}
+                    >
+                      禁用
+                    </Button>
+                  ) : null}
+                  {detailQ.data.status === "disabled" ||
+                  detailQ.data.status === "used" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={actionM.isPending}
+                      onClick={async () => {
+                        if (detailQ.data!.status === "used") {
+                          const ok = await confirm({
+                            title: "复原已兑换卡密",
+                            description:
+                              "将清空兑换时间并恢复为「未使用」，可再次被兑换。历史兑换记录仍保留。",
+                            confirmLabel: "复原",
+                            destructive: true,
+                          });
+                          if (!ok) return;
+                        }
+                        actionM.mutate(
+                          { ids: [detailQ.data!.id], action: "enable" },
+                          { onSuccess: () => setDetailId(null) },
+                        );
+                      }}
+                    >
+                      {detailQ.data.status === "used" ? "复原为未使用" : "启用"}
+                    </Button>
+                  ) : null}
+                  {detailQ.data.status === "unused" ||
+                  detailQ.data.status === "disabled" ? (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={actionM.isPending}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: "删除该卡密",
+                          description: `确认删除 ${detailQ.data!.code}？不可恢复。`,
+                          confirmLabel: "删除",
+                          destructive: true,
+                        });
+                        if (!ok) return;
+                        actionM.mutate(
+                          { ids: [detailQ.data!.id], action: "delete" },
+                          { onSuccess: () => setDetailId(null) },
+                        );
+                      }}
+                    >
+                      删除
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
             </div>

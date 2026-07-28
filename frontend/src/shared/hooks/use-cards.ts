@@ -46,7 +46,7 @@ export function useBatchCardAction() {
         v.action === "disable"
           ? "禁用"
           : v.action === "enable"
-            ? "启用"
+            ? "启用/复原"
             : "删除";
       toast.success(`已${label} ${n} 条`);
       // 列表为主，详情后台 bump
