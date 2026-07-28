@@ -734,6 +734,61 @@ function PageSizeSettingsPanel() {
   );
 }
 
+/** 将 otpauth URI 渲染为可扫二维码 */
+function TotpQrCode({ uri }: { uri: string }) {
+  const [dataUrl, setDataUrl] = useState<string>("");
+  const [err, setErr] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setDataUrl("");
+    setErr("");
+    void (async () => {
+      try {
+        const QRCode = (await import("qrcode")).default;
+        const url = await QRCode.toDataURL(uri, {
+          width: 220,
+          margin: 2,
+          errorCorrectionLevel: "M",
+          color: { dark: "#0a0a0a", light: "#ffffff" },
+        });
+        if (!cancelled) setDataUrl(url);
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e instanceof Error ? e.message : "二维码生成失败");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  if (err) {
+    return (
+      <p className="text-[11px] text-destructive">
+        二维码生成失败：{err}，请改用下方密钥手动录入
+      </p>
+    );
+  }
+  if (!dataUrl) {
+    return (
+      <div className="flex h-[220px] w-[220px] items-center justify-center rounded-lg border border-border/60 bg-muted/30 text-[11px] text-muted-foreground">
+        生成二维码…
+      </div>
+    );
+  }
+  return (
+    <img
+      src={dataUrl}
+      alt="两步验证绑定二维码"
+      width={220}
+      height={220}
+      className="rounded-lg border border-border/60 bg-white p-1 shadow-sm"
+    />
+  );
+}
+
 /** 管理员两步验证（TOTP） */
 function TotpSecurityPanel() {
   const { user, refresh } = useAuth();
@@ -741,14 +796,16 @@ function TotpSecurityPanel() {
   const [uri, setUri] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
 
   async function begin() {
     setBusy(true);
+    setShowSecret(false);
     try {
       const r = await api.beginTotpSetup();
       setSecret(r.secret);
       setUri(r.otpauthUri);
-      toast.message("请用 Authenticator 扫描/录入密钥后输入验证码确认");
+      toast.message("请用 Authenticator 扫描二维码，再输入 6 位验证码确认");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "无法开始绑定");
     } finally {
@@ -764,6 +821,7 @@ function TotpSecurityPanel() {
       setSecret("");
       setUri("");
       setCode("");
+      setShowSecret(false);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "确认失败");
@@ -791,7 +849,7 @@ function TotpSecurityPanel() {
   }
 
   return (
-    <div className="rounded-lg border border-border/70 p-3 space-y-2">
+    <div className="rounded-lg border border-border/70 p-3 space-y-3">
       <div className="text-xs font-medium">
         两步验证（TOTP）
         <span className="ml-2 text-[11px] font-normal text-muted-foreground">
@@ -800,33 +858,111 @@ function TotpSecurityPanel() {
       </div>
       {!user?.totpEnabled ? (
         <>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void begin()}>
-            开始绑定
-          </Button>
-          {secret ? (
-            <div className="space-y-2 text-[11px]">
-              <p className="break-all font-mono">密钥：{secret}</p>
-              <p className="break-all text-muted-foreground">{uri}</p>
-              <FormField label="验证码确认">
-                <Input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="6 位"
-                />
-              </FormField>
-              <Button size="sm" disabled={busy} onClick={() => void confirm()}>
-                确认启用
+          {!uri ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-muted-foreground">
+                使用 Google Authenticator、Microsoft Authenticator 或 1Password 等扫描二维码绑定。
+              </p>
+              <Button size="sm" variant="secondary" disabled={busy} onClick={() => void begin()}>
+                开始绑定
               </Button>
             </div>
-          ) : null}
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                <div className="shrink-0">
+                  <TotpQrCode uri={uri} />
+                  <p className="mt-1.5 max-w-[220px] text-center text-[11px] text-muted-foreground">
+                    用 Authenticator 扫码
+                  </p>
+                </div>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    1. 打开 Authenticator → 添加账户 → 扫描二维码
+                    <br />
+                    2. 输入应用中显示的 6 位动态码
+                    <br />
+                    3. 点「确认启用」完成绑定
+                  </p>
+                  <FormField label="验证码确认" required>
+                    <Input
+                      value={code}
+                      onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="6 位动态码"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      className="max-w-[10rem] font-mono tracking-widest"
+                    />
+                  </FormField>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      disabled={busy || code.trim().length !== 6}
+                      onClick={() => void confirm()}
+                    >
+                      确认启用
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setSecret("");
+                        setUri("");
+                        setCode("");
+                        setShowSecret(false);
+                      }}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      onClick={() => setShowSecret((v) => !v)}
+                    >
+                      {showSecret ? "隐藏手动密钥" : "无法扫码？手动输入密钥"}
+                    </button>
+                    {showSecret ? (
+                      <div className="mt-1.5 space-y-1 rounded-md border border-border/60 bg-muted/20 p-2 text-[11px]">
+                        <p className="text-muted-foreground">密钥（Base32）：</p>
+                        <p className="break-all font-mono text-xs select-all">{secret}</p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(secret).then(
+                              () => toast.success("密钥已复制"),
+                              () => toast.error("复制失败"),
+                            );
+                          }}
+                        >
+                          复制密钥
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="space-y-2">
+          <p className="text-[11px] text-muted-foreground">
+            已启用。关闭时需输入当前 Authenticator 中的 6 位验证码。
+          </p>
           <FormField label="验证码（关闭时需校验）">
             <Input
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               placeholder="6 位"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              className="max-w-[10rem] font-mono tracking-widest"
             />
           </FormField>
           <Button
