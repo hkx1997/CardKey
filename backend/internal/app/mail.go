@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -14,7 +15,47 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 )
 
-// parseMailRecipients 支持逗号/分号/换行分隔
+// isValidEmailAddr 校验可作 RCPT 的邮箱（拒绝「您好」等中文昵称）
+func isValidEmailAddr(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || !strings.Contains(s, "@") {
+		return false
+	}
+	// 不允许空白/中文等非地址字符混在裸地址里
+	for _, r := range s {
+		if r > 127 || r == ' ' || r == '<' || r == '>' {
+			// 允许 "Name <a@b.com>" 形式，走 mail.ParseAddress
+			break
+		}
+	}
+	addr, err := mail.ParseAddress(s)
+	if err != nil {
+		return false
+	}
+	a := strings.TrimSpace(addr.Address)
+	if a == "" || !strings.Contains(a, "@") {
+		return false
+	}
+	parts := strings.Split(a, "@")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || !strings.Contains(parts[1], ".") {
+		return false
+	}
+	return true
+}
+
+func normalizeEmailAddr(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if !isValidEmailAddr(s) {
+		return "", apperr.Validation("收件人邮箱格式无效（请填写如 name@qq.com，不要填昵称）")
+	}
+	addr, err := mail.ParseAddress(s)
+	if err != nil {
+		return "", apperr.Validation("收件人邮箱格式无效")
+	}
+	return strings.TrimSpace(addr.Address), nil
+}
+
+// parseMailRecipients 支持逗号/分号/换行分隔；仅保留合法邮箱
 func parseMailRecipients(s string) []string {
 	s = strings.ReplaceAll(s, ";", ",")
 	s = strings.ReplaceAll(s, "\n", ",")
@@ -22,8 +63,8 @@ func parseMailRecipients(s string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, p := range parts {
-		e := strings.TrimSpace(p)
-		if e == "" || !strings.Contains(e, "@") {
+		e, err := normalizeEmailAddr(p)
+		if err != nil {
 			continue
 		}
 		low := strings.ToLower(e)
@@ -94,6 +135,16 @@ func (a *App) SendMail(ctx context.Context, to []string, subject, plainBody stri
 	if len(to) == 0 {
 		return apperr.Validation("收件人为空")
 	}
+	// 规范化并过滤非法地址，避免 SMTP 501 Bad address syntax
+	clean := make([]string, 0, len(to))
+	for _, raw := range to {
+		e, err := normalizeEmailAddr(raw)
+		if err != nil {
+			return apperr.Validation("收件人「" + strings.TrimSpace(raw) + "」不是有效邮箱，请填写如 name@qq.com")
+		}
+		clean = append(clean, e)
+	}
+	to = clean
 	cfg, err := a.loadSMTPRuntime(ctx)
 	if err != nil {
 		return err
@@ -220,6 +271,12 @@ func (a *App) TestSMTP(ctx context.Context, toEmail string, actor, ip string) er
 		a.Audit(ctx, "admin", actor, "mail_test_connect", "settings", "SMTP 连通测试", ip)
 		return nil
 	}
+	// 先校验格式，避免 QQ 等返回 501 Bad address syntax
+	norm, err := normalizeEmailAddr(toEmail)
+	if err != nil {
+		return err
+	}
+	toEmail = norm
 	site := "CardKey"
 	if s, err := a.GetSettings(ctx); err == nil && s.SiteName != "" {
 		site = s.SiteName

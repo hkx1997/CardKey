@@ -435,7 +435,13 @@ export function SettingsPage() {
                 type="button"
                 disabled={testMailM.isPending || !testTo.trim()}
                 onClick={() => {
-                  const send = () => testMailM.mutate(testTo.trim());
+                  const to = testTo.trim();
+                  // 简单校验：须为邮箱，不能是「您好」等昵称
+                  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+                    toast.error("请填写有效邮箱，例如 name@qq.com");
+                    return;
+                  }
+                  const send = () => testMailM.mutate(to);
                   if (dirty) {
                     m.mutate(form, {
                       onSuccess: (data) => {
