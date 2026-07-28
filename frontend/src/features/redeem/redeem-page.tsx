@@ -23,6 +23,7 @@ import type { PublicCategory, RedeemResult } from "@/entities/types";
 import { CardContentView } from "@/shared/components/card-content-view";
 import { RichTextView } from "@/shared/components/rich-text-view";
 import { SiteBrand } from "@/shared/components/site-brand";
+import { TaskProgress } from "@/shared/components/task-progress";
 import { ThemeToggleButton } from "@/shared/components/theme-toggle-button";
 import {
   PUBLIC_STOCK_POLL_MS,
@@ -419,14 +420,12 @@ export function RedeemPage() {
               )}
             </Button>
             {progress ? (
-              <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-300"
-                  style={{
-                    width: `${Math.round((progress.done / progress.total) * 100)}%`,
-                  }}
-                />
-              </div>
+              <TaskProgress
+                active={progress.done < progress.total}
+                percent={(progress.done / progress.total) * 100}
+                label="批量兑换中…"
+                detail={`${progress.done} / ${progress.total}`}
+              />
             ) : null}
           </form>
 

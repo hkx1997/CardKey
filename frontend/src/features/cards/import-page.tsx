@@ -25,6 +25,7 @@ import { FormActions } from "@/shared/components/form-actions";
 import { FormField } from "@/shared/components/form-field";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
+import { TaskProgress } from "@/shared/components/task-progress";
 import { useImportCards } from "@/shared/hooks/use-cards";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
 import { CARD_TYPE_OPTIONS } from "@/shared/lib/card-content";
@@ -81,6 +82,7 @@ export function ImportPage() {
       return;
     }
     setErrors({});
+    setResultCodes(null);
     m.mutate(
       {
         ...parsed.data,
@@ -91,6 +93,8 @@ export function ImportPage() {
       },
     );
   }
+
+  const importLineCount = previewLines.length;
 
   return (
     <PageContainer>
@@ -106,6 +110,13 @@ export function ImportPage() {
             <CardDescription>每行一条 · 支持 TXT / CSV 上传</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {m.isPending ? (
+              <TaskProgress
+                active
+                label="正在导入卡密…"
+                detail={`约 ${importLineCount} 行`}
+              />
+            ) : null}
             <FormField label="类别" required error={errors.categoryId}>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger>

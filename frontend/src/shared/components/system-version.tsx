@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/shared/components/confirm-dialog";
+import { TaskProgress } from "@/shared/components/task-progress";
 import {
   useApplyUpdate,
   useCheckUpdates,
@@ -163,6 +164,17 @@ export function SystemVersion({ className }: { className?: string }) {
                     {check.body.slice(0, 2000)}
                   </pre>
                 ) : null}
+                {applyM.isPending || rollbackM.isPending ? (
+                  <TaskProgress
+                    active
+                    label={
+                      applyM.isPending
+                        ? "正在下载并应用更新…"
+                        : "正在回滚版本…"
+                    }
+                    detail="请勿关闭页面"
+                  />
+                ) : null}
                 {check.hasUpdate ? (
                   <div className="space-y-2">
                     {(check.mode === "binary" || check.mode === "docker") && (
@@ -170,6 +182,7 @@ export function SystemVersion({ className }: { className?: string }) {
                         size="sm"
                         className="w-full"
                         loading={applyM.isPending}
+                        disabled={applyM.isPending || rollbackM.isPending}
                         onClick={async () => {
                           const ok = await confirm({
                             title: `更新到 v${check.latest}`,

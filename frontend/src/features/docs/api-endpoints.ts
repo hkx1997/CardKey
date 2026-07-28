@@ -39,7 +39,7 @@ export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "{prefix}/public/category-stock",
     auth: "无",
-    desc: "轻量类别库存快照（兑换端轮询）；data.categories[].unusedCount",
+    desc: "轻量类别库存快照（兑换端轮询）；支持 ETag / If-None-Match 304；data.categories[].unusedCount",
   },
   {
     method: "GET",
@@ -191,9 +191,9 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "POST",
     path: "{prefix}/admin/cards/export",
     auth: "JWT / admin:api",
-    desc: "导出卡密编码；可传 ids 导出已选，或 status/q/category/batchId 筛选",
-    body: '{ "ids"?: [], "status"?, "q"?, "category"?, "batchId"? }',
-  },
+    desc: "导出卡密编码；format=txt 或 Accept:text/plain 时流式纯文本（X-Export-Total）；JSON 返回 codes[]",
+    body: '{ "ids"?: [], "status"?, "q"?, "category"?, "batchId"?, "format"?: "txt" }',
+  }
   {
     method: "GET",
     path: "{prefix}/admin/batches",

@@ -411,6 +411,19 @@ html[data-cardkey-theme-transition="running"] *:not(.theme-toggle):not(
   stroke: var(--foreground);
 }
 
+/* 不确定进度条滑动 */
+@keyframes task-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+.task-progress-indeterminate {
+  animation: task-progress-slide 1.2s ease-in-out infinite;
+}
+
 /* —— 全局 UI 动效 —— */
 @layer utilities {
   .interactive-press {

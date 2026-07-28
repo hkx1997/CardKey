@@ -44,8 +44,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const httpClient = {
   getPublicConfig: () => request<PublicConfig>("/api/v1/public/config"),
 
-  getPublicCategoryStock: () =>
-    request<PublicStock>("/api/v1/public/category-stock"),
+  /** 库存轮询：支持 ETag/304，未变时返回缓存 */
+  getPublicCategoryStock: (() => {
+    let etag: string | null = null;
+    let cached: PublicStock | null = null;
+    return async (): Promise<PublicStock> => {
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+      };
+      if (etag) headers["If-None-Match"] = etag;
+      const res = await fetch("/api/v1/public/category-stock", {
+        credentials: "include",
+        cache: "no-store",
+        headers,
+      });
+      if (res.status === 304 && cached) {
+        return cached;
+      }
+      const body = (await res.json().catch(() => null)) as ApiEnvelope<PublicStock> | null;
+      if (!res.ok || !body?.success) {
+        throw new ApiError(
+          res.status,
+          body?.error?.code ?? "INTERNAL_ERROR",
+          body?.error?.message ?? (res.statusText || "请求失败"),
+        );
+      }
+      const nextEtag = res.headers.get("ETag");
+      if (nextEtag) etag = nextEtag;
+      cached = body.data as PublicStock;
+      return cached;
+    };
+  })(),
 
   setupStatus: () =>
     request<{
@@ -217,24 +246,78 @@ export const httpClient = {
       body: JSON.stringify({ ids, action }),
     }),
 
-  /** 导出卡密编码（一行一个）；ids 优先，否则按筛选 */
-  exportCards: (params: {
-    ids?: string[];
-    status?: CardStatus | "all";
-    q?: string;
-    batchId?: string;
-    categorySlug?: string;
-  }) =>
-    request<{ codes: string[]; total: number }>("/api/v1/admin/cards/export", {
+  /** 导出卡密编码（一行一个）；默认流式 txt，省内存并支持进度 */
+  exportCards: async (
+    params: {
+      ids?: string[];
+      status?: CardStatus | "all";
+      q?: string;
+      batchId?: string;
+      categorySlug?: string;
+    },
+    opts?: { onProgress?: (done: number, total: number) => void },
+  ): Promise<{ codes: string[]; total: number }> => {
+    const res = await fetch("/api/v1/admin/cards/export", {
       method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/plain",
+      },
       body: JSON.stringify({
         ids: params.ids,
         status: params.status && params.status !== "all" ? params.status : undefined,
         q: params.q || undefined,
         category: params.categorySlug || undefined,
         batchId: params.batchId || undefined,
+        format: "txt",
       }),
-    }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as ApiEnvelope<unknown> | null;
+      throw new ApiError(
+        res.status,
+        body?.error?.code ?? "INTERNAL_ERROR",
+        body?.error?.message ?? (res.statusText || "导出失败"),
+      );
+    }
+    const totalHeader = Number(res.headers.get("X-Export-Total") || 0);
+    const reader = res.body?.getReader();
+    if (!reader) {
+      const text = await res.text();
+      const codes = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"));
+      return { codes, total: codes.length };
+    }
+    const decoder = new TextDecoder();
+    let buf = "";
+    const codes: string[] = [];
+    let doneCount = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop() ?? "";
+      for (const line of parts) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        codes.push(t);
+        doneCount++;
+        opts?.onProgress?.(doneCount, totalHeader || doneCount);
+      }
+    }
+    const last = buf.trim();
+    if (last && !last.startsWith("#")) {
+      codes.push(last);
+      doneCount++;
+      opts?.onProgress?.(doneCount, totalHeader || doneCount);
+    }
+    return { codes, total: codes.length };
+  },
 
   listBatches: (categorySlug?: string) => {
     const sp = new URLSearchParams();

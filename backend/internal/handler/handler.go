@@ -68,8 +68,14 @@ func (h *Handler) GetPublicCategoryStock(w http.ResponseWriter, r *http.Request)
 		response.Fail(w, err)
 		return
 	}
-	// 允许短缓存，减轻轮询压力；浏览器/CDN 仍可 no-store 时以服务端为准
-	w.Header().Set("Cache-Control", "public, max-age=5")
+	etag := app.PublicStockETag(stock)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	// 协商缓存：库存未变时 304，减流量
+	if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	response.OK(w, stock)
 }
 
@@ -472,10 +478,12 @@ func (h *Handler) BatchAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExportCards 导出卡密编码（一行一个）。
-// GET：按 query 筛选；POST：可带 ids 导出已选，或与 GET 相同筛选字段。
+// GET：按 query 筛选；POST：可带 ids 导出已选。
+// format=txt 或 Accept: text/plain 时流式写出纯文本（省内存）。
 func (h *Handler) ExportCards(w http.ResponseWriter, r *http.Request) {
 	var ids []string
 	status, q, category, batchID := "", "", "", ""
+	streamTxt := false
 	if r.Method == http.MethodPost {
 		var in struct {
 			IDs      []string `json:"ids"`
@@ -483,6 +491,7 @@ func (h *Handler) ExportCards(w http.ResponseWriter, r *http.Request) {
 			Q        string   `json:"q"`
 			Category string   `json:"category"`
 			BatchID  string   `json:"batchId"`
+			Format   string   `json:"format"`
 		}
 		if err := h.decode(r, &in); err != nil {
 			response.Fail(w, err)
@@ -490,6 +499,7 @@ func (h *Handler) ExportCards(w http.ResponseWriter, r *http.Request) {
 		}
 		ids = in.IDs
 		status, q, category, batchID = in.Status, in.Q, in.Category, in.BatchID
+		streamTxt = strings.EqualFold(in.Format, "txt") || strings.EqualFold(in.Format, "text")
 	} else {
 		qq := r.URL.Query()
 		status = qq.Get("status")
@@ -499,9 +509,43 @@ func (h *Handler) ExportCards(w http.ResponseWriter, r *http.Request) {
 		if raw := strings.TrimSpace(qq.Get("ids")); raw != "" {
 			ids = strings.Split(raw, ",")
 		}
+		streamTxt = qq.Get("format") == "txt" || qq.Get("format") == "text"
 	}
-	codes, err := h.App.ExportCardCodes(r.Context(), status, q, category, batchID, ids,
-		middleware.Username(r.Context()), middleware.ClientIP(r))
+	if !streamTxt {
+		accept := r.Header.Get("Accept")
+		streamTxt = strings.Contains(accept, "text/plain")
+	}
+
+	actor := middleware.Username(r.Context())
+	ip := middleware.ClientIP(r)
+
+	if streamTxt {
+		n, err := h.App.StreamExportCardCodes(
+			r.Context(), w, status, q, category, batchID, ids, actor, ip,
+			func(total int) error {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.Header().Set("Content-Disposition", `attachment; filename="cards-export.txt"`)
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("X-Export-Total", strconv.Itoa(total))
+				w.WriteHeader(http.StatusOK)
+				return nil
+			},
+			nil,
+		)
+		if err != nil {
+			// 若尚未写头则 JSON 错误；已写头则追加注释
+			if w.Header().Get("Content-Type") == "" {
+				response.Fail(w, err)
+				return
+			}
+			_, _ = w.Write([]byte("\n# export error: " + err.Error() + "\n"))
+			return
+		}
+		_ = n
+		return
+	}
+
+	codes, err := h.App.ExportCardCodes(r.Context(), status, q, category, batchID, ids, actor, ip)
 	if err != nil {
 		response.Fail(w, err)
 		return

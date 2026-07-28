@@ -3,6 +3,7 @@ import { toast } from "sonner";
 
 import { ApiError } from "@/entities/types";
 import { api } from "@/shared/api/client";
+import { useDocumentVisible } from "@/shared/hooks/use-visible";
 import { getErrorMessage } from "@/shared/lib/api-toast";
 import type { BatchRedeemItem } from "@/shared/lib/redeem-zip";
 import { queryKeys } from "@/shared/lib/query-keys";
@@ -19,20 +20,22 @@ export function usePublicConfigQuery() {
 /** 兑换端类别库存默认轮询间隔（毫秒） */
 export const PUBLIC_STOCK_POLL_MS = 10_000;
 
-/** 兑换端类别库存：默认 10s 轮询，窗口聚焦时也会刷新 */
+/** 兑换端类别库存：默认 10s 轮询；页面不可见时暂停 */
 export function usePublicCategoryStockQuery(opts?: {
   /** 轮询间隔 ms，默认 10000；0 关闭轮询 */
   intervalMs?: number;
   enabled?: boolean;
 }) {
+  const visible = useDocumentVisible();
   const interval =
     opts?.intervalMs === undefined ? PUBLIC_STOCK_POLL_MS : opts.intervalMs;
+  const enabled = opts?.enabled !== false && visible;
   return useQuery({
     queryKey: queryKeys.publicCategoryStock,
     queryFn: () => api.getPublicCategoryStock(),
-    enabled: opts?.enabled !== false,
+    enabled,
     staleTime: Math.min(5_000, Math.max(0, interval)),
-    refetchInterval: interval > 0 ? interval : false,
+    refetchInterval: enabled && interval > 0 ? interval : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });

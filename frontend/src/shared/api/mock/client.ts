@@ -597,13 +597,16 @@ export const mockClient = {
     return n;
   },
 
-  async exportCards(params: {
-    ids?: string[];
-    status?: CardStatus | "all";
-    q?: string;
-    batchId?: string;
-    categorySlug?: string;
-  }): Promise<{ codes: string[]; total: number }> {
+  async exportCards(
+    params: {
+      ids?: string[];
+      status?: CardStatus | "all";
+      q?: string;
+      batchId?: string;
+      categorySlug?: string;
+    },
+    opts?: { onProgress?: (done: number, total: number) => void },
+  ): Promise<{ codes: string[]; total: number }> {
     await delay();
     mockStore.requireSession();
     const db = mockStore.getDb();
@@ -637,6 +640,7 @@ export const mockClient = {
     );
     if (items.length === 0) err(400, "VALIDATION_ERROR", "没有可导出的卡密");
     const codes = items.map((c) => c.code);
+    opts?.onProgress?.(codes.length, codes.length);
     return { codes, total: codes.length };
   },
 

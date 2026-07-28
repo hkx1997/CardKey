@@ -387,14 +387,12 @@ func (a *App) DeleteBatch(ctx context.Context, id, actor, ip string) error {
 // maxExportCodes 单次导出上限，防止一次拉爆内存。
 const maxExportCodes = 100_000
 
-// ExportCardCodes 导出卡密编码（一行一个）。ids 非空时仅导出指定 ID，否则按筛选条件。
-func (a *App) ExportCardCodes(ctx context.Context, status, q, categorySlug, batchID string, ids []string, actor, ip string) ([]string, error) {
+// exportCardsWhere 构建导出/流式导出共用 WHERE。
+func exportCardsWhere(status, q, categorySlug, batchID string, ids []string) (wsql string, args []any, err error) {
 	where := []string{"1=1"}
-	args := []any{}
+	args = []any{}
 	i := 1
-
 	if len(ids) > 0 {
-		// 仅导出指定 ID（保持请求顺序不强制，按创建时间倒序）
 		ph := make([]string, 0, len(ids))
 		for _, id := range ids {
 			id = strings.TrimSpace(id)
@@ -406,7 +404,7 @@ func (a *App) ExportCardCodes(ctx context.Context, status, q, categorySlug, batc
 			i++
 		}
 		if len(ph) == 0 {
-			return nil, apperr.Validation("未选择任何卡密")
+			return "", nil, apperr.Validation("未选择任何卡密")
 		}
 		where = append(where, "cards.id IN ("+strings.Join(ph, ",")+")")
 	} else {
@@ -431,8 +429,15 @@ func (a *App) ExportCardCodes(ctx context.Context, status, q, categorySlug, batc
 			i++
 		}
 	}
-	wsql := strings.Join(where, " AND ")
+	return strings.Join(where, " AND "), args, nil
+}
 
+// ExportCardCodes 导出卡密编码（一行一个）。ids 非空时仅导出指定 ID，否则按筛选条件。
+func (a *App) ExportCardCodes(ctx context.Context, status, q, categorySlug, batchID string, ids []string, actor, ip string) ([]string, error) {
+	wsql, args, err := exportCardsWhere(status, q, categorySlug, batchID, ids)
+	if err != nil {
+		return nil, err
+	}
 	var total int
 	countSQL := `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
 	if err := a.Pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
@@ -467,18 +472,84 @@ func (a *App) ExportCardCodes(ctx context.Context, status, q, categorySlug, batc
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	a.auditExport(ctx, len(codes), batchID, len(ids) > 0, actor, ip)
+	return codes, nil
+}
 
-	detail := fmt.Sprintf("count=%d", len(codes))
+// StreamExportCardCodes 流式写出编码（一行一个），避免大导出整表进内存。
+// beforeWrite 在开始写出前调用（可写 Content-Length/X-Export-Total 头）；onCount 每条进度。
+func (a *App) StreamExportCardCodes(
+	ctx context.Context,
+	w interface{ Write([]byte) (int, error) },
+	status, q, categorySlug, batchID string,
+	ids []string,
+	actor, ip string,
+	beforeWrite func(total int) error,
+	onCount func(n, total int),
+) (int, error) {
+	wsql, args, err := exportCardsWhere(status, q, categorySlug, batchID, ids)
+	if err != nil {
+		return 0, err
+	}
+	var total int
+	countSQL := `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
+	if err := a.Pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	if total == 0 {
+		return 0, apperr.Validation("没有可导出的卡密")
+	}
+	if total > maxExportCodes {
+		return 0, apperr.Validation(fmt.Sprintf("导出数量超过上限 %d，请缩小筛选范围", maxExportCodes))
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(total); err != nil {
+			return 0, err
+		}
+	}
+	sql := `
+		SELECT cards.code
+		FROM cards
+		JOIN categories cat ON cat.id=cards.category_id
+		WHERE ` + wsql + `
+		ORDER BY cards.created_at DESC`
+	rows, err := a.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return n, err
+		}
+		if _, err := w.Write([]byte(code + "\n")); err != nil {
+			return n, err
+		}
+		n++
+		if onCount != nil {
+			onCount(n, total)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return n, err
+	}
+	a.auditExport(ctx, n, batchID, len(ids) > 0, actor, ip)
+	return n, nil
+}
+
+func (a *App) auditExport(ctx context.Context, count int, batchID string, byIDs bool, actor, ip string) {
+	detail := fmt.Sprintf("count=%d", count)
 	if batchID != "" {
 		detail += " batch=" + batchID
 	}
-	if len(ids) > 0 {
+	if byIDs {
 		detail += " mode=ids"
 	} else {
 		detail += " mode=filter"
 	}
 	a.Audit(ctx, "admin", actor, "export_cards", "cards", detail, ip)
-	return codes, nil
 }
 
 // ExportBatchCardCodes 按批次导出全部卡密编码。

@@ -24,6 +24,7 @@ import {
   useDeleteBatch,
   useExportBatch,
 } from "@/shared/hooks/use-batches";
+import { TaskProgress } from "@/shared/components/task-progress";
 import {
   downloadCodesTxt,
   exportFilename,
@@ -167,7 +168,14 @@ export function BatchesPage() {
             新建批次请在批量导入时填写批次名；导出为 .txt（一行一个编码）
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
+          {exportingId ? (
+            <TaskProgress
+              active
+              label="正在导出批次编码…"
+              detail="流式写出中"
+            />
+          ) : null}
           <DataTable
             columns={columns}
             rows={q.data}

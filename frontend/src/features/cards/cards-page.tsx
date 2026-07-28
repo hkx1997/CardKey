@@ -57,6 +57,7 @@ import {
   useExportCards,
 } from "@/shared/hooks/use-cards";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
+import { TaskProgress } from "@/shared/components/task-progress";
 import {
   downloadCodesTxt,
   exportFilename,
@@ -97,6 +98,10 @@ export function CardsPage() {
   const detailQ = useCardDetail(detailId, reveal);
   const actionM = useBatchCardAction();
   const exportM = useExportCards();
+  const [exportProgress, setExportProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   const pageItems = listQ.data?.items ?? [];
   const selectableOnPage = pageItems.filter(isSelectable);
@@ -149,14 +154,17 @@ export function CardsPage() {
   /** 批量导出：有勾选则导已选，否则按当前筛选导出全部（一行一个 .txt） */
   function runExport(mode: "selected" | "filter") {
     if (exportM.isPending) return;
+    const onProgress = (done: number, total: number) =>
+      setExportProgress({ done, total });
     if (mode === "selected") {
       const ids = [...selected];
       if (ids.length === 0) {
         toast.message("请先勾选要导出的卡密");
         return;
       }
+      setExportProgress({ done: 0, total: ids.length });
       exportM.mutate(
-        { ids },
+        { params: { ids }, onProgress },
         {
           onSuccess: (res) => {
             downloadCodesTxt(
@@ -165,6 +173,7 @@ export function CardsPage() {
             );
             toast.success(`已导出 ${res.total} 个编码`);
           },
+          onSettled: () => setExportProgress(null),
         },
       );
       return;
@@ -174,18 +183,23 @@ export function CardsPage() {
       toast.message("当前筛选下没有卡密可导出");
       return;
     }
+    setExportProgress({ done: 0, total });
     exportM.mutate(
       {
-        status,
-        q: query || undefined,
-        categorySlug: categorySlug === ALL ? undefined : categorySlug,
-        batchId: batchFromUrl,
+        params: {
+          status,
+          q: query || undefined,
+          categorySlug: categorySlug === ALL ? undefined : categorySlug,
+          batchId: batchFromUrl,
+        },
+        onProgress,
       },
       {
         onSuccess: (res) => {
           downloadCodesTxt(res.codes, exportFilename("cards", res.total));
           toast.success(`已导出 ${res.total} 个编码（一行一个）`);
         },
+        onSettled: () => setExportProgress(null),
       },
     );
   }
@@ -455,7 +469,31 @@ export function CardsPage() {
             </Select>
           </FilterToolbar>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
+          {exportProgress || actionM.isPending ? (
+            <TaskProgress
+              active={exportM.isPending || actionM.isPending}
+              percent={
+                exportProgress && exportProgress.total > 0
+                  ? (exportProgress.done / exportProgress.total) * 100
+                  : actionM.isPending
+                    ? undefined
+                    : 100
+              }
+              label={
+                exportM.isPending
+                  ? "正在导出编码…"
+                  : actionM.isPending
+                    ? "正在批量处理卡密…"
+                    : "完成"
+              }
+              detail={
+                exportProgress
+                  ? `${exportProgress.done} / ${exportProgress.total}`
+                  : undefined
+              }
+            />
+          ) : null}
           <DataTable
             columns={columns}
             rows={listQ.data?.items}

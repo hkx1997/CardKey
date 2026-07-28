@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -98,8 +100,19 @@ func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, erro
 	}
 	return domain.PublicStock{
 		Categories: out,
-		UpdatedAt:  formatTS(time.Now().UTC()),
+		// 稳定时间戳由 ETag 内容哈希承担；此处保留可读更新时间
+		UpdatedAt: formatTS(time.Now().UTC()),
 	}, nil
+}
+
+// PublicStockETag 基于库存内容生成弱 ETag（不依赖时钟），供 304 协商。
+func PublicStockETag(s domain.PublicStock) string {
+	h := sha256.New()
+	for _, c := range s.Categories {
+		_, _ = fmt.Fprintf(h, "%s:%d\n", c.Slug, c.UnusedCount)
+	}
+	sum := hex.EncodeToString(h.Sum(nil)[:16])
+	return `W/"` + sum + `"`
 }
 
 func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey string) (domain.RedeemResult, error) {

@@ -113,13 +113,16 @@ export function useImportCards() {
 
 export function useExportCards() {
   return useMutation({
-    mutationFn: (params: {
-      ids?: string[];
-      status?: CardStatus | "all";
-      q?: string;
-      categorySlug?: string;
-      batchId?: string;
-    }) => api.exportCards(params),
+    mutationFn: (input: {
+      params: {
+        ids?: string[];
+        status?: CardStatus | "all";
+        q?: string;
+        categorySlug?: string;
+        batchId?: string;
+      };
+      onProgress?: (done: number, total: number) => void;
+    }) => api.exportCards(input.params, { onProgress: input.onProgress }),
     onError: (e) => toastApiError(e, "导出失败"),
   });
 }
