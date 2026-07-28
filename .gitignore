@@ -34,3 +34,5 @@ cookies*.txt
 # 本地发版临时脚本
 scripts/do_release.bat
 scripts/_run_release*
+scripts/rel.bat
+scripts/mk_rel_bat.py
