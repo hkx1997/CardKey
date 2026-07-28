@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/shared/components/confirm-dialog";
+import { MarkdownBody } from "@/shared/components/markdown-body";
 import { ReloadCountdown } from "@/shared/components/reload-countdown";
 import { TaskProgress } from "@/shared/components/task-progress";
 import {
@@ -222,13 +223,11 @@ export function SystemVersion({ className }: { className?: string }) {
                   </p>
                 )}
                 {check.body ? (
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <p className="text-[10px] font-medium text-foreground">
                       更新内容
                     </p>
-                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border bg-background/60 p-2 font-sans text-[11px] text-muted-foreground">
-                      {check.body.slice(0, 4000)}
-                    </pre>
+                    <MarkdownBody source={check.body} />
                   </div>
                 ) : check.hasUpdate ? (
                   <p className="text-[11px] text-muted-foreground">
