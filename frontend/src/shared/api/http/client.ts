@@ -22,11 +22,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     // 管理端列表在 mutation 后必须拿到最新数据，禁止浏览器 HTTP 缓存
     cache: "no-store",
+    ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
+      ...(init?.headers as Record<string, string> | undefined),
     },
-    ...init,
   });
 
   const body = (await res.json().catch(() => null)) as ApiEnvelope<T> | null;
@@ -101,17 +101,84 @@ export const httpClient = {
     category: string;
     code: string;
     captchaToken?: string;
+    /** 幂等键：相同 key 重试不重复消耗库存 */
+    idempotencyKey?: string;
   }) =>
     request<RedeemResult>("/api/v1/public/redeem", {
+      method: "POST",
+      headers: input.idempotencyKey
+        ? { "Idempotency-Key": input.idempotencyKey }
+        : undefined,
+      body: JSON.stringify({
+        category: input.category,
+        code: input.code,
+        captchaToken: input.captchaToken,
+        idempotencyKey: input.idempotencyKey,
+      }),
+    }),
+
+  login: (username: string, password: string) =>
+    request<AdminUser | { requiresTotp: boolean; ticket: string; user?: AdminUser }>(
+      "/api/v1/admin/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      },
+    ),
+
+  loginTotp: (ticket: string, code: string) =>
+    request<AdminUser>("/api/v1/admin/auth/login/totp", {
+      method: "POST",
+      body: JSON.stringify({ ticket, code }),
+    }),
+
+  beginTotpSetup: () =>
+    request<{ secret: string; otpauthUri: string }>(
+      "/api/v1/admin/auth/totp/begin",
+      { method: "POST", body: "{}" },
+    ),
+
+  confirmTotpSetup: (code: string) =>
+    request<{ totpEnabled: boolean }>("/api/v1/admin/auth/totp/confirm", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+
+  disableTotp: (code: string) =>
+    request<{ totpEnabled: boolean }>("/api/v1/admin/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+
+  importCardsAsync: (input: {
+    categoryId: string;
+    content: string;
+    type?: string;
+    batchName?: string;
+    note?: string;
+  }) =>
+    request<{
+      id: string;
+      status: string;
+      totalLines: number;
+      doneLines: number;
+      successCount: number;
+      errorCount: number;
+    }>("/api/v1/admin/cards/import-async", {
       method: "POST",
       body: JSON.stringify(input),
     }),
 
-  login: (username: string, password: string) =>
-    request<AdminUser>("/api/v1/admin/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    }),
+  getImportJob: (id: string) =>
+    request<{
+      id: string;
+      status: string;
+      totalLines: number;
+      doneLines: number;
+      successCount: number;
+      errorCount: number;
+      errorReport?: string;
+    }>(`/api/v1/admin/import-jobs/${id}`),
 
   logout: () =>
     request<void>("/api/v1/admin/auth/logout", { method: "POST" }),

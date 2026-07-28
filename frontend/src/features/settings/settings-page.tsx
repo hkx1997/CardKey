@@ -10,6 +10,8 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import type { Settings } from "@/entities/types";
+import { api } from "@/shared/api/client";
+import { useAuth } from "@/shared/auth/auth-context";
 import { FormField } from "@/shared/components/form-field";
 import { ImageUploadField } from "@/shared/components/image-upload-field";
 import { LoadingBlock } from "@/shared/components/loading-block";
@@ -226,6 +228,7 @@ export function SettingsPage() {
 
           <SettingsSection title="安全">
             <div className="space-y-3">
+              <TotpSecurityPanel />
               <ToggleRow
                 label="允许已兑再查"
                 checked={form.allowRequery}
@@ -676,5 +679,114 @@ export function SettingsPage() {
         </TabsContent>
       </Tabs>
     </PageContainer>
+  );
+}
+
+/** 管理员两步验证（TOTP） */
+function TotpSecurityPanel() {
+  const { user, refresh } = useAuth();
+  const [secret, setSecret] = useState("");
+  const [uri, setUri] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function begin() {
+    setBusy(true);
+    try {
+      const r = await api.beginTotpSetup();
+      setSecret(r.secret);
+      setUri(r.otpauthUri);
+      toast.message("请用 Authenticator 扫描/录入密钥后输入验证码确认");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "无法开始绑定");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm() {
+    setBusy(true);
+    try {
+      await api.confirmTotpSetup(code.trim());
+      toast.success("两步验证已启用");
+      setSecret("");
+      setUri("");
+      setCode("");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "确认失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable() {
+    if (!code.trim()) {
+      toast.error("请输入当前验证码以关闭");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.disableTotp(code.trim());
+      toast.success("两步验证已关闭");
+      setCode("");
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "关闭失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border/70 p-3 space-y-2">
+      <div className="text-xs font-medium">
+        两步验证（TOTP）
+        <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+          {user?.totpEnabled ? "已启用" : "未启用"}
+        </span>
+      </div>
+      {!user?.totpEnabled ? (
+        <>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void begin()}>
+            开始绑定
+          </Button>
+          {secret ? (
+            <div className="space-y-2 text-[11px]">
+              <p className="break-all font-mono">密钥：{secret}</p>
+              <p className="break-all text-muted-foreground">{uri}</p>
+              <FormField label="验证码确认">
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="6 位"
+                />
+              </FormField>
+              <Button size="sm" disabled={busy} onClick={() => void confirm()}>
+                确认启用
+              </Button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="space-y-2">
+          <FormField label="验证码（关闭时需校验）">
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="6 位"
+            />
+          </FormField>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void disable()}
+          >
+            关闭两步验证
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

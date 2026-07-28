@@ -619,8 +619,9 @@ Week 6+    C* 按业务优先级裁剪
 | C4 | ✅ | 兑换成功 Webhook（URL + HMAC 签名） |
 | C5 | ✅ | `scripts/backup.sh` / `restore-hint.sh` |
 | C1/C2/C3/C6 | ⬜ | 物化库存 / 异步导入 / 对象存储 / i18n — 按需后续 |
+| 评审地基 T1–T5 | ✅ | 状态机规则测；真实 PG 兑换/并发/批量；Webhook outbox 可重试；幂等键；handler `Idempotency-Key` |
 
-**当前版本文件**：`VERSION` → **0.1.46**（需 `scripts/release.sh` 发版后线上才可一键更新到此优化包）。
+**当前版本文件**：`VERSION` → **0.1.46**（地基增强待下一发版带上 migration 005）。
 
 ---
 

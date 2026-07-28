@@ -130,7 +130,7 @@ export function SystemVersion({ className }: { className?: string }) {
       }
 
       toast.message(
-        `${opts.label}已提交，${RELOAD_COUNTDOWN_SEC} 秒后自动刷新页面`,
+        `${opts.label}已提交，服务就绪后立即刷新（最长 ${RELOAD_COUNTDOWN_SEC} 秒）`,
       );
       await waitForRestartAndReload({
         targetVersion: opts.targetVersion,
@@ -309,7 +309,7 @@ export function SystemVersion({ className }: { className?: string }) {
                     onClick={async () => {
                       const ok = await confirm({
                         title: `更新到 v${check.latest}`,
-                        description: `将下载完整 Linux 包（须 ≥13MB，含前端）并替换后重启。约 ${RELOAD_COUNTDOWN_SEC} 秒后自动刷新。空壳包会被拒绝。`,
+                        description: `将下载完整 Linux 包（须 ≥13MB，含前端）并替换后重启。服务就绪后立即刷新（最长约 ${RELOAD_COUNTDOWN_SEC} 秒）。空壳包会被拒绝。`,
                         confirmLabel: "一键更新并重启",
                         destructive: true,
                       });

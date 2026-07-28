@@ -19,15 +19,21 @@ func TestEmbeddedSQLPresent(t *testing.T) {
 	if len(sqls) == 0 {
 		t.Fatal("embedded migrations FS has no *.sql — online update would not ship schema changes")
 	}
-	// 至少包含初始迁移
-	foundInit := false
+	// 至少包含初始迁移 + 幂等/Webhook 表 + payload TEXT 修复
+	need := map[string]bool{
+		"001_init.sql":                 false,
+		"005_webhook_idempotency.sql":  false,
+		"006_webhook_payload_text.sql": false,
+		"007_platform_hardening.sql":   false,
+	}
 	for _, n := range sqls {
-		if n == "001_init.sql" {
-			foundInit = true
-			break
+		if _, ok := need[n]; ok {
+			need[n] = true
 		}
 	}
-	if !foundInit {
-		t.Fatalf("expected 001_init.sql in embed, got %v", sqls)
+	for name, ok := range need {
+		if !ok {
+			t.Fatalf("expected %s in embed, got %v", name, sqls)
+		}
 	}
 }

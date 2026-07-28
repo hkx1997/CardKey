@@ -91,6 +91,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/openapi.json", h.OpenAPI)
 		r.Route("/public", func(r chi.Router) {
 			r.Get("/config", h.GetPublicConfig)
 			r.Get("/category-stock", h.GetPublicCategoryStock)
@@ -101,12 +102,16 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Post("/auth/login", h.Login)
+			r.Post("/auth/login/totp", h.LoginTOTP)
 			r.Post("/auth/logout", h.Logout)
 
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireAdmin(a))
 				r.Get("/auth/me", h.Me)
 				r.Post("/auth/change-password", h.ChangePassword)
+				r.Post("/auth/totp/begin", h.BeginTOTPSetup)
+				r.Post("/auth/totp/confirm", h.ConfirmTOTPSetup)
+				r.Post("/auth/totp/disable", h.DisableTOTP)
 				r.Get("/system/info", h.SystemInfo)
 
 				r.Group(func(r chi.Router) {
@@ -127,6 +132,9 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Get("/cards/{id}", h.GetCard)
 					r.Post("/cards", h.CreateCard)
 					r.Post("/cards/import", h.ImportCards)
+					r.Post("/cards/import-async", h.ImportCardsAsync)
+					r.Get("/import-jobs", h.ListImportJobs)
+					r.Get("/import-jobs/{id}", h.GetImportJob)
 					r.Post("/cards/batch-action", h.BatchAction)
 
 					r.Get("/batches", h.ListBatches)

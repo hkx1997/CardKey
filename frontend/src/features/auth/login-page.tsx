@@ -19,7 +19,7 @@ import { env } from "@/shared/config/env";
 import { fieldErrors, loginSchema } from "@/shared/lib/schemas";
 
 export function LoginPage() {
-  const { user, loading, login } = useAuth();
+  const { user, loading, login, completeTotpLogin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from =
@@ -28,6 +28,8 @@ export function LoginPage() {
 
   const [username, setUsername] = useState(env.isMock ? "admin" : "");
   const [password, setPassword] = useState(env.isMock ? "admin123" : "");
+  const [totpCode, setTotpCode] = useState("");
+  const [totpTicket, setTotpTicket] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
@@ -53,6 +55,24 @@ export function LoginPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (totpTicket) {
+      if (totpCode.trim().length !== 6) {
+        toast.error("请输入 6 位验证码");
+        return;
+      }
+      setSubmitting(true);
+      try {
+        await completeTotpLogin(totpTicket, totpCode.trim());
+        toast.success("登录成功");
+        navigate(from, { replace: true });
+      } catch (err) {
+        if (err instanceof ApiError) toast.error(err.message);
+        else toast.error("验证失败");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     const parsed = fieldErrors(loginSchema, { username, password });
     if (!parsed.ok) {
       setErrors(parsed.errors);
@@ -61,9 +81,13 @@ export function LoginPage() {
     setErrors({});
     setSubmitting(true);
     try {
-      await login(parsed.data.username, parsed.data.password);
+      const step = await login(parsed.data.username, parsed.data.password);
+      if (step?.requiresTotp && step.ticket) {
+        setTotpTicket(step.ticket);
+        toast.message("请输入两步验证码");
+        return;
+      }
       toast.success("登录成功");
-      // mustChangePassword 由 RequireAuth 重定向
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) toast.error(err.message);
@@ -82,38 +106,70 @@ export function LoginPage() {
         </CardHeader>
         <CardContent>
           <form className="space-y-3.5" onSubmit={(e) => void onSubmit(e)}>
-            <FormField
-              label="用户名"
-              required
-              htmlFor="username"
-              error={errors.username}
-            >
-              <Input
-                id="username"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                disabled={submitting}
-              />
-            </FormField>
-            <FormField
-              label="密码"
-              required
-              htmlFor="password"
-              error={errors.password}
-            >
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={submitting}
-              />
-            </FormField>
+            {!totpTicket ? (
+              <>
+                <FormField
+                  label="用户名"
+                  required
+                  htmlFor="username"
+                  error={errors.username}
+                >
+                  <Input
+                    id="username"
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    disabled={submitting}
+                  />
+                </FormField>
+                <FormField
+                  label="密码"
+                  required
+                  htmlFor="password"
+                  error={errors.password}
+                >
+                  <Input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={submitting}
+                  />
+                </FormField>
+              </>
+            ) : (
+              <FormField label="两步验证码" required htmlFor="totp">
+                <Input
+                  id="totp"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6 位数字"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  disabled={submitting}
+                />
+              </FormField>
+            )}
             <Button className="w-full" type="submit" loading={submitting}>
-              {submitting ? "登录中…" : "登录"}
+              {submitting
+                ? "请稍候…"
+                : totpTicket
+                  ? "验证并登录"
+                  : "登录"}
             </Button>
+            {totpTicket ? (
+              <button
+                type="button"
+                className="w-full text-center text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => {
+                  setTotpTicket(null);
+                  setTotpCode("");
+                }}
+              >
+                返回账号密码
+              </button>
+            ) : null}
           </form>
           {env.isMock ? (
             <p className="mt-4 text-center text-[11px] text-muted-foreground">

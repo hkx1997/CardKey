@@ -51,6 +51,15 @@ type AdminUser struct {
 	ID                 string `json:"id"`
 	Username           string `json:"username"`
 	MustChangePassword bool   `json:"mustChangePassword"`
+	// TotpEnabled 是否已开启双因素
+	TotpEnabled bool `json:"totpEnabled"`
+}
+
+// LoginChallenge 密码正确但需第二步 TOTP
+type LoginChallenge struct {
+	RequiresTOTP bool   `json:"requiresTotp"`
+	// Ticket 短期票据，换取 JWT 时回传
+	Ticket string `json:"ticket,omitempty"`
 }
 
 type Category struct {

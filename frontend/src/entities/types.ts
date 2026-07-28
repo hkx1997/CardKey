@@ -23,6 +23,13 @@ export interface AdminUser {
   id: string;
   username: string;
   mustChangePassword: boolean;
+  totpEnabled?: boolean;
+}
+
+export interface LoginTotpChallenge {
+  requiresTotp: true;
+  ticket: string;
+  user?: AdminUser;
 }
 
 export interface Category {

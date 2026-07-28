@@ -26,12 +26,14 @@ import { FormField } from "@/shared/components/form-field";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { TaskProgress } from "@/shared/components/task-progress";
+import { api } from "@/shared/api/client";
 import { useImportCards } from "@/shared/hooks/use-cards";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
 import { CARD_TYPE_OPTIONS } from "@/shared/lib/card-content";
 import { fieldErrors, importCardsSchema } from "@/shared/lib/schemas";
 
 const IMPORT_TYPES = CARD_TYPE_OPTIONS.filter((o) => o.kind === "text");
+const ASYNC_THRESHOLD = 200;
 
 export function ImportPage() {
   const catsQ = useCategoriesQuery();
@@ -46,6 +48,14 @@ export function ImportPage() {
   const [note, setNote] = useState("");
   const [resultCodes, setResultCodes] = useState<string[] | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [asyncJob, setAsyncJob] = useState<{
+    id: string;
+    status: string;
+    totalLines: number;
+    doneLines: number;
+    successCount: number;
+  } | null>(null);
+  const [asyncBusy, setAsyncBusy] = useState(false);
 
   const selectedCat = catsQ.data?.find((c) => c.id === categoryId);
 
@@ -68,7 +78,7 @@ export function ImportPage() {
     reader.readAsText(file);
   }
 
-  function submit() {
+  async function submit() {
     const parsed = fieldErrors(importCardsSchema, {
       categoryId,
       raw,
@@ -83,6 +93,46 @@ export function ImportPage() {
     }
     setErrors({});
     setResultCodes(null);
+    setAsyncJob(null);
+    const lineCount = parsed.data.raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean).length;
+    // 大批量走异步任务
+    if (lineCount >= ASYNC_THRESHOLD) {
+      setAsyncBusy(true);
+      try {
+        const job = await api.importCardsAsync({
+          categoryId: parsed.data.categoryId,
+          content: parsed.data.raw,
+          type: parsed.data.type,
+          batchName: parsed.data.batchName,
+          note: parsed.data.note || undefined,
+        });
+        setAsyncJob(job);
+        toast.message("已提交异步导入，可等待完成…");
+        // 轮询进度
+        const id = job.id;
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const st = await api.getImportJob(id);
+          setAsyncJob(st);
+          if (st.status === "success" || st.status === "failed") {
+            if (st.status === "success") {
+              toast.success(`异步导入完成 · ${st.successCount} 条`);
+            } else {
+              toast.error(st.errorReport || "异步导入失败");
+            }
+            break;
+          }
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "异步导入失败");
+      } finally {
+        setAsyncBusy(false);
+      }
+      return;
+    }
     m.mutate(
       {
         ...parsed.data,
@@ -95,6 +145,7 @@ export function ImportPage() {
   }
 
   const importLineCount = previewLines.length;
+  const busy = m.isPending || asyncBusy;
 
   return (
     <PageContainer>
@@ -110,10 +161,19 @@ export function ImportPage() {
             <CardDescription>每行一条 · 支持 TXT / CSV 上传</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {m.isPending ? (
+            {busy ? (
               <TaskProgress
                 active
-                label="正在导入卡密…"
+                percent={
+                  asyncJob && asyncJob.totalLines > 0
+                    ? (asyncJob.doneLines / asyncJob.totalLines) * 100
+                    : undefined
+                }
+                label={
+                  asyncJob
+                    ? `异步导入 ${asyncJob.status}…`
+                    : "正在导入卡密…"
+                }
                 detail={`约 ${importLineCount} 行`}
               />
             ) : null}
@@ -188,15 +248,14 @@ export function ImportPage() {
               />
             </FormField>
             <FormActions>
-              <Button
-                disabled={m.isPending}
-                onClick={submit}
-              >
-                {m.isPending ? (
+              <Button disabled={busy} onClick={() => void submit()}>
+                {busy ? (
                   <>
                     <Loader2 className="animate-spin" />
                     导入中…
                   </>
+                ) : importLineCount >= ASYNC_THRESHOLD ? (
+                  `异步导入 ${importLineCount} 条`
                 ) : (
                   `导入 ${previewLines.length} 条`
                 )}

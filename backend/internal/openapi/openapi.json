@@ -1,0 +1,95 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "CardKey API",
+    "version": "0.1.47",
+    "description": "自托管卡密兑换平台 HTTP API（公开兑换 + 管理端）。统一信封 success/data 或 success/error。"
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "paths": {
+    "/public/config": {
+      "get": {
+        "summary": "公开站点配置与类别",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/public/category-stock": {
+      "get": {
+        "summary": "类别可兑库存快照",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/public/redeem": {
+      "post": {
+        "summary": "兑换卡密",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": { "type": "string" },
+            "description": "幂等键，相同 key 不重复消耗"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["category", "code"],
+                "properties": {
+                  "category": { "type": "string" },
+                  "code": { "type": "string" },
+                  "captchaToken": { "type": "string" },
+                  "idempotencyKey": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "success | already_redeemed" },
+          "400": { "description": "类别无效" },
+          "404": { "description": "卡密无效" },
+          "409": { "description": "已兑换" }
+        }
+      }
+    },
+    "/admin/auth/login": {
+      "post": {
+        "summary": "管理员登录（可能返回 requiresTotp）",
+        "responses": { "200": { "description": "OK" }, "401": { "description": "失败或需 TOTP" } }
+      }
+    },
+    "/admin/auth/login/totp": {
+      "post": {
+        "summary": "两步验证完成登录",
+        "responses": { "200": { "description": "JWT Cookie" } }
+      }
+    },
+    "/admin/cards/import-async": {
+      "post": {
+        "summary": "异步批量导入",
+        "responses": { "200": { "description": "job id + progress" } }
+      }
+    },
+    "/admin/import-jobs/{id}": {
+      "get": {
+        "summary": "导入任务进度",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "本 OpenAPI 文档",
+        "responses": { "200": { "description": "OpenAPI 3 JSON" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": { "type": "apiKey", "in": "cookie", "name": "cardkey_token" },
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    }
+  }
+}

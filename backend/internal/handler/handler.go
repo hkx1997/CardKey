@@ -11,6 +11,7 @@ import (
 	"github.com/cardkey/cardkey/internal/app"
 	"github.com/cardkey/cardkey/internal/domain"
 	"github.com/cardkey/cardkey/internal/middleware"
+	"github.com/cardkey/cardkey/internal/openapi"
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/cardkey/cardkey/internal/pkg/httpx"
 	"github.com/cardkey/cardkey/internal/pkg/response"
@@ -150,7 +151,34 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, err)
 		return
 	}
-	user, token, err := h.App.Login(r.Context(), in.Username, in.Password, middleware.ClientIP(r))
+	res, err := h.App.LoginStep(r.Context(), in.Username, in.Password, middleware.ClientIP(r))
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	if res.RequiresTOTP {
+		response.OK(w, map[string]any{
+			"requiresTotp": true,
+			"ticket":       res.Ticket,
+			"user":         res.User,
+		})
+		return
+	}
+	h.App.IncLogin()
+	h.setAuthCookie(w, r, res.Token)
+	response.OK(w, res.User)
+}
+
+func (h *Handler) LoginTOTP(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Ticket string `json:"ticket"`
+		Code   string `json:"code"`
+	}
+	if err := h.decode(r, &in); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	user, token, err := h.App.CompleteLoginTOTP(r.Context(), in.Ticket, in.Code, middleware.ClientIP(r))
 	if err != nil {
 		response.Fail(w, err)
 		return
@@ -158,6 +186,96 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.App.IncLogin()
 	h.setAuthCookie(w, r, token)
 	response.OK(w, user)
+}
+
+func (h *Handler) BeginTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	id := middleware.AdminID(r.Context())
+	user, err := h.App.Me(r.Context(), id)
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	secret, uri, err := h.App.BeginTOTPSetup(r.Context(), id, user.Username)
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]string{"secret": secret, "otpauthUri": uri})
+}
+
+func (h *Handler) ConfirmTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	if err := h.decode(r, &in); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	if err := h.App.ConfirmTOTPSetup(r.Context(), middleware.AdminID(r.Context()), in.Code); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]bool{"totpEnabled": true})
+}
+
+func (h *Handler) DisableTOTP(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	if err := h.decode(r, &in); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	if err := h.App.DisableTOTP(r.Context(), middleware.AdminID(r.Context()), in.Code); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, map[string]bool{"totpEnabled": false})
+}
+
+func (h *Handler) ImportCardsAsync(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CategoryID string `json:"categoryId"`
+		Content    string `json:"content"`
+		Type       string `json:"type"`
+		BatchName  string `json:"batchName"`
+		Note       string `json:"note"`
+	}
+	if err := h.decode(r, &in); err != nil {
+		response.Fail(w, err)
+		return
+	}
+	job, err := h.App.EnqueueImportJob(r.Context(), in.CategoryID, in.Content, domain.CardType(in.Type), in.BatchName, in.Note, middleware.Username(r.Context()))
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, job)
+}
+
+func (h *Handler) GetImportJob(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	job, err := h.App.GetImportJob(r.Context(), id)
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, job)
+}
+
+func (h *Handler) ListImportJobs(w http.ResponseWriter, r *http.Request) {
+	list, err := h.App.ListImportJobs(r.Context(), 20)
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	response.OK(w, list)
+}
+
+func (h *Handler) OpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(openapi.JSON)
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {

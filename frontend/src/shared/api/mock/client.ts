@@ -229,6 +229,7 @@ export const mockClient = {
       id: db.admin.id,
       username: db.admin.username,
       mustChangePassword: db.admin.mustChangePassword,
+      totpEnabled: false,
     };
     pushAudit({
       actorType: "admin",
@@ -239,6 +240,72 @@ export const mockClient = {
       ip: "127.0.0.1",
     });
     return db.session;
+  },
+
+  async loginTotp(_ticket: string, _code: string): Promise<AdminUser> {
+    await delay();
+    return this.login("admin", "admin123");
+  },
+
+  async beginTotpSetup() {
+    await delay();
+    mockStore.requireSession();
+    return {
+      secret: "JBSWY3DPEHPK3PXP",
+      otpauthUri: "otpauth://totp/CardKey:admin?secret=JBSWY3DPEHPK3PXP&issuer=CardKey",
+    };
+  },
+
+  async confirmTotpSetup(_code: string) {
+    await delay();
+    mockStore.requireSession();
+    return { totpEnabled: true };
+  },
+
+  async disableTotp(_code: string) {
+    await delay();
+    mockStore.requireSession();
+    return { totpEnabled: false };
+  },
+
+  async importCardsAsync(input: {
+    categoryId: string;
+    content: string;
+    type?: string;
+    batchName?: string;
+    note?: string;
+  }) {
+    await delay();
+    mockStore.requireSession();
+    const lines = input.content.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    // mock: 同步完成
+    await this.importCards({
+      categoryId: input.categoryId,
+      raw: input.content,
+      type: (input.type as CardType) || "text",
+      batchName: input.batchName,
+      note: input.note,
+    });
+    return {
+      id: "job-mock",
+      status: "success",
+      totalLines: lines.length,
+      doneLines: lines.length,
+      successCount: lines.length,
+      errorCount: 0,
+    };
+  },
+
+  async getImportJob(id: string) {
+    await delay(50);
+    return {
+      id,
+      status: "success",
+      totalLines: 1,
+      doneLines: 1,
+      successCount: 1,
+      errorCount: 0,
+    };
   },
 
   async logout(): Promise<void> {

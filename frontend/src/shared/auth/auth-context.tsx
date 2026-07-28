@@ -14,7 +14,11 @@ import { api } from "@/shared/api/client";
 interface AuthState {
   user: AdminUser | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (
+    username: string,
+    password: string,
+  ) => Promise<{ requiresTotp?: boolean; ticket?: string } | void>;
+  completeTotpLogin: (ticket: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -41,7 +45,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const login = useCallback(async (username: string, password: string) => {
-    const me = await api.login(username, password);
+    const res = await api.login(username, password);
+    if (res && typeof res === "object" && "requiresTotp" in res && res.requiresTotp) {
+      return { requiresTotp: true, ticket: (res as { ticket: string }).ticket };
+    }
+    setUser(res as AdminUser);
+  }, []);
+
+  const completeTotpLogin = useCallback(async (ticket: string, code: string) => {
+    const me = await api.loginTotp(ticket, code);
     setUser(me);
   }, []);
 
@@ -51,8 +63,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refresh }),
-    [user, loading, login, logout, refresh],
+    () => ({ user, loading, login, completeTotpLogin, logout, refresh }),
+    [user, loading, login, completeTotpLogin, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

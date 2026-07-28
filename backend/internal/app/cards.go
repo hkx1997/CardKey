@@ -92,18 +92,20 @@ func (a *App) GetCard(ctx context.Context, id string, reveal bool, actor, ip str
 	var exp, used *time.Time
 	var usedIP *string
 	var batchID, batchName *string
+	var storageKey, storageBackend string
 	err := a.Pool.QueryRow(ctx, `
 		SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
 		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
 		       cards.content_enc, cards.content_nonce,
-		       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
+		       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0),
+		       COALESCE(cards.storage_key,''), COALESCE(cards.storage_backend,'')
 		FROM cards
 		JOIN categories cat ON cat.id=cards.category_id
 		LEFT JOIN batches b ON b.id=cards.batch_id
 		WHERE cards.id=$1`, id).Scan(
 		&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
 		&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created, &enc, &nonce,
-		&c.Filename, &c.Mime, &c.Size)
+		&c.Filename, &c.Mime, &c.Size, &storageKey, &storageBackend)
 	if err != nil {
 		return c, apperr.NotFound("卡密不存在")
 	}
@@ -118,6 +120,11 @@ func (a *App) GetCard(ctx context.Context, id string, reveal bool, actor, ip str
 		raw, err := a.DecryptBytes(enc, nonce)
 		if err != nil {
 			return c, apperr.Internal("解密失败")
+		}
+		if storageBackend == "local" && storageKey != "" {
+			if obj, e := a.LoadObject(storageKey); e == nil {
+				raw = obj
+			}
 		}
 		if c.Size == 0 {
 			c.Size = int64(len(raw))
@@ -157,21 +164,31 @@ func (a *App) CreateCardWithPayload(ctx context.Context, in CreateCardPayload, a
 	if domain.IsTextCardType(typ) && (in.Filename == "" || filename == "content.txt" || filename == "content.json") {
 		filename = defaultFilename(typ, code)
 	}
+	storageKey, storageBackend := "", ""
+	size := int64(len(raw))
+	// 大文件可选落盘（OBJECT_STORAGE_DIR），DB 存占位密文 + storage_key
+	if a.ObjectStorageEnabled() && domain.IsBinaryCardType(typ) && len(raw) > 64*1024 {
+		key, e := a.StoreObject(in.CategoryID, raw, filename)
+		if e == nil {
+			storageKey, storageBackend = key, "local"
+			raw = []byte("stored:" + key) // 占位，解密时走 LoadObject
+		}
+	}
 	enc, nonce, err := a.EncryptBytes(raw)
 	if err != nil {
 		return domain.Card{}, apperr.Internal("加密失败")
 	}
-	size := int64(len(raw))
 	id := uuid.NewString()
 	var created time.Time
 	err = a.Pool.QueryRow(ctx, `
 		INSERT INTO cards(id, category_id, code, content_enc, content_nonce, type, batch_id, status, note,
-		                  content_filename, content_mime, content_size)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'unused',$8,$9,$10,$11) RETURNING created_at`,
-		id, in.CategoryID, code, enc, nonce, typ, in.BatchID, in.Note, filename, mime, size).Scan(&created)
+		                  content_filename, content_mime, content_size, storage_key, storage_backend)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'unused',$8,$9,$10,$11,$12,$13) RETURNING created_at`,
+		id, in.CategoryID, code, enc, nonce, typ, in.BatchID, in.Note, filename, mime, size, storageKey, storageBackend).Scan(&created)
 	if err != nil {
 		return domain.Card{}, err
 	}
+	a.bumpUnusedCount(ctx, in.CategoryID, 1)
 	a.Audit(ctx, "admin", actor, "create_card", "card:"+id, fmt.Sprintf("创建 %s type=%s size=%d", code, typ, size), ip)
 	return domain.Card{
 		ID: id, CategoryID: in.CategoryID, Code: code, Type: typ, Status: domain.StatusUnused,
@@ -286,6 +303,7 @@ func (a *App) ImportCards(ctx context.Context, categoryID, raw string, typ domai
 			return nil, err
 		}
 	}
+	a.bumpUnusedCount(ctx, categoryID, len(codes))
 	a.Audit(ctx, "admin", actor, "import", "category:"+categoryID, fmt.Sprintf("导入 %d 条 → %s", len(codes), cat.Name), ip)
 	return map[string]any{
 		"batch":    batch,
@@ -316,8 +334,26 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 	if len(ids) == 0 {
 		return 0, apperr.Validation("未选择卡密")
 	}
-	switch action {
-	case "disable":
+	act, err := domain.NormalizeBatchAction(action)
+	if err != nil {
+		return 0, apperr.Validation(err.Error())
+	}
+	switch act {
+	case domain.BatchDisable:
+		// 按类别统计将减少的 unused
+		rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status='unused' GROUP BY category_id`, ids)
+		type pair struct{ id string; n int }
+		var bumps []pair
+		if rows != nil {
+			for rows.Next() {
+				var p pair
+				_ = rows.Scan(&p.id, &p.n)
+				bumps = append(bumps, p)
+			}
+			rows.Close()
+		}
 		tag, err := a.Pool.Exec(ctx, `
 			UPDATE cards SET status=$1, updated_at=now()
 			WHERE id = ANY($2) AND status = 'unused'`, domain.StatusDisabled, ids)
@@ -325,11 +361,25 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 			return 0, err
 		}
 		n := int(tag.RowsAffected())
+		for _, p := range bumps {
+			a.bumpUnusedCount(ctx, p.id, -p.n)
+		}
 		a.Audit(ctx, "admin", actor, "batch_disable", "cards", fmt.Sprintf("禁用 %d 条", n), ip)
 		return n, nil
-	case "enable", "restore":
-		// 启用：disabled → unused；复原：used → unused（清空 used_at/used_ip，历史 redeem_records 保留）
-		// 不处理 expired（仍视为失效）
+	case domain.BatchEnable, domain.BatchRestore:
+		rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status IN ('disabled','used') GROUP BY category_id`, ids)
+		type pair struct{ id string; n int }
+		var bumps []pair
+		if rows != nil {
+			for rows.Next() {
+				var p pair
+				_ = rows.Scan(&p.id, &p.n)
+				bumps = append(bumps, p)
+			}
+			rows.Close()
+		}
 		tag, err := a.Pool.Exec(ctx, `
 			UPDATE cards SET
 				status = 'unused',
@@ -342,14 +392,26 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 			return 0, err
 		}
 		n := int(tag.RowsAffected())
+		for _, p := range bumps {
+			a.bumpUnusedCount(ctx, p.id, p.n)
+		}
 		a.Audit(ctx, "admin", actor, "batch_enable", "cards",
 			fmt.Sprintf("启用/复原 %d 条（含已兑换复原）", n), ip)
-		if a.RDB != nil {
-			_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
-		}
 		return n, nil
-	case "delete":
-		// 仅允许删除未使用/已禁用；已兑换与过期保留审计与历史
+	case domain.BatchDelete:
+		rows, _ := a.Pool.Query(ctx, `
+			SELECT category_id::text, COUNT(*)::int FROM cards
+			WHERE id = ANY($1) AND status='unused' GROUP BY category_id`, ids)
+		type pair struct{ id string; n int }
+		var bumps []pair
+		if rows != nil {
+			for rows.Next() {
+				var p pair
+				_ = rows.Scan(&p.id, &p.n)
+				bumps = append(bumps, p)
+			}
+			rows.Close()
+		}
 		tag, err := a.Pool.Exec(ctx, `
 			DELETE FROM cards
 			WHERE id = ANY($1) AND status IN ('unused', 'disabled')`, ids)
@@ -357,6 +419,9 @@ func (a *App) BatchAction(ctx context.Context, ids []string, action, actor, ip s
 			return 0, err
 		}
 		n := int(tag.RowsAffected())
+		for _, p := range bumps {
+			a.bumpUnusedCount(ctx, p.id, -p.n)
+		}
 		a.Audit(ctx, "admin", actor, "batch_delete", "cards", fmt.Sprintf("删除 %d 条", n), ip)
 		return n, nil
 	default:

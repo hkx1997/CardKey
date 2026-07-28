@@ -14,11 +14,8 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 )
 
-// availableStockExpr 可兑换库存：未使用且未过期（与兑换逻辑一致）
-const availableStockExpr = `COUNT(cards.id) FILTER (
-	WHERE cards.status = 'unused'
-	  AND (cards.expires_at IS NULL OR cards.expires_at > now())
-)`
+// availableStockExpr 可兑换库存：优先物化列，回退聚合
+const availableStockExpr = `c.unused_count`
 
 func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	s, err := a.GetSettings(ctx)
@@ -95,11 +92,9 @@ func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, erro
 		}
 	}
 	rows, err := a.Pool.Query(ctx, `
-		SELECT c.slug, `+availableStockExpr+`
+		SELECT c.slug, COALESCE(c.unused_count, 0)
 		FROM categories c
-		LEFT JOIN cards ON cards.category_id = c.id
 		WHERE c.enabled = true
-		GROUP BY c.id
 		ORDER BY c.sort_order, c.created_at`)
 	if err != nil {
 		return domain.PublicStock{}, err
@@ -138,7 +133,13 @@ func PublicStockETag(s domain.PublicStock) string {
 	return `W/"` + sum + `"`
 }
 
+// Redeem 公开兑换。idempotencyKey 非空时，相同 key+类别+码 在 TTL 内返回同一成功结果且不二次消耗。
 func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey string, captchaToken string) (domain.RedeemResult, error) {
+	return a.RedeemWithIdempotency(ctx, categorySlug, code, ip, ua, apiKey, captchaToken, "")
+}
+
+// RedeemWithIdempotency 带幂等键的兑换（handler 传入 header/body 中的 key）。
+func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip, ua, apiKey, captchaToken, idempotencyKey string) (domain.RedeemResult, error) {
 	s, err := a.GetSettings(ctx)
 	if err != nil {
 		return domain.RedeemResult{}, err
@@ -159,6 +160,15 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	if code == "" {
 		return domain.RedeemResult{}, apperr.Validation("请输入兑换编码")
 	}
+	categorySlug = strings.TrimSpace(categorySlug)
+
+	// 幂等命中：直接返回，不重复扣库存
+	if cached, ok, err := a.lookupRedeemIdempotency(ctx, idempotencyKey, categorySlug, code); err != nil {
+		return domain.RedeemResult{}, err
+	} else if ok {
+		return cached, nil
+	}
+
 	// rate limit
 	if a.Limiter != nil {
 		okIP, errIP := a.Limiter.Allow(ctx, "redeem:ip:"+ip, s.RateLimitIpPerMin)
@@ -191,11 +201,14 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	var cardCode string
 	var filename, mime string
 	var size int64
+	var storageKey, storageBackend string
 	err = tx.QueryRow(ctx, `
 		SELECT id, code, type, status, content_enc, content_nonce, used_at, expires_at,
-		       COALESCE(content_filename,''), COALESCE(content_mime,''), COALESCE(content_size,0)
+		       COALESCE(content_filename,''), COALESCE(content_mime,''), COALESCE(content_size,0),
+		       COALESCE(storage_key,''), COALESCE(storage_backend,'')
 		FROM cards WHERE category_id=$1 AND code=$2 FOR UPDATE`, cat.ID, code).
-		Scan(&cardID, &cardCode, &typ, &status, &enc, &nonce, &usedAt, &expiresAt, &filename, &mime, &size)
+		Scan(&cardID, &cardCode, &typ, &status, &enc, &nonce, &usedAt, &expiresAt, &filename, &mime, &size,
+			&storageKey, &storageBackend)
 	if err != nil {
 		msg := "卡密不存在"
 		if s.MaskCardErrors {
@@ -207,16 +220,24 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	if status == domain.StatusUnused && expiresAt != nil && expiresAt.Before(time.Now().UTC()) {
 		_, _ = tx.Exec(ctx, `UPDATE cards SET status='expired', updated_at=now() WHERE id=$1 AND status='unused'`, cardID)
 		status = domain.StatusExpired
+		a.bumpUnusedCount(ctx, cat.ID, -1)
 	}
-	if status == domain.StatusDisabled {
+	switch domain.EvaluateRedeemStatus(status) {
+	case domain.RedeemDisabled:
 		return domain.RedeemResult{}, apperr.New(403, "CARD_INVALID", "卡密无效或不可用")
-	}
-	if status == domain.StatusExpired {
+	case domain.RedeemExpired:
 		return domain.RedeemResult{}, apperr.New(410, "CARD_EXPIRED", "该卡密已过期")
+	case domain.RedeemNotUnused:
+		return domain.RedeemResult{}, apperr.New(403, "CARD_INVALID", "卡密无效或不可用")
 	}
 	raw, err := a.DecryptBytes(enc, nonce)
 	if err != nil {
 		return domain.RedeemResult{}, apperr.Internal("解密失败")
+	}
+	if storageBackend == "local" && storageKey != "" {
+		if obj, e := a.LoadObject(storageKey); e == nil {
+			raw = obj
+		}
 	}
 	filename, mime, size = fillContentMeta(typ, filename, mime, size)
 	if size == 0 {
@@ -258,15 +279,14 @@ func (a *App) Redeem(ctx context.Context, categorySlug, code, ip, ua, apiKey str
 	if err := tx.Commit(ctx); err != nil {
 		return domain.RedeemResult{}, err
 	}
-	if a.RDB != nil {
-		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
-	}
+	a.bumpUnusedCount(ctx, cat.ID, -1)
 	result := domain.RedeemResult{
 		Status: "success", Category: cat.Slug, CategoryName: cat.Name,
 		Code: cardCode, Type: typ, Content: content, ContentEncoding: encoding,
 		Filename: filename, Mime: mime, Size: size, RedeemedAt: formatTS(now),
 	}
-	// 异步 Webhook（不阻塞响应）
+	a.storeRedeemIdempotency(ctx, idempotencyKey, cat.Slug, cardCode, result)
+	// 可靠 Webhook 入队
 	a.FireRedeemWebhook(ctx, s, result, ip)
 	return result, nil
 }

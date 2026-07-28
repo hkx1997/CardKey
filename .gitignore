@@ -36,3 +36,7 @@ scripts/do_release.bat
 scripts/_run_release*
 scripts/rel.bat
 scripts/mk_rel_bat.py
+backend/run_integ_tests.py
+backend/run_one_test.py
+backend/run_full_verify.py
+backend/run_integ_tests.bat
