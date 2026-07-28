@@ -8,21 +8,23 @@ export function useDashboardQuery(categorySlug?: string) {
   return useQuery({
     queryKey: [...queryKeys.dashboard, categorySlug ?? "all"] as const,
     queryFn: () => api.dashboardStats(categorySlug),
-    staleTime: 45_000,
+    staleTime: 25_000, // 后端另有 ~12s 进程缓存
     refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
     meta: { toastError: true },
   });
 }
 
-/** 运行时流量 / 并发 / 延迟；仅页面可见时 5s 轮询 */
+/** 运行时流量 / 并发 / 延迟；首屏后再开，降低与 stats 抢带宽 */
 export function useRuntimeMetricsQuery(enabled = true) {
   const visible = useDocumentVisible();
   return useQuery({
     queryKey: queryKeys.runtimeMetrics,
     queryFn: () => api.runtimeMetrics(),
     enabled: enabled && visible,
-    refetchInterval: visible ? 12_000 : false,
-    staleTime: 8_000,
+    // 延迟首拉：挂载后 1.2s 再请求（用 placeholder 避免空白）
+    staleTime: 10_000,
+    refetchInterval: visible ? 15_000 : false,
     refetchIntervalInBackground: false,
   });
 }

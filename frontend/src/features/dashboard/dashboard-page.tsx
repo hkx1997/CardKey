@@ -14,7 +14,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -44,7 +44,13 @@ import { CardStatusBadge } from "@/shared/lib/status";
 
 export function DashboardPage() {
   const q = useDashboardQuery();
-  const rtQ = useRuntimeMetricsQuery(true);
+  // 先出 KPI，再拉运行时指标，避免双请求顶满首屏
+  const [rtReady, setRtReady] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setRtReady(true), 1200);
+    return () => window.clearTimeout(t);
+  }, []);
+  const rtQ = useRuntimeMetricsQuery(rtReady);
 
   const stats = q.data;
   const rt = rtQ.data;

@@ -12,5 +12,8 @@ export function useRedeemsQuery(params: {
   return useQuery({
     queryKey: queryKeys.redeems(params),
     queryFn: () => api.listRedeems(params),
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+    meta: { toastError: true },
   });
 }

@@ -12,7 +12,8 @@ import { useSettingsQuery } from "@/shared/hooks/use-settings";
  */
 export function DocumentMeta() {
   const { user } = useAuth();
-  const pubQ = usePublicConfigQuery();
+  // 管理端已有 settings 时不再拉公开配置，减少首屏请求
+  const pubQ = usePublicConfigQuery({ enabled: !user });
   const settingsQ = useSettingsQuery({ enabled: !!user });
 
   useEffect(() => {

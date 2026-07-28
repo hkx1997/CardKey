@@ -16,6 +16,7 @@ func (a *App) bumpUnusedCount(ctx context.Context, categoryID string, delta int)
 	if a.RDB != nil {
 		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
 	}
+	a.InvalidateDashboardCache()
 }
 
 // ReconcileCategoryStock 全量对账类别 unused_count（正确性优先）。

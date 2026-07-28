@@ -12,19 +12,31 @@ import (
 	"github.com/cardkey/cardkey/internal/crypto"
 	"github.com/cardkey/cardkey/internal/domain"
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
+	"golang.org/x/sync/errgroup"
 )
 
 // availableStockExpr 可兑换库存：优先物化列，回退聚合
 const availableStockExpr = `c.unused_count`
 
 func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
+	const cacheKey = "cardkey:public_config_v2"
+	if a.RDB != nil {
+		if raw, err := a.RDB.Get(ctx, cacheKey).Bytes(); err == nil && len(raw) > 0 {
+			var cached domain.PublicConfig
+			if json.Unmarshal(raw, &cached) == nil {
+				return cached, nil
+			}
+		}
+	}
 	s, err := a.GetSettings(ctx)
 	if err != nil {
 		return domain.PublicConfig{}, err
 	}
 	// 配置接口不再全表聚合库存（由 /category-stock 轮询承担），避免冷启动双倍扫表
+	// 大 data URL 图标截断，降低首包体积
 	rows, err := a.Pool.Query(ctx, `
-		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind, c.icon_value
+		SELECT c.slug, c.name, c.code_prefix, c.description, c.icon_kind,
+		       CASE WHEN c.icon_kind='image' AND length(c.icon_value) > 4096 THEN '' ELSE c.icon_value END
 		FROM categories c
 		WHERE c.enabled = true
 		ORDER BY c.sort_order, c.created_at`)
@@ -58,7 +70,7 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 	if docTitle == "" {
 		docTitle = s.SiteName
 	}
-	return domain.PublicConfig{
+	cfg := domain.PublicConfig{
 		SiteName: s.SiteName, SiteLogo: logo, SiteFavicon: fav, FooterText: s.FooterText,
 		DocumentTitle: docTitle,
 		RedeemTitle: s.RedeemTitle, RedeemSubtitle: s.RedeemSubtitle, RedeemSuccessHint: s.RedeemSuccessHint,
@@ -76,7 +88,13 @@ func (a *App) PublicConfig(ctx context.Context) (domain.PublicConfig, error) {
 		ShowApiDocsEntry: s.ApiDocsEnabled && s.ShowApiDocsEntry,
 		PublicRedeemApiKey: pubKey, RateLimitIpPerMin: s.RateLimitIpPerMin, RateLimitCodePerMin: s.RateLimitCodePerMin,
 		Categories: cats,
-	}, nil
+	}
+	if a.RDB != nil {
+		if b, err := json.Marshal(cfg); err == nil {
+			_ = a.RDB.Set(ctx, cacheKey, b, 20*time.Second).Err()
+		}
+	}
+	return cfg, nil
 }
 
 // PublicCategoryStock 启用类别的可兑换库存快照（供兑换端轮询，轻量无 HTML）。
@@ -117,7 +135,7 @@ func (a *App) PublicCategoryStock(ctx context.Context) (domain.PublicStock, erro
 	}
 	if a.RDB != nil {
 		if b, err := json.Marshal(stock); err == nil {
-			_ = a.RDB.Set(ctx, cacheKey, b, 3*time.Second).Err()
+			_ = a.RDB.Set(ctx, cacheKey, b, 8*time.Second).Err()
 		}
 	}
 	return stock, nil
@@ -304,7 +322,6 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 }
 
 func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySlug string) (domain.PageResult[domain.RedeemRecord], error) {
-	// inline to avoid import cycle risk; paging used via local normalize
 	if page < 1 {
 		page = 1
 	}
@@ -315,42 +332,79 @@ func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySl
 	args := []any{}
 	i := 1
 	if q != "" {
-		where += fmt.Sprintf(" AND (r.code ILIKE $%d OR r.ip::text ILIKE $%d)", i, i)
+		// 优先 code 搜索（有索引）；IP 文本搜索成本高，仅短查询时启用
+		if len(q) >= 3 {
+			where += fmt.Sprintf(" AND (r.code ILIKE $%d OR host(r.ip) ILIKE $%d)", i, i)
+		} else {
+			where += fmt.Sprintf(" AND r.code ILIKE $%d", i)
+		}
 		args = append(args, "%"+q+"%")
 		i++
 	}
-	if categorySlug != "" {
+	needCat := categorySlug != ""
+	if needCat {
 		where += fmt.Sprintf(" AND cat.slug=$%d", i)
 		args = append(args, categorySlug)
 		i++
 	}
+	countArgs := append([]any{}, args...)
+	listArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
 	var total int
-	if err := a.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM redeem_records r
-		JOIN categories cat ON cat.id=r.category_id WHERE `+where, args...).Scan(&total); err != nil {
-		return domain.PageResult[domain.RedeemRecord]{}, err
-	}
-	args = append(args, pageSize, (page-1)*pageSize)
-	rows, err := a.Pool.Query(ctx, fmt.Sprintf(`
-		SELECT r.id, r.category_id, cat.slug, cat.name, r.card_id, r.code, COALESCE(r.ip::text,''), r.user_agent, r.created_at
-		FROM redeem_records r
-		JOIN categories cat ON cat.id=r.category_id
-		WHERE %s
-		ORDER BY r.created_at DESC
-		LIMIT $%d OFFSET $%d`, where, i, i+1), args...)
-	if err != nil {
-		return domain.PageResult[domain.RedeemRecord]{}, err
-	}
-	defer rows.Close()
-	items := []domain.RedeemRecord{}
-	for rows.Next() {
-		var r domain.RedeemRecord
-		var created time.Time
-		if err := rows.Scan(&r.ID, &r.CategoryID, &r.CategorySlug, &r.CategoryName, &r.CardID, &r.Code, &r.IP, &r.UserAgent, &created); err != nil {
-			return domain.PageResult[domain.RedeemRecord]{}, err
+	var items []domain.RedeemRecord
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var countSQL string
+		if needCat || q != "" {
+			// 有类别筛选或搜索时与列表同 JOIN 条件
+			if needCat {
+				countSQL = `SELECT COUNT(*) FROM redeem_records r JOIN categories cat ON cat.id=r.category_id WHERE ` + where
+			} else {
+				// 仅 code 搜索，不 JOIN
+				cw := "1=1"
+				if q != "" {
+					if len(q) >= 3 {
+						cw = `r.code ILIKE $1 OR host(r.ip) ILIKE $1`
+					} else {
+						cw = `r.code ILIKE $1`
+					}
+				}
+				countSQL = `SELECT COUNT(*) FROM redeem_records r WHERE ` + cw
+			}
+		} else {
+			countSQL = `SELECT COUNT(*) FROM redeem_records`
 		}
-		r.CreatedAt = formatTS(created)
-		items = append(items, r)
+		return a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&total)
+	})
+	g.Go(func() error {
+		rows, err := a.Pool.Query(gctx, fmt.Sprintf(`
+			SELECT r.id, r.category_id, cat.slug, cat.name, r.card_id, r.code, COALESCE(r.ip::text,''), r.user_agent, r.created_at
+			FROM redeem_records r
+			JOIN categories cat ON cat.id=r.category_id
+			WHERE %s
+			ORDER BY r.created_at DESC
+			LIMIT $%d OFFSET $%d`, where, i, i+1), listArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		out := []domain.RedeemRecord{}
+		for rows.Next() {
+			var r domain.RedeemRecord
+			var created time.Time
+			if err := rows.Scan(&r.ID, &r.CategoryID, &r.CategorySlug, &r.CategoryName, &r.CardID, &r.Code, &r.IP, &r.UserAgent, &created); err != nil {
+				return err
+			}
+			r.CreatedAt = formatTS(created)
+			out = append(out, r)
+		}
+		items = out
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return domain.PageResult[domain.RedeemRecord]{}, err
+	}
+	if items == nil {
+		items = []domain.RedeemRecord{}
 	}
 	return domain.PageResult[domain.RedeemRecord]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }

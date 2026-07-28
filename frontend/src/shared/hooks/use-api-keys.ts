@@ -11,6 +11,8 @@ export function useApiKeysQuery() {
   return useQuery({
     queryKey: queryKeys.apiKeys,
     queryFn: () => api.listApiKeys(),
+    staleTime: 45_000,
+    placeholderData: (prev) => prev,
   });
 }
 

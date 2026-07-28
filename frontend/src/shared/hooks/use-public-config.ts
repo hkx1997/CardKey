@@ -9,16 +9,17 @@ import type { BatchRedeemItem } from "@/shared/lib/redeem-zip";
 import { queryKeys } from "@/shared/lib/query-keys";
 
 /** 站点配置（含类别元数据）；库存另由 stock 轮询刷新 */
-export function usePublicConfigQuery() {
+export function usePublicConfigQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.publicConfig,
     queryFn: () => api.getPublicConfig(),
-    staleTime: 60_000,
+    staleTime: 90_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 
 /** 兑换端类别库存默认轮询间隔（毫秒） */
-export const PUBLIC_STOCK_POLL_MS = 10_000;
+export const PUBLIC_STOCK_POLL_MS = 15_000;
 
 /** 兑换端类别库存：默认 10s 轮询；页面不可见时暂停 */
 export function usePublicCategoryStockQuery(opts?: {
@@ -34,10 +35,10 @@ export function usePublicCategoryStockQuery(opts?: {
     queryKey: queryKeys.publicCategoryStock,
     queryFn: () => api.getPublicCategoryStock(),
     enabled,
-    staleTime: Math.min(5_000, Math.max(0, interval)),
+    staleTime: Math.min(12_000, Math.max(0, interval)),
     refetchInterval: enabled && interval > 0 ? interval : false,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   });
 }
 

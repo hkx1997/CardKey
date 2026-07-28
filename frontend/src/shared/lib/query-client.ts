@@ -12,8 +12,9 @@ export function createAppQueryClient() {
     defaultOptions: {
       queries: {
         // 列表以 mutation invalidate 为准；窗口聚焦不全量狂刷
-        // 20s→45s：减少切页后立刻重复拉数的体感卡顿
         staleTime: 45_000,
+        // 未挂载查询保留更久，返回页面可秒开
+        gcTime: 10 * 60_000,
         retry: 1,
         refetchOnWindowFocus: false,
         refetchOnReconnect: true,

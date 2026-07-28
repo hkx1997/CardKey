@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cardkey/cardkey/internal/crypto"
@@ -13,7 +14,44 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// 看板短缓存：多查询聚合，12s 内复用（写操作后最多 12s 滞后）
+var (
+	dashCacheMu   sync.Mutex
+	dashCacheAt   time.Time
+	dashCacheData domain.DashboardStats
+	dashCacheOK   bool
+)
+
+const dashCacheTTL = 12 * time.Second
+
+func (a *App) InvalidateDashboardCache() {
+	dashCacheMu.Lock()
+	dashCacheOK = false
+	dashCacheMu.Unlock()
+}
+
 func (a *App) Dashboard(ctx context.Context) (domain.DashboardStats, error) {
+	dashCacheMu.Lock()
+	if dashCacheOK && time.Since(dashCacheAt) < dashCacheTTL {
+		s := dashCacheData
+		dashCacheMu.Unlock()
+		return s, nil
+	}
+	dashCacheMu.Unlock()
+
+	s, err := a.dashboardCompute(ctx)
+	if err != nil {
+		return s, err
+	}
+	dashCacheMu.Lock()
+	dashCacheData = s
+	dashCacheAt = time.Now()
+	dashCacheOK = true
+	dashCacheMu.Unlock()
+	return s, nil
+}
+
+func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, error) {
 	type byCat = struct {
 		Slug       string              `json:"slug"`
 		Name       string              `json:"name"`
@@ -461,23 +499,37 @@ func (a *App) ListAudit(ctx context.Context, page, pageSize int) (domain.PageRes
 		pageSize = 20
 	}
 	var total int
-	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&total)
-	rows, err := a.Pool.Query(ctx, `
-		SELECT id, actor_type, actor_label, action, resource, detail, COALESCE(ip::text,''), created_at
-		FROM audit_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2`, pageSize, (page-1)*pageSize)
-	if err != nil {
+	var items []domain.AuditLog
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return a.Pool.QueryRow(gctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&total)
+	})
+	g.Go(func() error {
+		rows, err := a.Pool.Query(gctx, `
+			SELECT id, actor_type, actor_label, action, resource, detail, COALESCE(ip::text,''), created_at
+			FROM audit_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2`, pageSize, (page-1)*pageSize)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		out := []domain.AuditLog{}
+		for rows.Next() {
+			var l domain.AuditLog
+			var created time.Time
+			if err := rows.Scan(&l.ID, &l.ActorType, &l.ActorLabel, &l.Action, &l.Resource, &l.Detail, &l.IP, &created); err != nil {
+				return err
+			}
+			l.CreatedAt = formatTS(created)
+			out = append(out, l)
+		}
+		items = out
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		return domain.PageResult[domain.AuditLog]{}, err
 	}
-	defer rows.Close()
-	items := []domain.AuditLog{}
-	for rows.Next() {
-		var l domain.AuditLog
-		var created time.Time
-		if err := rows.Scan(&l.ID, &l.ActorType, &l.ActorLabel, &l.Action, &l.Resource, &l.Detail, &l.IP, &created); err != nil {
-			return domain.PageResult[domain.AuditLog]{}, err
-		}
-		l.CreatedAt = formatTS(created)
-		items = append(items, l)
+	if items == nil {
+		items = []domain.AuditLog{}
 	}
 	return domain.PageResult[domain.AuditLog]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }

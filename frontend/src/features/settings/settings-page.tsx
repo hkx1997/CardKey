@@ -38,13 +38,14 @@ import { cn } from "@/shared/lib/cn";
 
 export function SettingsPage() {
   const q = useSettingsQuery();
-  const catsQ = useCategoriesQuery({ light: true });
   const m = useUpdateSettings();
   const testMailM = useTestMail();
   const [form, setForm] = useState<Settings | null>(null);
   const [baseline, setBaseline] = useState<Settings | null>(null);
   const [tab, setTab] = useState("general");
   const [testTo, setTestTo] = useState("");
+  // 仅邮件预警 Tab 需要类别列表
+  const catsQ = useCategoriesQuery({ light: true, enabled: tab === "mail" });
 
   useEffect(() => {
     if (!q.data) return;

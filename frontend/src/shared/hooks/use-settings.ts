@@ -11,7 +11,7 @@ export function useSettingsQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => api.getSettings(),
-    staleTime: 30_000,
+    staleTime: 60_000,
     enabled: opts?.enabled ?? true,
   });
 }

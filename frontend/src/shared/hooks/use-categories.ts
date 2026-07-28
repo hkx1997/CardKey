@@ -8,7 +8,7 @@ import { toastApiError } from "@/shared/lib/api-toast";
 import { queryKeys } from "@/shared/lib/query-keys";
 
 /** 完整类别列表（管理页）；筛选下拉请用 light */
-export function useCategoriesQuery(opts?: { light?: boolean }) {
+export function useCategoriesQuery(opts?: { light?: boolean; enabled?: boolean }) {
   const light = !!opts?.light;
   return useQuery({
     queryKey: light
@@ -16,6 +16,7 @@ export function useCategoriesQuery(opts?: { light?: boolean }) {
       : queryKeys.categories,
     queryFn: () => api.listCategories(light ? { light: true } : undefined),
     staleTime: light ? 60_000 : 45_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 

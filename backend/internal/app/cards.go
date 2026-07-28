@@ -12,6 +12,7 @@ import (
 	"github.com/cardkey/cardkey/internal/pkg/paging"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/errgroup"
 )
 
 func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, categorySlug, batchID string) (domain.PageResult[domain.Card], error) {
@@ -29,7 +30,8 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 		args = append(args, "%"+q+"%")
 		i++
 	}
-	if categorySlug != "" {
+	needCatJoin := categorySlug != ""
+	if needCatJoin {
 		where = append(where, fmt.Sprintf("cat.slug=$%d", i))
 		args = append(args, categorySlug)
 		i++
@@ -40,47 +42,68 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 		i++
 	}
 	wsql := strings.Join(where, " AND ")
+
+	// COUNT 与列表并行；无类别筛选时 COUNT 不 JOIN categories
+	countArgs := append([]any{}, args...)
+	listArgs := append(append([]any{}, args...), pageSize, paging.Offset(page, pageSize))
 	var total int
-	countSQL := `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
-	if err := a.Pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
-		return domain.PageResult[domain.Card]{}, err
-	}
-	args = append(args, pageSize, paging.Offset(page, pageSize))
-	sql := fmt.Sprintf(`
-		SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
-		       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
-		       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
-		FROM cards
-		JOIN categories cat ON cat.id=cards.category_id
-		LEFT JOIN batches b ON b.id=cards.batch_id
-		WHERE %s
-		ORDER BY cards.created_at DESC
-		LIMIT $%d OFFSET $%d`, wsql, i, i+1)
-	rows, err := a.Pool.Query(ctx, sql, args...)
-	if err != nil {
-		return domain.PageResult[domain.Card]{}, err
-	}
-	defer rows.Close()
-	items := []domain.Card{}
-	for rows.Next() {
-		var c domain.Card
-		var created time.Time
-		var exp, used *time.Time
-		var usedIP *string
-		var batchID, batchName *string
-		if err := rows.Scan(&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
-			&batchID, &batchName, &c.Note, &exp, &used, &usedIP, &created,
-			&c.Filename, &c.Mime, &c.Size); err != nil {
-			return domain.PageResult[domain.Card]{}, err
+	var items []domain.Card
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var countSQL string
+		if needCatJoin {
+			countSQL = `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
+		} else {
+			// 去掉 cards. 前缀亦可，但现有条件已带表名
+			countSQL = `SELECT COUNT(*) FROM cards WHERE ` + wsql
 		}
-		c.BatchID = batchID
-		c.BatchName = batchName
-		c.ExpiresAt = domain.PtrTime(exp)
-		c.UsedAt = domain.PtrTime(used)
-		c.UsedIP = usedIP
-		c.CreatedAt = formatTS(created)
-		c.Filename, c.Mime, c.Size = fillContentMeta(c.Type, c.Filename, c.Mime, c.Size)
-		items = append(items, c)
+		return a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&total)
+	})
+	g.Go(func() error {
+		sql := fmt.Sprintf(`
+			SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
+			       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
+			       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
+			FROM cards
+			JOIN categories cat ON cat.id=cards.category_id
+			LEFT JOIN batches b ON b.id=cards.batch_id
+			WHERE %s
+			ORDER BY cards.created_at DESC
+			LIMIT $%d OFFSET $%d`, wsql, i, i+1)
+		rows, err := a.Pool.Query(gctx, sql, listArgs...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		out := []domain.Card{}
+		for rows.Next() {
+			var c domain.Card
+			var created time.Time
+			var exp, used *time.Time
+			var usedIP *string
+			var bid, bname *string
+			if err := rows.Scan(&c.ID, &c.CategoryID, &c.CategorySlug, &c.CategoryName, &c.Code, &c.Type, &c.Status,
+				&bid, &bname, &c.Note, &exp, &used, &usedIP, &created,
+				&c.Filename, &c.Mime, &c.Size); err != nil {
+				return err
+			}
+			c.BatchID = bid
+			c.BatchName = bname
+			c.ExpiresAt = domain.PtrTime(exp)
+			c.UsedAt = domain.PtrTime(used)
+			c.UsedIP = usedIP
+			c.CreatedAt = formatTS(created)
+			c.Filename, c.Mime, c.Size = fillContentMeta(c.Type, c.Filename, c.Mime, c.Size)
+			out = append(out, c)
+		}
+		items = out
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return domain.PageResult[domain.Card]{}, err
+	}
+	if items == nil {
+		items = []domain.Card{}
 	}
 	return domain.PageResult[domain.Card]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }

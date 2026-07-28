@@ -4,11 +4,12 @@ import { api } from "@/shared/api/client";
 import { toastApiError } from "@/shared/lib/api-toast";
 import { queryKeys } from "@/shared/lib/query-keys";
 
-export function useSystemInfoQuery() {
+export function useSystemInfoQuery(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.systemInfo,
     queryFn: () => api.systemInfo(),
-    staleTime: 30_000,
+    staleTime: 120_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 

@@ -11,6 +11,9 @@ export function useBatchesQuery(categorySlug?: string) {
   return useQuery({
     queryKey: [...queryKeys.batches, categorySlug ?? "all"],
     queryFn: () => api.listBatches(categorySlug),
+    staleTime: 45_000,
+    placeholderData: (prev) => prev,
+    meta: { toastError: true },
   });
 }
 

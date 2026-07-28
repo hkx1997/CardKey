@@ -19,6 +19,7 @@ export function useCardsQuery(params: {
     queryKey: queryKeys.cards(params),
     queryFn: () => api.listCards(params),
     placeholderData: (prev) => prev,
+    staleTime: 30_000,
     meta: { toastError: true },
   });
 }
