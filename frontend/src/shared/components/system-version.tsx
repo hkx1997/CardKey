@@ -22,7 +22,9 @@ import {
 } from "@/shared/hooks/use-system";
 import { cn } from "@/shared/lib/cn";
 import { formatDateTime } from "@/shared/lib/format";
+import { getErrorMessage } from "@/shared/lib/api-toast";
 import {
+  isLikelyRestartDisconnect,
   waitForRestartAndReload,
   type RestartWaitState,
 } from "@/shared/lib/wait-for-restart";
@@ -40,27 +42,71 @@ export function SystemVersion({ className }: { className?: string }) {
   const [restartWait, setRestartWait] = useState<RestartWaitState | null>(
     null,
   );
+  /** 应用/回滚进行中（含等待重启），禁用重复点击 */
+  const [busy, setBusy] = useState(false);
 
   const check = checkM.data;
   const hasUpdate = !!check?.hasUpdate;
-  const waitingRestart = !!restartWait && restartWait.phase !== "timeout";
+  const waitingRestart =
+    busy || (!!restartWait && restartWait.phase !== "timeout");
 
-  const startAutoReload = useCallback(
-    async (opts: { targetVersion?: string; label: string }) => {
-      toast.message(`${opts.label}，将自动检测恢复并刷新页面…`);
+  /**
+   * 提交更新/回滚后始终进入「等重启 → 硬刷新」。
+   * 下载完成后进程会退出，客户端常见 Failed to fetch / 502，不能只依赖 onSuccess。
+   */
+  const runApplyOrRollback = useCallback(
+    async (opts: {
+      action: () => Promise<unknown>;
+      targetVersion?: string;
+      label: string;
+      failLabel: string;
+    }) => {
+      const previousVersion = infoQ.data?.version;
+      setBusy(true);
+      setRestartWait({
+        phase: "waiting_down",
+        attempt: 0,
+        message: `${opts.label}中，请勿关闭页面…`,
+      });
+
+      let submitted = false;
+      try {
+        await opts.action();
+        submitted = true;
+      } catch (err) {
+        if (isLikelyRestartDisconnect(err)) {
+          // 进程可能已退出并替换成功
+          submitted = true;
+          toast.message("连接已中断，正在检测服务是否完成重启…");
+        } else {
+          setBusy(false);
+          setRestartWait(null);
+          toast.error(getErrorMessage(err, opts.failLabel));
+          return;
+        }
+      }
+
+      if (!submitted) {
+        setBusy(false);
+        return;
+      }
+
+      toast.message(`${opts.label}已提交，将自动检测恢复并刷新…`);
       const ok = await waitForRestartAndReload({
         targetVersion: opts.targetVersion,
-        previousVersion: infoQ.data?.version,
+        previousVersion,
         onStatus: setRestartWait,
       });
       if (!ok) {
+        setBusy(false);
         setRestartWait({
           phase: "timeout",
           attempt: 0,
           message: "等待超时，请手动刷新页面（Ctrl+Shift+R）",
         });
-        toast.error("自动刷新超时，请手动刷新页面");
+        toast.error("自动刷新超时，请手动强制刷新（Ctrl+Shift+R）");
       }
+      // ok 时页面会 hardReload，不必 setBusy(false)
     },
     [infoQ.data?.version],
   );
@@ -236,28 +282,22 @@ export function SystemVersion({ className }: { className?: string }) {
                       <Button
                         size="sm"
                         className="w-full"
-                        loading={applyM.isPending || waitingRestart}
-                        disabled={
-                          applyM.isPending ||
-                          rollbackM.isPending ||
-                          waitingRestart
-                        }
+                        loading={busy || applyM.isPending}
+                        disabled={busy || applyM.isPending || rollbackM.isPending}
                         onClick={async () => {
                           const ok = await confirm({
                             title: `更新到 v${check.latest}`,
                             description:
-                              "将下载 Linux 二进制（含内嵌数据库迁移），替换当前进程并自动重启；启动时执行未应用的 SQL。恢复后页面会自动刷新。",
+                              "将下载 Linux 二进制（含内嵌数据库迁移），替换当前进程并自动重启；启动时执行未应用的 SQL。恢复后页面会自动强制刷新。",
                             confirmLabel: "一键更新并重启",
                             destructive: true,
                           });
                           if (!ok) return;
-                          applyM.mutate(check.latest, {
-                            onSuccess: () => {
-                              void startAutoReload({
-                                targetVersion: check.latest,
-                                label: "更新已提交",
-                              });
-                            },
+                          await runApplyOrRollback({
+                            action: () => applyM.mutateAsync(check.latest),
+                            targetVersion: check.latest,
+                            label: "更新",
+                            failLabel: "更新失败",
                           });
                         }}
                       >
@@ -314,23 +354,21 @@ export function SystemVersion({ className }: { className?: string }) {
                           size="sm"
                           variant="ghost"
                           className="h-7 text-[11px]"
-                          disabled={rollbackM.isPending || waitingRestart}
+                          disabled={busy || rollbackM.isPending}
                           onClick={async () => {
                             const ok = await confirm({
                               title: `回滚到 v${h.version}`,
                               description:
-                                "将切换到该版本并重启。恢复后页面会自动刷新。若数据库迁移不可逆，请谨慎操作。",
+                                "将切换到该版本并重启。恢复后页面会自动强制刷新。若数据库迁移不可逆，请谨慎操作。",
                               confirmLabel: "回滚",
                               destructive: true,
                             });
                             if (!ok) return;
-                            rollbackM.mutate(h.version, {
-                              onSuccess: () => {
-                                void startAutoReload({
-                                  targetVersion: h.version,
-                                  label: "回滚已提交",
-                                });
-                              },
+                            await runApplyOrRollback({
+                              action: () => rollbackM.mutateAsync(h.version),
+                              targetVersion: h.version,
+                              label: "回滚",
+                              failLabel: "回滚失败",
                             });
                           }}
                         >
@@ -352,20 +390,20 @@ export function SystemVersion({ className }: { className?: string }) {
                   size="sm"
                   variant="outline"
                   className="mt-2 w-full"
-                  disabled={rollbackM.isPending || waitingRestart}
+                  disabled={busy || rollbackM.isPending}
                   onClick={async () => {
                     const ok = await confirm({
                       title: "回滚到上一备份",
                       description:
-                        "使用 .bak 替换当前二进制并重启；恢复后页面会自动刷新。",
+                        "使用 .bak 替换当前二进制并重启；恢复后页面会自动强制刷新。",
                       confirmLabel: "回滚",
                       destructive: true,
                     });
                     if (!ok) return;
-                    rollbackM.mutate("previous", {
-                      onSuccess: () => {
-                        void startAutoReload({ label: "回滚已提交" });
-                      },
+                    await runApplyOrRollback({
+                      action: () => rollbackM.mutateAsync("previous"),
+                      label: "回滚",
+                      failLabel: "回滚失败",
                     });
                   }}
                 >

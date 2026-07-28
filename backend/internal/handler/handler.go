@@ -790,7 +790,11 @@ func (h *Handler) ApplyUpdate(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, err)
 		return
 	}
+	// 立即写出并 flush，避免进程即将退出时响应滞留在缓冲里
 	response.OK(w, map[string]string{"status": "restarting"})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (h *Handler) RollbackUpdate(w http.ResponseWriter, r *http.Request) {
@@ -803,6 +807,9 @@ func (h *Handler) RollbackUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, map[string]string{"status": "restarting"})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // silence unused in some builds

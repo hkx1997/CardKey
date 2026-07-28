@@ -850,8 +850,9 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 	})
 	// Docker: restart policy 会拉起同容器；entrypoint 优先 data/bin/cardkey
 	// 重启后 main 会 MigrateFS + SyncToDir(静态)，UI 与 API 一并更新。
+	// 延迟足够长，确保 HTTP 响应先写回浏览器（否则客户端拿不到 success，不会开始等重启）。
 	go func() {
-		time.Sleep(900 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 		if a.Log != nil {
 			a.Log.Info("exiting for update restart (embedded migrations+SPA apply on boot)",
 				"version", targetVer, "mode", a.UpdateMode, "bin", binPath)
@@ -889,7 +890,7 @@ func (a *App) RollbackUpdate(ctx context.Context, targetVer, actor, ip string) e
 	a.Audit(ctx, "admin", actor, "update_rollback", "system", "rollback "+targetVer, ip)
 	a.setUpdateStatus(UpdateStatus{State: "restarting", Message: "回滚完成，即将重启…", Progress: 95})
 	go func() {
-		time.Sleep(900 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 		os.Exit(0)
 	}()
 	return nil

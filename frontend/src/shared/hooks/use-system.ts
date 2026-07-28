@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/shared/api/client";
-import { useInvalidate } from "@/shared/hooks/use-invalidate";
 import { toastApiError } from "@/shared/lib/api-toast";
 import { queryKeys } from "@/shared/lib/query-keys";
 
@@ -38,24 +37,15 @@ export function useUpdateHistory(enabled: boolean) {
 }
 
 export function useApplyUpdate() {
-  const inv = useInvalidate();
   return useMutation({
     mutationFn: (version?: string) => api.applyUpdate(version),
-    onSuccess: () => {
-      // 具体文案与自动刷新由 SystemVersion 面板处理
-      inv.system();
-    },
-    onError: (e) => toastApiError(e, "更新失败"),
+    // 错误/成功提示与自动刷新由 SystemVersion 统一处理
+    // （进程退出时 fetch 常失败，不能在这里 toast 假失败）
   });
 }
 
 export function useRollbackUpdate() {
-  const inv = useInvalidate();
   return useMutation({
     mutationFn: (version?: string) => api.rollbackUpdate(version),
-    onSuccess: () => {
-      inv.system();
-    },
-    onError: (e) => toastApiError(e, "回滚失败"),
   });
 }
