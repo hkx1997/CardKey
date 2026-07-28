@@ -206,12 +206,51 @@ git tag -a "$TAG" -m "CardKey $TAG"
 git push origin "$TAG"
 
 echo "==> GitHub Release + Linux 资产"
-gh release create "$TAG" \
-  --title "CardKey $TAG" \
-  --notes-file "$NOTES" \
-  "$DIST/cardkey-linux-amd64" \
-  "$DIST/cardkey-linux-arm64" \
-  "$DIST/checksums.txt"
+# 必须在 DIST 目录用相对路径上传：Windows 上 gh 对 MSYS 绝对路径可能传成残缺包（~12MB 无 SPA）
+(
+  cd "$DIST"
+  gh release create "$TAG" \
+    --title "CardKey $TAG" \
+    --notes-file "$NOTES" \
+    ./cardkey-linux-amd64 \
+    ./cardkey-linux-arm64 \
+    ./checksums.txt
+)
+
+echo "==> 回拉校验 GitHub 资产（防空壳包上线）"
+VERIFY_DIR="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_DIR"' EXIT
+gh release download "$TAG" -p cardkey-linux-amd64 -D "$VERIFY_DIR" --clobber
+LOCAL_SZ=$(wc -c <"$DIST/cardkey-linux-amd64" | tr -d ' ')
+REMOTE_SZ=$(wc -c <"$VERIFY_DIR/cardkey-linux-amd64" | tr -d ' ')
+if [[ "$LOCAL_SZ" != "$REMOTE_SZ" ]]; then
+  echo "FAIL: GitHub 资产大小 $REMOTE_SZ != 本地 $LOCAL_SZ，正在用相对路径覆盖重传…" >&2
+  (
+    cd "$DIST"
+    gh release delete-asset "$TAG" cardkey-linux-amd64 --yes || true
+    gh release delete-asset "$TAG" cardkey-linux-arm64 --yes || true
+    gh release delete-asset "$TAG" checksums.txt --yes || true
+    gh release upload "$TAG" ./cardkey-linux-amd64 ./cardkey-linux-arm64 ./checksums.txt --clobber
+  )
+  gh release download "$TAG" -p cardkey-linux-amd64 -D "$VERIFY_DIR" --clobber
+  REMOTE_SZ=$(wc -c <"$VERIFY_DIR/cardkey-linux-amd64" | tr -d ' ')
+  if [[ "$LOCAL_SZ" != "$REMOTE_SZ" ]]; then
+    echo "FAIL: 重传后仍不一致 local=$LOCAL_SZ remote=$REMOTE_SZ" >&2
+    exit 1
+  fi
+fi
+# 内容校验：CSS 片段必须在远程包内
+python - "$VERIFY_DIR/cardkey-linux-amd64" "$CSS_FILE" <<'PY'
+import sys
+from pathlib import Path
+data = Path(sys.argv[1]).read_bytes()
+css = Path(sys.argv[2]).read_bytes()[:120]
+if css not in data:
+    raise SystemExit("FAIL: re-downloaded GitHub binary missing CSS embed")
+if len(data) < 13_000_000:
+    raise SystemExit(f"FAIL: re-downloaded binary too small: {len(data)}")
+print("OK GitHub asset verified:", len(data), "bytes")
+PY
 
 rm -f "$NOTES"
 echo "OK: https://github.com/hkx1997/CardKey/releases/tag/$TAG"
