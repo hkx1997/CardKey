@@ -319,7 +319,7 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "{prefix}/admin/updates/history",
     auth: "管理员",
-    desc: "本地可回滚版本",
+    desc: "版本历史：本机归档 + GitHub Release（可回滚目标）",
   },
   {
     method: "GET",
@@ -331,15 +331,15 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "POST",
     path: "{prefix}/admin/updates/apply",
     auth: "管理员",
-    desc: "应用更新（binary 模式）",
+    desc: "应用更新（binary/docker：下载 Linux 资产并重启）",
     body: '{ "version?" }',
   },
   {
     method: "POST",
     path: "{prefix}/admin/updates/rollback",
     auth: "管理员",
-    desc: "回滚版本",
-    body: '{ "version?" }',
+    desc: "回滚：previous=.bak；指定版本优先本机归档，否则从 GitHub 下载",
+    body: '{ "version?": "previous|0.1.x" }',
   },
 ];
 
