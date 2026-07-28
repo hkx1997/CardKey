@@ -65,7 +65,7 @@ describe("waitForRestartAndReload early ready", () => {
       pathname: "/admin",
       search: "",
       replace,
-    } as Location);
+    } as unknown as Location);
     vi.stubGlobal("sessionStorage", { setItem: vi.fn() });
 
     const statuses: string[] = [];

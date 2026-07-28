@@ -54,6 +54,8 @@ export function ImportPage() {
     totalLines: number;
     doneLines: number;
     successCount: number;
+    errorCount?: number;
+    errorReport?: string;
   } | null>(null);
   const [asyncBusy, setAsyncBusy] = useState(false);
 
