@@ -15,7 +15,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, categorySlug, batchID string) (domain.PageResult[domain.Card], error) {
+// ListCards 支持 page/OFFSET 与 keyset cursor（cursor 优先，避免深翻页扫 OFFSET）。
+func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, categorySlug, batchID, cursor string) (domain.PageResult[domain.Card], error) {
 	page, pageSize = paging.Normalize(page, pageSize, 10, 100)
 	where := []string{"1=1"}
 	args := []any{}
@@ -41,41 +42,114 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 		args = append(args, batchID)
 		i++
 	}
+	useKeyset := false
+	if cur, ok := decodeListCursor(cursor); ok {
+		frag, cargs := keysetPredicate("cards", cur, i)
+		where = append(where, frag)
+		args = append(args, cargs...)
+		i += len(cargs)
+		useKeyset = true
+	}
 	wsql := strings.Join(where, " AND ")
 
-	// COUNT 与列表并行；无类别筛选时 COUNT 不 JOIN categories
+	unfiltered := status == "" || status == "all"
+	unfiltered = unfiltered && q == "" && categorySlug == "" && batchID == ""
+
 	countArgs := append([]any{}, args...)
-	listArgs := append(append([]any{}, args...), pageSize, paging.Offset(page, pageSize))
+	// keyset 条件不应进 COUNT（COUNT 针对整筛选集）
+	countWhere := wsql
+	if useKeyset {
+		// 重建不含 cursor 的 where 做 count
+		cw := []string{"1=1"}
+		cargs := []any{}
+		ci := 1
+		if status != "" && status != "all" {
+			cw = append(cw, fmt.Sprintf("cards.status=$%d", ci))
+			cargs = append(cargs, status)
+			ci++
+		}
+		if q != "" {
+			cw = append(cw, fmt.Sprintf("(cards.code ILIKE $%d OR cards.note ILIKE $%d)", ci, ci))
+			cargs = append(cargs, "%"+q+"%")
+			ci++
+		}
+		if needCatJoin {
+			cw = append(cw, fmt.Sprintf("cat.slug=$%d", ci))
+			cargs = append(cargs, categorySlug)
+			ci++
+		}
+		if batchID != "" {
+			cw = append(cw, fmt.Sprintf("cards.batch_id=$%d", ci))
+			cargs = append(cargs, batchID)
+		}
+		countWhere = strings.Join(cw, " AND ")
+		countArgs = cargs
+	}
+
+	// 多取 1 行判断 HasMore
+	fetchN := pageSize + 1
+	var listArgs []any
+	if useKeyset {
+		listArgs = append(append([]any{}, args...), fetchN)
+	} else {
+		listArgs = append(append([]any{}, args...), fetchN, paging.Offset(page, pageSize))
+	}
+
 	var total int
+	var totalExact bool = true
 	var items []domain.Card
+	var itemTimes []time.Time
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		var countSQL string
-		if needCatJoin {
-			countSQL = `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + wsql
-		} else {
-			// 去掉 cards. 前缀亦可，但现有条件已带表名
-			countSQL = `SELECT COUNT(*) FROM cards WHERE ` + wsql
+		n, exact, err := a.smartCount(gctx, "cards", filterKey(status, q, categorySlug, batchID), unfiltered, 8000, func() (int, error) {
+			var countSQL string
+			if needCatJoin {
+				countSQL = `SELECT COUNT(*) FROM cards JOIN categories cat ON cat.id=cards.category_id WHERE ` + countWhere
+			} else {
+				countSQL = `SELECT COUNT(*) FROM cards WHERE ` + countWhere
+			}
+			var n int
+			err := a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&n)
+			return n, err
+		})
+		if err != nil {
+			return err
 		}
-		return a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&total)
+		total, totalExact = n, exact
+		return nil
 	})
 	g.Go(func() error {
-		sql := fmt.Sprintf(`
-			SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
-			       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
-			       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
-			FROM cards
-			JOIN categories cat ON cat.id=cards.category_id
-			LEFT JOIN batches b ON b.id=cards.batch_id
-			WHERE %s
-			ORDER BY cards.created_at DESC
-			LIMIT $%d OFFSET $%d`, wsql, i, i+1)
+		var sql string
+		if useKeyset {
+			sql = fmt.Sprintf(`
+				SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
+				       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
+				       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
+				FROM cards
+				JOIN categories cat ON cat.id=cards.category_id
+				LEFT JOIN batches b ON b.id=cards.batch_id
+				WHERE %s
+				ORDER BY cards.created_at DESC, cards.id DESC
+				LIMIT $%d`, wsql, i)
+		} else {
+			sql = fmt.Sprintf(`
+				SELECT cards.id, cards.category_id, cat.slug, cat.name, cards.code, cards.type, cards.status,
+				       cards.batch_id, b.name, cards.note, cards.expires_at, cards.used_at, cards.used_ip::text, cards.created_at,
+				       COALESCE(cards.content_filename,''), COALESCE(cards.content_mime,''), COALESCE(cards.content_size,0)
+				FROM cards
+				JOIN categories cat ON cat.id=cards.category_id
+				LEFT JOIN batches b ON b.id=cards.batch_id
+				WHERE %s
+				ORDER BY cards.created_at DESC, cards.id DESC
+				LIMIT $%d OFFSET $%d`, wsql, i, i+1)
+		}
 		rows, err := a.Pool.Query(gctx, sql, listArgs...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		out := []domain.Card{}
+		times := []time.Time{}
 		for rows.Next() {
 			var c domain.Card
 			var created time.Time
@@ -95,8 +169,10 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 			c.CreatedAt = formatTS(created)
 			c.Filename, c.Mime, c.Size = fillContentMeta(c.Type, c.Filename, c.Mime, c.Size)
 			out = append(out, c)
+			times = append(times, created)
 		}
 		items = out
+		itemTimes = times
 		return nil
 	})
 	if err := g.Wait(); err != nil {
@@ -105,7 +181,24 @@ func (a *App) ListCards(ctx context.Context, page, pageSize int, status, q, cate
 	if items == nil {
 		items = []domain.Card{}
 	}
-	return domain.PageResult[domain.Card]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+	// 裁剪 + next cursor
+	hasMore := len(items) > pageSize
+	if hasMore {
+		items = items[:pageSize]
+		itemTimes = itemTimes[:pageSize]
+	}
+	next := ""
+	if hasMore && len(items) > 0 {
+		next = encodeListCursor(itemTimes[len(itemTimes)-1], items[len(items)-1].ID)
+	}
+	// 若无 hasMore 但 total 已知，校正
+	if !hasMore && totalExact && page*pageSize < total {
+		// OFFSET 模式可能 total 更大但本页未满（删数据）——以 hasMore 为准
+	}
+	return domain.PageResult[domain.Card]{
+		Items: items, Total: total, Page: page, PageSize: pageSize,
+		TotalExact: totalExact, HasMore: hasMore, NextCursor: next,
+	}, nil
 }
 
 func (a *App) GetCard(ctx context.Context, id string, reveal bool, actor, ip string) (domain.Card, error) {

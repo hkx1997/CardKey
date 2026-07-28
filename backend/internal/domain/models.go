@@ -270,6 +270,12 @@ type PageResult[T any] struct {
 	Total    int `json:"total"`
 	Page     int `json:"page"`
 	PageSize int `json:"pageSize"`
+	// TotalExact=false 表示 total 为估算（大表无筛选时），前端显示「约」
+	TotalExact bool `json:"totalExact"`
+	// HasMore 是否还有下一页（LIMIT+1 / keyset）
+	HasMore bool `json:"hasMore"`
+	// NextCursor 下一页 keyset：RFC3339Nano|uuid；空表示无下一页
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 type DashboardStats struct {

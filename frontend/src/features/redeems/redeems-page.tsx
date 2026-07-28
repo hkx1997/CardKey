@@ -1,5 +1,5 @@
 import { Download, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { useCategoriesQuery } from "@/shared/hooks/use-categories";
+import { useListCursor } from "@/shared/hooks/use-list-cursor";
 import { usePageSize } from "@/shared/hooks/use-page-size";
 import { useRedeemsQuery } from "@/shared/hooks/use-redeems";
 import { formatDateTime } from "@/shared/lib/format";
@@ -43,9 +44,17 @@ function toCsv(rows: RedeemRecord[]) {
 export function RedeemsPage() {
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
   const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
   const [categorySlug, setCategorySlug] = useState(ALL);
+
+  const filterKey = `${query}|${categorySlug}|${pageSize}`;
+  const {
+    page,
+    setPage,
+    cursor,
+    rememberNext,
+    reset: resetCursor,
+  } = useListCursor(filterKey);
 
   const catsQ = useCategoriesQuery({ light: true });
   const listQ = useRedeemsQuery({
@@ -53,11 +62,18 @@ export function RedeemsPage() {
     pageSize,
     q: query || undefined,
     categorySlug: categorySlug === ALL ? undefined : categorySlug,
+    cursor: cursor || undefined,
   });
 
+  useEffect(() => {
+    if (listQ.data?.nextCursor) {
+      rememberNext(page, listQ.data.nextCursor);
+    }
+  }, [listQ.data?.nextCursor, page, rememberNext]);
+
   function runSearch() {
-    setPage(1);
     setQuery(q.trim());
+    resetCursor();
   }
 
   function exportPageCsv() {
@@ -157,7 +173,7 @@ export function RedeemsPage() {
               value={categorySlug}
               onValueChange={(v) => {
                 setCategorySlug(v);
-                setPage(1);
+                resetCursor();
               }}
               allowAll
               allValue={ALL}
@@ -175,10 +191,12 @@ export function RedeemsPage() {
               page,
               pageSize,
               total: listQ.data?.total ?? 0,
+              totalExact: listQ.data?.totalExact,
+              hasMore: listQ.data?.hasMore,
               onPageChange: setPage,
               onPageSizeChange: (n) => {
                 setPageSize(n);
-                setPage(1);
+                resetCursor();
               },
               pageSizeOptions,
             }}

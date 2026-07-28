@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,13 +10,30 @@ import {
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import { useAuditQuery } from "@/shared/hooks/use-audit";
+import { useListCursor } from "@/shared/hooks/use-list-cursor";
 import { usePageSize } from "@/shared/hooks/use-page-size";
 import { formatDateTime } from "@/shared/lib/format";
 
 export function AuditPage() {
-  const [page, setPage] = useState(1);
   const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
-  const q = useAuditQuery({ page, pageSize });
+  const {
+    page,
+    setPage,
+    cursor,
+    rememberNext,
+    reset: resetCursor,
+  } = useListCursor(String(pageSize));
+  const q = useAuditQuery({
+    page,
+    pageSize,
+    cursor: cursor || undefined,
+  });
+
+  useEffect(() => {
+    if (q.data?.nextCursor) {
+      rememberNext(page, q.data.nextCursor);
+    }
+  }, [q.data?.nextCursor, page, rememberNext]);
 
   const columns = useMemo<DataTableColumn<AuditLog>[]>(
     () => [
@@ -80,10 +97,12 @@ export function AuditPage() {
               page,
               pageSize,
               total: q.data?.total ?? 0,
+              totalExact: q.data?.totalExact,
+              hasMore: q.data?.hasMore,
               onPageChange: setPage,
               onPageSizeChange: (n) => {
                 setPageSize(n);
-                setPage(1);
+                resetCursor();
               },
               pageSizeOptions,
             }}

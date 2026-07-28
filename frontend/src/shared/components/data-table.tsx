@@ -93,6 +93,8 @@ export function DataTable<T>({
     onPageChange: (page: number) => void;
     onPageSizeChange?: (size: number) => void;
     pageSizeOptions?: readonly number[];
+    totalExact?: boolean;
+    hasMore?: boolean;
   };
   toolbar?: ReactNode;
   mobileCard?: (row: T) => ReactNode;
@@ -239,6 +241,8 @@ export function DataTable<T>({
           onPageChange={pagination.onPageChange}
           onPageSizeChange={pagination.onPageSizeChange}
           pageSizeOptions={pagination.pageSizeOptions}
+          totalExact={pagination.totalExact}
+          hasMore={pagination.hasMore}
         />
       ) : null}
     </div>

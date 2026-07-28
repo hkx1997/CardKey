@@ -8,7 +8,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -64,6 +64,7 @@ import {
   downloadCodesTxt,
   exportFilename,
 } from "@/shared/lib/export-codes";
+import { useListCursor } from "@/shared/hooks/use-list-cursor";
 import { usePageSize } from "@/shared/hooks/use-page-size";
 import { formatDateTime } from "@/shared/lib/format";
 import { CardStatusBadge } from "@/shared/lib/status";
@@ -92,7 +93,6 @@ export function CardsPage() {
   const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const batchFromUrl = searchParams.get("batch") || undefined;
-  const [page, setPage] = useState(1);
   const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
   const [status, setStatus] = useState<CardStatus | "all">("all");
   const [categorySlug, setCategorySlug] = useState(ALL);
@@ -103,6 +103,15 @@ export function CardsPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [reveal, setReveal] = useState(false);
 
+  const filterKey = `${status}|${categorySlug}|${query}|${batchFromUrl ?? ""}|${pageSize}`;
+  const {
+    page,
+    setPage,
+    cursor,
+    rememberNext,
+    reset: resetCursor,
+  } = useListCursor(filterKey);
+
   const catsQ = useCategoriesQuery({ light: true });
   const listQ = useCardsQuery({
     page,
@@ -111,7 +120,14 @@ export function CardsPage() {
     q: query || undefined,
     categorySlug: categorySlug === ALL ? undefined : categorySlug,
     batchId: batchFromUrl,
+    cursor: cursor || undefined,
   });
+
+  useEffect(() => {
+    if (listQ.data?.nextCursor) {
+      rememberNext(page, listQ.data.nextCursor);
+    }
+  }, [listQ.data?.nextCursor, page, rememberNext]);
   const detailQ = useCardDetail(detailId, reveal);
   const actionM = useBatchCardAction();
   const exportM = useExportCards();
@@ -555,10 +571,12 @@ export function CardsPage() {
               page,
               pageSize,
               total: listQ.data?.total ?? 0,
+              totalExact: listQ.data?.totalExact,
+              hasMore: listQ.data?.hasMore,
               onPageChange: setPage,
               onPageSizeChange: (n) => {
                 setPageSize(n);
-                setPage(1);
+                resetCursor();
               },
               pageSizeOptions,
             }}

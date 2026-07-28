@@ -321,73 +321,119 @@ func (a *App) RedeemWithIdempotency(ctx context.Context, categorySlug, code, ip,
 	return result, nil
 }
 
-func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySlug string) (domain.PageResult[domain.RedeemRecord], error) {
+func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySlug, cursor string) (domain.PageResult[domain.RedeemRecord], error) {
 	if page < 1 {
 		page = 1
 	}
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 10
 	}
-	where := "1=1"
+	whereParts := []string{"1=1"}
 	args := []any{}
 	i := 1
 	if q != "" {
-		// 优先 code 搜索（有索引）；IP 文本搜索成本高，仅短查询时启用
 		if len(q) >= 3 {
-			where += fmt.Sprintf(" AND (r.code ILIKE $%d OR host(r.ip) ILIKE $%d)", i, i)
+			whereParts = append(whereParts, fmt.Sprintf("(r.code ILIKE $%d OR host(r.ip) ILIKE $%d)", i, i))
 		} else {
-			where += fmt.Sprintf(" AND r.code ILIKE $%d", i)
+			whereParts = append(whereParts, fmt.Sprintf("r.code ILIKE $%d", i))
 		}
 		args = append(args, "%"+q+"%")
 		i++
 	}
 	needCat := categorySlug != ""
 	if needCat {
-		where += fmt.Sprintf(" AND cat.slug=$%d", i)
+		whereParts = append(whereParts, fmt.Sprintf("cat.slug=$%d", i))
 		args = append(args, categorySlug)
 		i++
 	}
-	countArgs := append([]any{}, args...)
-	listArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	useKeyset := false
+	if cur, ok := decodeListCursor(cursor); ok {
+		frag, cargs := keysetPredicate("r", cur, i)
+		whereParts = append(whereParts, frag)
+		args = append(args, cargs...)
+		i += len(cargs)
+		useKeyset = true
+	}
+	where := strings.Join(whereParts, " AND ")
+
+	// COUNT 条件不含 keyset
+	countWhere := "1=1"
+	countArgs := []any{}
+	ci := 1
+	if q != "" {
+		if len(q) >= 3 {
+			countWhere += fmt.Sprintf(" AND (r.code ILIKE $%d OR host(r.ip) ILIKE $%d)", ci, ci)
+		} else {
+			countWhere += fmt.Sprintf(" AND r.code ILIKE $%d", ci)
+		}
+		countArgs = append(countArgs, "%"+q+"%")
+		ci++
+	}
+	if needCat {
+		countWhere += fmt.Sprintf(" AND cat.slug=$%d", ci)
+		countArgs = append(countArgs, categorySlug)
+	}
+
+	fetchN := pageSize + 1
+	var listArgs []any
+	if useKeyset {
+		listArgs = append(append([]any{}, args...), fetchN)
+	} else {
+		listArgs = append(append([]any{}, args...), fetchN, (page-1)*pageSize)
+	}
+
+	unfiltered := q == "" && categorySlug == ""
 	var total int
+	totalExact := true
 	var items []domain.RedeemRecord
+	var times []time.Time
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		var countSQL string
-		if needCat || q != "" {
-			// 有类别筛选或搜索时与列表同 JOIN 条件
+		n, exact, err := a.smartCount(gctx, "redeem_records", filterKey(q, categorySlug), unfiltered, 5000, func() (int, error) {
+			var countSQL string
 			if needCat {
-				countSQL = `SELECT COUNT(*) FROM redeem_records r JOIN categories cat ON cat.id=r.category_id WHERE ` + where
+				countSQL = `SELECT COUNT(*) FROM redeem_records r JOIN categories cat ON cat.id=r.category_id WHERE ` + countWhere
+			} else if q != "" {
+				countSQL = `SELECT COUNT(*) FROM redeem_records r WHERE ` + countWhere
 			} else {
-				// 仅 code 搜索，不 JOIN
-				cw := "1=1"
-				if q != "" {
-					if len(q) >= 3 {
-						cw = `r.code ILIKE $1 OR host(r.ip) ILIKE $1`
-					} else {
-						cw = `r.code ILIKE $1`
-					}
-				}
-				countSQL = `SELECT COUNT(*) FROM redeem_records r WHERE ` + cw
+				countSQL = `SELECT COUNT(*) FROM redeem_records`
 			}
-		} else {
-			countSQL = `SELECT COUNT(*) FROM redeem_records`
+			var n int
+			err := a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&n)
+			return n, err
+		})
+		if err != nil {
+			return err
 		}
-		return a.Pool.QueryRow(gctx, countSQL, countArgs...).Scan(&total)
+		total, totalExact = n, exact
+		return nil
 	})
 	g.Go(func() error {
-		rows, err := a.Pool.Query(gctx, fmt.Sprintf(`
-			SELECT r.id, r.category_id, cat.slug, cat.name, r.card_id, r.code, COALESCE(r.ip::text,''), r.user_agent, r.created_at
-			FROM redeem_records r
-			JOIN categories cat ON cat.id=r.category_id
-			WHERE %s
-			ORDER BY r.created_at DESC
-			LIMIT $%d OFFSET $%d`, where, i, i+1), listArgs...)
+		var sql string
+		if useKeyset {
+			sql = fmt.Sprintf(`
+				SELECT r.id, r.category_id, cat.slug, cat.name, r.card_id, r.code, COALESCE(r.ip::text,''), r.user_agent, r.created_at
+				FROM redeem_records r
+				JOIN categories cat ON cat.id=r.category_id
+				WHERE %s
+				ORDER BY r.created_at DESC, r.id DESC
+				LIMIT $%d`, where, i)
+		} else {
+			sql = fmt.Sprintf(`
+				SELECT r.id, r.category_id, cat.slug, cat.name, r.card_id, r.code, COALESCE(r.ip::text,''), r.user_agent, r.created_at
+				FROM redeem_records r
+				JOIN categories cat ON cat.id=r.category_id
+				WHERE %s
+				ORDER BY r.created_at DESC, r.id DESC
+				LIMIT $%d OFFSET $%d`, where, i, i+1)
+		}
+		rows, err := a.Pool.Query(gctx, sql, listArgs...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		out := []domain.RedeemRecord{}
+		ts := []time.Time{}
 		for rows.Next() {
 			var r domain.RedeemRecord
 			var created time.Time
@@ -396,8 +442,10 @@ func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySl
 			}
 			r.CreatedAt = formatTS(created)
 			out = append(out, r)
+			ts = append(ts, created)
 		}
 		items = out
+		times = ts
 		return nil
 	})
 	if err := g.Wait(); err != nil {
@@ -406,5 +454,17 @@ func (a *App) ListRedeems(ctx context.Context, page, pageSize int, q, categorySl
 	if items == nil {
 		items = []domain.RedeemRecord{}
 	}
-	return domain.PageResult[domain.RedeemRecord]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+	hasMore := len(items) > pageSize
+	if hasMore {
+		items = items[:pageSize]
+		times = times[:pageSize]
+	}
+	next := ""
+	if hasMore && len(items) > 0 {
+		next = encodeListCursor(times[len(times)-1], items[len(items)-1].ID)
+	}
+	return domain.PageResult[domain.RedeemRecord]{
+		Items: items, Total: total, Page: page, PageSize: pageSize,
+		TotalExact: totalExact, HasMore: hasMore, NextCursor: next,
+	}, nil
 }

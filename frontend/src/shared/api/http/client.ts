@@ -268,6 +268,7 @@ export const httpClient = {
     q?: string;
     batchId?: string;
     categorySlug?: string;
+    cursor?: string;
   }) => {
     const sp = new URLSearchParams();
     if (params.page) sp.set("page", String(params.page));
@@ -276,6 +277,7 @@ export const httpClient = {
     if (params.q) sp.set("q", params.q);
     if (params.batchId) sp.set("batch_id", params.batchId);
     if (params.categorySlug) sp.set("category", params.categorySlug);
+    if (params.cursor) sp.set("cursor", params.cursor);
     return request<PageResult<Card>>(`/api/v1/admin/cards?${sp}`);
   },
 
@@ -416,12 +418,14 @@ export const httpClient = {
     pageSize?: number;
     q?: string;
     categorySlug?: string;
+    cursor?: string;
   }) => {
     const sp = new URLSearchParams();
     if (params.page) sp.set("page", String(params.page));
     if (params.pageSize) sp.set("page_size", String(params.pageSize));
     if (params.q) sp.set("q", params.q);
     if (params.categorySlug) sp.set("category", params.categorySlug);
+    if (params.cursor) sp.set("cursor", params.cursor);
     return request<PageResult<RedeemRecord>>(`/api/v1/admin/redeems?${sp}`);
   },
 
@@ -496,10 +500,15 @@ export const httpClient = {
     return body.data;
   },
 
-  listAuditLogs: (params: { page?: number; pageSize?: number }) => {
+  listAuditLogs: (params: {
+    page?: number;
+    pageSize?: number;
+    cursor?: string;
+  }) => {
     const sp = new URLSearchParams();
     if (params.page) sp.set("page", String(params.page));
     if (params.pageSize) sp.set("page_size", String(params.pageSize));
+    if (params.cursor) sp.set("cursor", params.cursor);
     return request<PageResult<AuditLog>>(`/api/v1/admin/audit-logs?${sp}`);
   },
 

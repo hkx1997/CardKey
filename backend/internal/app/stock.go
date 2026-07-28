@@ -15,6 +15,7 @@ func (a *App) bumpUnusedCount(ctx context.Context, categoryID string, delta int)
 		WHERE id=$1::uuid`, categoryID, delta)
 	if a.RDB != nil {
 		_ = a.RDB.Del(ctx, "cardkey:public_stock_v1").Err()
+		_ = a.RDB.Del(ctx, "cardkey:card_status_counts_v1").Err()
 	}
 	a.InvalidateDashboardCache()
 }

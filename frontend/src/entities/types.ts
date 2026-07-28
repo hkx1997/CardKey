@@ -207,6 +207,11 @@ export interface PageResult<T> {
   total: number;
   page: number;
   pageSize: number;
+  /** false=估算 total，显示「约」 */
+  totalExact?: boolean;
+  hasMore?: boolean;
+  /** 下一页 keyset：RFC3339Nano|id */
+  nextCursor?: string;
 }
 
 export interface RedeemResult {

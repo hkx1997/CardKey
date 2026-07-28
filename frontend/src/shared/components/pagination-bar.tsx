@@ -14,6 +14,8 @@ export function PaginationBar({
   onPageChange,
   onPageSizeChange,
   pageSizeOptions = [10, 20, 50, 100],
+  totalExact = true,
+  hasMore,
 }: {
   page: number;
   pageSize: number;
@@ -22,11 +24,22 @@ export function PaginationBar({
   /** 提供时显示「每页条数」选择器 */
   onPageSizeChange?: (size: number) => void;
   pageSizeOptions?: readonly number[];
+  /** false 时显示「约 N 条」 */
+  totalExact?: boolean;
+  /** 有值时优先用 hasMore 控制下一页，避免估算 total 误伤 */
+  hasMore?: boolean;
 }) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / pageSize));
+  const canPrev = page > 1;
+  const canNext =
+    hasMore != null ? hasMore : page < totalPages;
+
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-      <span className="tabular-nums">共 {total} 条</span>
+      <span className="tabular-nums">
+        {totalExact === false ? "约 " : "共 "}
+        {total.toLocaleString()} 条
+      </span>
       <div className="flex flex-wrap items-center gap-2">
         {onPageSizeChange ? (
           <div className="flex items-center gap-1.5">
@@ -56,19 +69,20 @@ export function PaginationBar({
           variant="outline"
           size="sm"
           className="min-w-16"
-          disabled={page <= 1}
+          disabled={!canPrev}
           onClick={() => onPageChange(page - 1)}
         >
           上一页
         </Button>
         <span className="min-w-[3.5rem] text-center tabular-nums">
-          {page} / {totalPages}
+          {page}
+          {totalExact !== false ? ` / ${totalPages}` : ""}
         </span>
         <Button
           variant="outline"
           size="sm"
           className="min-w-16"
-          disabled={page >= totalPages}
+          disabled={!canNext}
           onClick={() => onPageChange(page + 1)}
         >
           下一页

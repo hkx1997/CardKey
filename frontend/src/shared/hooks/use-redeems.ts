@@ -8,6 +8,7 @@ export function useRedeemsQuery(params: {
   pageSize: number;
   q?: string;
   categorySlug?: string;
+  cursor?: string;
 }) {
   return useQuery({
     queryKey: queryKeys.redeems(params),

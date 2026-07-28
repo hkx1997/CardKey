@@ -433,7 +433,7 @@ func (h *Handler) ListCards(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	ps, _ := strconv.Atoi(q.Get("page_size"))
-	res, err := h.App.ListCards(r.Context(), page, ps, q.Get("status"), q.Get("q"), q.Get("category"), q.Get("batch_id"))
+	res, err := h.App.ListCards(r.Context(), page, ps, q.Get("status"), q.Get("q"), q.Get("category"), q.Get("batch_id"), q.Get("cursor"))
 	if err != nil {
 		response.Fail(w, err)
 		return
@@ -716,7 +716,7 @@ func (h *Handler) ListRedeems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	ps, _ := strconv.Atoi(q.Get("page_size"))
-	res, err := h.App.ListRedeems(r.Context(), page, ps, q.Get("q"), q.Get("category"))
+	res, err := h.App.ListRedeems(r.Context(), page, ps, q.Get("q"), q.Get("category"), q.Get("cursor"))
 	if err != nil {
 		response.Fail(w, err)
 		return
@@ -838,7 +838,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	ps, _ := strconv.Atoi(q.Get("page_size"))
-	res, err := h.App.ListAudit(r.Context(), page, ps)
+	res, err := h.App.ListAudit(r.Context(), page, ps, q.Get("cursor"))
 	if err != nil {
 		response.Fail(w, err)
 		return

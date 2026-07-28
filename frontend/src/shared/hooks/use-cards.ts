@@ -14,6 +14,7 @@ export function useCardsQuery(params: {
   q?: string;
   categorySlug?: string;
   batchId?: string;
+  cursor?: string;
 }) {
   return useQuery({
     queryKey: queryKeys.cards(params),

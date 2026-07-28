@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +23,7 @@ var (
 	dashCacheOK   bool
 )
 
-const dashCacheTTL = 12 * time.Second
+const dashCacheTTL = 20 * time.Second
 
 func (a *App) InvalidateDashboardCache() {
 	dashCacheMu.Lock()
@@ -73,23 +74,42 @@ func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, erro
 
 	var g errgroup.Group
 	g.Go(func() error {
-		return a.Pool.QueryRow(ctx, `
-			SELECT
-				COUNT(*),
-				COUNT(*) FILTER (WHERE status='unused'),
-				COUNT(*) FILTER (WHERE status='used'),
-				COUNT(*) FILTER (WHERE status='disabled'),
-				COUNT(*) FILTER (WHERE status='expired')
-			FROM cards`).Scan(&totalCards, &unusedCards, &usedCards, &disabledCards, &expiredCards)
+		// 卡密状态：Redis 20s 缓存 + 单次 GROUP BY（一次扫表）
+		m, err := a.cardStatusCountsCached(ctx)
+		if err != nil {
+			return err
+		}
+		unusedCards = m["unused"]
+		usedCards = m["used"]
+		disabledCards = m["disabled"]
+		expiredCards = m["expired"]
+		totalCards = unusedCards + usedCards + disabledCards + expiredCards
+		// 无数据时 total 可能为 0；大表估算兜底
+		if totalCards == 0 {
+			if est, ok := a.tableRowEstimate(ctx, "cards"); ok && est > 0 {
+				totalCards = est
+			}
+		}
+		return nil
 	})
 	g.Go(func() error {
+		// 兑换：今日/昨日/周用区间（可走索引）；总量大表用估算 + 缓存
+		var err error
+		totalRedeems, _, err = a.smartCount(ctx, "redeem_records", "all", true, 3000, func() (int, error) {
+			var n int
+			e := a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM redeem_records`).Scan(&n)
+			return n, e
+		})
+		if err != nil {
+			return err
+		}
 		return a.Pool.QueryRow(ctx, `
 			SELECT
-				COUNT(*),
 				COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + 1),
 				COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - 1 AND created_at < CURRENT_DATE),
 				COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - 6)
-			FROM redeem_records`).Scan(&totalRedeems, &todayRedeems, &yesterdayRedeems, &weekRedeems)
+			FROM redeem_records
+			WHERE created_at >= CURRENT_DATE - 6`).Scan(&todayRedeems, &yesterdayRedeems, &weekRedeems)
 	})
 	g.Go(func() error {
 		_ = a.Pool.QueryRow(ctx, `
@@ -491,28 +511,70 @@ func (a *App) UpdateSettings(ctx context.Context, patch domain.Settings, actor, 
 	return out, nil
 }
 
-func (a *App) ListAudit(ctx context.Context, page, pageSize int) (domain.PageResult[domain.AuditLog], error) {
+func (a *App) ListAudit(ctx context.Context, page, pageSize int, cursor string) (domain.PageResult[domain.AuditLog], error) {
 	if page < 1 {
 		page = 1
 	}
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
+	useKeyset := false
+	where := "1=1"
+	args := []any{}
+	i := 1
+	if cur, ok := decodeListCursor(cursor); ok {
+		frag, cargs := keysetPredicate("audit_logs", cur, i)
+		// keysetPredicate uses prefix.created_at — table name as prefix works for bare table
+		where = frag
+		args = append(args, cargs...)
+		i += len(cargs)
+		useKeyset = true
+		_ = cur
+	}
+	fetchN := pageSize + 1
+	var listArgs []any
+	if useKeyset {
+		listArgs = append(append([]any{}, args...), fetchN)
+	} else {
+		listArgs = []any{fetchN, (page - 1) * pageSize}
+	}
+
 	var total int
+	totalExact := true
 	var items []domain.AuditLog
+	var times []time.Time
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return a.Pool.QueryRow(gctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&total)
+		n, exact, err := a.smartCount(gctx, "audit_logs", "all", true, 5000, func() (int, error) {
+			var n int
+			e := a.Pool.QueryRow(gctx, `SELECT COUNT(*) FROM audit_logs`).Scan(&n)
+			return n, e
+		})
+		if err != nil {
+			return err
+		}
+		total, totalExact = n, exact
+		return nil
 	})
 	g.Go(func() error {
-		rows, err := a.Pool.Query(gctx, `
-			SELECT id, actor_type, actor_label, action, resource, detail, COALESCE(ip::text,''), created_at
-			FROM audit_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2`, pageSize, (page-1)*pageSize)
+		var sql string
+		if useKeyset {
+			sql = fmt.Sprintf(`
+				SELECT id, actor_type, actor_label, action, resource, detail, COALESCE(ip::text,''), created_at
+				FROM audit_logs WHERE %s
+				ORDER BY created_at DESC, id DESC LIMIT $%d`, where, i)
+		} else {
+			sql = `
+				SELECT id, actor_type, actor_label, action, resource, detail, COALESCE(ip::text,''), created_at
+				FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1 OFFSET $2`
+		}
+		rows, err := a.Pool.Query(gctx, sql, listArgs...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		out := []domain.AuditLog{}
+		ts := []time.Time{}
 		for rows.Next() {
 			var l domain.AuditLog
 			var created time.Time
@@ -521,8 +583,10 @@ func (a *App) ListAudit(ctx context.Context, page, pageSize int) (domain.PageRes
 			}
 			l.CreatedAt = formatTS(created)
 			out = append(out, l)
+			ts = append(ts, created)
 		}
 		items = out
+		times = ts
 		return nil
 	})
 	if err := g.Wait(); err != nil {
@@ -531,7 +595,60 @@ func (a *App) ListAudit(ctx context.Context, page, pageSize int) (domain.PageRes
 	if items == nil {
 		items = []domain.AuditLog{}
 	}
-	return domain.PageResult[domain.AuditLog]{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+	hasMore := len(items) > pageSize
+	if hasMore {
+		items = items[:pageSize]
+		times = times[:pageSize]
+	}
+	next := ""
+	if hasMore && len(items) > 0 {
+		next = encodeListCursor(times[len(times)-1], items[len(items)-1].ID)
+	}
+	return domain.PageResult[domain.AuditLog]{
+		Items: items, Total: total, Page: page, PageSize: pageSize,
+		TotalExact: totalExact, HasMore: hasMore, NextCursor: next,
+	}, nil
+}
+
+// cardStatusCountsCached 卡密按状态计数，Redis 20s。
+func (a *App) cardStatusCountsCached(ctx context.Context) (map[string]int, error) {
+	const key = "cardkey:card_status_counts_v1"
+	if a.RDB != nil {
+		if raw, err := a.RDB.Get(ctx, key).Bytes(); err == nil && len(raw) > 0 {
+			// format: unused=1,used=2,...
+			m := map[string]int{"unused": 0, "used": 0, "disabled": 0, "expired": 0}
+			for _, part := range strings.Split(string(raw), ",") {
+				kv := strings.SplitN(part, "=", 2)
+				if len(kv) == 2 {
+					if n, e := strconv.Atoi(kv[1]); e == nil {
+						m[kv[0]] = n
+					}
+				}
+			}
+			return m, nil
+		}
+	}
+	rows, err := a.Pool.Query(ctx, `SELECT status::text, COUNT(*)::int FROM cards GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := map[string]int{"unused": 0, "used": 0, "disabled": 0, "expired": 0}
+	for rows.Next() {
+		var st string
+		var n int
+		if rows.Scan(&st, &n) == nil {
+			m[st] = n
+		}
+	}
+	if a.RDB != nil {
+		parts := make([]string, 0, 4)
+		for _, k := range []string{"unused", "used", "disabled", "expired"} {
+			parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
+		}
+		_ = a.RDB.Set(ctx, key, strings.Join(parts, ","), 20*time.Second).Err()
+	}
+	return m, nil
 }
 
 // Ensure unused import used

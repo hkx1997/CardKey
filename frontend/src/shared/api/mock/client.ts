@@ -527,10 +527,11 @@ export const mockClient = {
     q?: string;
     batchId?: string;
     categorySlug?: string;
+    cursor?: string;
   }): Promise<PageResult<Card>> {
     await delay();
     mockStore.requireSession();
-    return mockStore.listCards({
+    const res = mockStore.listCards({
       page: params.page ?? 1,
       pageSize: params.pageSize ?? 10,
       status: params.status,
@@ -538,6 +539,12 @@ export const mockClient = {
       batchId: params.batchId,
       categorySlug: params.categorySlug,
     });
+    return {
+      ...res,
+      totalExact: true,
+      hasMore: res.page * res.pageSize < res.total,
+      nextCursor: res.page * res.pageSize < res.total ? "mock-next" : "",
+    };
   },
 
   async getCard(id: string, reveal = false): Promise<Card> {
@@ -802,6 +809,7 @@ export const mockClient = {
     pageSize?: number;
     q?: string;
     categorySlug?: string;
+    cursor?: string;
   }): Promise<PageResult<RedeemRecord>> {
     await delay();
     mockStore.requireSession();
@@ -820,11 +828,15 @@ export const mockClient = {
     const pageSize = params.pageSize ?? 10;
     const total = items.length;
     const start = (page - 1) * pageSize;
+    const slice = items.slice(start, start + pageSize);
     return {
-      items: items.slice(start, start + pageSize),
+      items: slice,
       total,
       page,
       pageSize,
+      totalExact: true,
+      hasMore: start + pageSize < total,
+      nextCursor: start + pageSize < total ? "mock-next" : "",
     };
   },
 
@@ -1045,6 +1057,7 @@ export const mockClient = {
   async listAuditLogs(params: {
     page?: number;
     pageSize?: number;
+    cursor?: string;
   }): Promise<PageResult<AuditLog>> {
     await delay();
     mockStore.requireSession();
@@ -1058,6 +1071,9 @@ export const mockClient = {
       total,
       page,
       pageSize,
+      totalExact: true,
+      hasMore: start + pageSize < total,
+      nextCursor: start + pageSize < total ? "mock-next" : "",
     };
   },
 
