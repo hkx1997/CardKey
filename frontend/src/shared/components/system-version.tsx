@@ -85,13 +85,17 @@ export function SystemVersion({ className }: { className?: string }) {
       const poll = window.setInterval(() => {
         void api
           .updateStatus()
-          .then((st) => {
+          .then((st: {
+            state?: string;
+            message?: string;
+            progress?: number;
+            error?: string;
+          }) => {
             if (typeof st.progress === "number") setApplyProgress(st.progress);
             if (st.message) {
+              const msg = st.message;
               setRestartWait((prev) =>
-                prev
-                  ? { ...prev, message: st.message || prev.message }
-                  : prev,
+                prev ? { ...prev, message: msg } : prev,
               );
             }
           })

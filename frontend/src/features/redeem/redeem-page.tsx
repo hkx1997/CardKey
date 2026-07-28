@@ -104,7 +104,7 @@ export function RedeemPage() {
       ...c,
       unusedCount: stockMap.has(c.slug)
         ? stockMap.get(c.slug)!
-        : c.unusedCount >= 0
+        : typeof c.unusedCount === "number" && c.unusedCount >= 0
           ? c.unusedCount
           : 0,
     }));
