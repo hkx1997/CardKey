@@ -3,10 +3,10 @@
 const DATASET_KEY = "cardkeyThemeTransition";
 const END_EVENT = "cardkey-theme-transition-end";
 
-/** 圆形关键帧时长（与 CSS animation 一致） */
+/** 圆形关键帧时长（与 index.css @keyframes 一致） */
 export const THEME_VIEW_TRANSITION_MS = 480;
-/** 兜底清理，略长于动画 */
-export const THEME_TRANSITION_FALLBACK_MS = THEME_VIEW_TRANSITION_MS + 400;
+/** 兜底清理：动画 + ready 抖动 + 一帧缓冲 */
+export const THEME_TRANSITION_FALLBACK_MS = THEME_VIEW_TRANSITION_MS + 600;
 
 function getRoot() {
   return typeof document === "undefined" ? undefined : document.documentElement;

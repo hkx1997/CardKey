@@ -45,8 +45,16 @@ import {
 } from "@/shared/lib/schemas";
 
 const SCOPE_OPTS: { id: ApiScope; label: string; desc: string }[] = [
-  { id: "redeem:api", label: "兑换 API", desc: "仅公开兑换" },
-  { id: "admin:api", label: "管理 API", desc: "导入/查询/作废等" },
+  {
+    id: "redeem:api",
+    label: "兑换端",
+    desc: "仅可调用 /public/redeem 等兑换相关接口，无法访问管理后台",
+  },
+  {
+    id: "admin:api",
+    label: "管理端",
+    desc: "可调用全部管理接口（类别/卡密/批次/设置等），亦覆盖兑换权限",
+  },
 ];
 
 export function ApiKeysPage() {

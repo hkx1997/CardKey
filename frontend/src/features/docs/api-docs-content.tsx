@@ -8,7 +8,8 @@ import {
   ADMIN_API_ENDPOINTS,
   ADMIN_AUTH_ENDPOINTS,
   expandPath,
-  PUBLIC_ENDPOINTS,
+  PUBLIC_OPS_ENDPOINTS,
+  REDEEM_ENDPOINTS,
   type ApiEndpoint,
 } from "@/features/docs/api-endpoints";
 import { CodeBlock } from "@/shared/components/code-block";
@@ -43,11 +44,13 @@ function EndpointTable({
   items,
   prefix,
   id,
+  subtitle,
 }: {
   title: string;
   items: ApiEndpoint[];
   prefix: string;
   id?: string;
+  subtitle?: string;
 }) {
   return (
     <section id={id} className="scroll-mt-20 space-y-2">
@@ -57,13 +60,16 @@ function EndpointTable({
           {items.length} 个接口
         </Badge>
       </div>
+      {subtitle ? (
+        <p className="text-[11px] text-muted-foreground">{subtitle}</p>
+      ) : null}
       <div className="overflow-x-auto rounded-xl border border-border shadow-sm">
         <table className="w-full min-w-[720px] text-left text-xs">
           <thead className="bg-secondary/50 text-muted-foreground">
             <tr>
               <th className="px-3 py-2.5 font-medium w-20">方法</th>
               <th className="px-3 py-2.5 font-medium">路径</th>
-              <th className="px-3 py-2.5 font-medium w-32">鉴权</th>
+              <th className="px-3 py-2.5 font-medium w-36">鉴权</th>
               <th className="px-3 py-2.5 font-medium">说明</th>
             </tr>
           </thead>
@@ -154,7 +160,7 @@ export function ApiDocsContent({
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-medium">Base URL</h2>
           <Badge variant="outline" className="font-mono text-[10px]">
-            {isAdmin ? "管理端完整文档" : "兑换端 · 公开接口"}
+            {isAdmin ? "管理端 · 完整 API" : "兑换端 · 仅兑换相关"}
           </Badge>
         </div>
         <CodeBlock
@@ -169,16 +175,85 @@ export function ApiDocsContent({
         </p>
       </section>
 
-      {/* —— 目录 —— */}
+      {/* 权限边界说明 */}
+      <section className="space-y-1.5 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2.5 text-[11px] text-muted-foreground">
+        <p className="font-medium text-foreground">权限边界</p>
+        {isAdmin ? (
+          <>
+            <p>
+              · <strong className="text-foreground">兑换端</strong>（scope{" "}
+              <code className="font-mono">redeem:api</code>
+              ）：仅{" "}
+              <code className="font-mono">/public/config</code>、
+              <code className="font-mono">/public/category-stock</code>、
+              <code className="font-mono">/public/redeem</code>
+              。系统固定兑换密钥仅有此权限。
+            </p>
+            <p>
+              · <strong className="text-foreground">管理端</strong>（Cookie JWT 或
+              scope <code className="font-mono">admin:api</code>
+              ）：全部{" "}
+              <code className="font-mono">/admin/*</code>
+              ；
+              <code className="font-mono">admin:api</code> 可覆盖兑换权限。
+            </p>
+            <p>
+              · 浏览器管理台：Cookie{" "}
+              <code className="font-mono">cardkey_token</code>
+              ；脚本：{" "}
+              <code className="font-mono">
+                Authorization: Bearer &lt;API_KEY&gt;
+              </code>
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              · 本页<strong className="text-foreground">仅列出兑换端接口</strong>
+              ，供对接兑换业务使用。
+            </p>
+            <p>
+              · 鉴权：默认无需密钥；若开启「强制兑换密钥」，请求头{" "}
+              <code className="font-mono">
+                Authorization: Bearer &lt;密钥&gt;
+              </code>
+              ，权限须含{" "}
+              <code className="font-mono">redeem:api</code>。
+            </p>
+            <p>
+              · 管理端接口（类别/卡密/设置等）请登录后台 →「API 文档」查看，需{" "}
+              <code className="font-mono">admin:api</code> 或管理员会话。
+            </p>
+          </>
+        )}
+        <p>
+          · 统一响应：{" "}
+          <code className="font-mono">
+            {`{ "success": true, "data": ... }`}
+          </code>{" "}
+          或{" "}
+          <code className="font-mono">
+            {`{ "success": false, "error": { "code", "message" } }`}
+          </code>
+        </p>
+      </section>
+
+      {/* 目录 */}
       <nav className="flex flex-wrap gap-2 text-[11px]">
         <a
-          href="#endpoints-public"
+          href="#endpoints-redeem"
           className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
         >
-          公开接口 · {PUBLIC_ENDPOINTS.length}
+          兑换端 · {REDEEM_ENDPOINTS.length}
         </a>
         {isAdmin ? (
           <>
+            <a
+              href="#endpoints-ops"
+              className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            >
+              安装/运维 · {PUBLIC_OPS_ENDPOINTS.length}
+            </a>
             <a
               href="#endpoints-admin-auth"
               className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
@@ -204,7 +279,8 @@ export function ApiDocsContent({
               兑换详解
             </a>
             <span className="self-center text-muted-foreground/80">
-              合计管理接口 {adminTotal} + 公开 {PUBLIC_ENDPOINTS.length}
+              管理 {adminTotal} · 兑换 {REDEEM_ENDPOINTS.length} · 运维{" "}
+              {PUBLIC_OPS_ENDPOINTS.length}
             </span>
           </>
         ) : (
@@ -217,70 +293,38 @@ export function ApiDocsContent({
         )}
       </nav>
 
-      {/* —— 接口列表（两端必有） —— */}
+      {/* 兑换端接口（两端都有，公开页只有这一组业务接口） */}
       <EndpointTable
-        id="endpoints-public"
-        title="公开接口列表"
-        items={PUBLIC_ENDPOINTS}
+        id="endpoints-redeem"
+        title="兑换端接口"
+        subtitle="仅兑换相关；scope=redeem:api 可调用（若强制密钥）"
+        items={REDEEM_ENDPOINTS}
         prefix={apiPrefix}
       />
 
       {isAdmin ? (
         <>
           <EndpointTable
+            id="endpoints-ops"
+            title="安装 / 运维（非兑换业务）"
+            subtitle="健康检查、首次安装等；不属于兑换 API 权限范围"
+            items={PUBLIC_OPS_ENDPOINTS}
+            prefix={apiPrefix}
+          />
+          <EndpointTable
             id="endpoints-admin-auth"
             title="管理端 · 认证与系统"
+            subtitle="Cookie JWT 会话"
             items={ADMIN_AUTH_ENDPOINTS}
             prefix={apiPrefix}
           />
           <EndpointTable
             id="endpoints-admin-api"
-            title="管理端 · 业务接口（JWT 会话 或 admin:api 密钥）"
+            title="管理端 · 业务接口"
+            subtitle="JWT 会话 或 Bearer scope=admin:api"
             items={ADMIN_API_ENDPOINTS}
             prefix={apiPrefix}
           />
-          <section className="space-y-1 rounded-lg border border-border/70 bg-secondary/30 px-3 py-2 text-[11px] text-muted-foreground">
-            <p className="font-medium text-foreground">鉴权说明</p>
-            <p>
-              · 管理接口（浏览器）：Cookie{" "}
-              <code className="font-mono">cardkey_token</code>
-            </p>
-            <p>
-              · 管理接口（脚本 / API Key）：创建密钥时勾选{" "}
-              <code className="font-mono">admin:api</code>，请求头{" "}
-              <code className="font-mono">
-                Authorization: Bearer &lt;API_KEY&gt;
-              </code>
-              。示例：{" "}
-              <code className="font-mono break-all">
-                curl -H &quot;Authorization: Bearer ck_xxx&quot;{" "}
-                {apiPrefix}/admin/categories
-              </code>
-            </p>
-            <p>
-              · 亦可用登录后的 JWT：{" "}
-              <code className="font-mono">
-                Authorization: Bearer &lt;JWT&gt;
-              </code>
-            </p>
-            <p>
-              · 兑换接口：可选/强制{" "}
-              <code className="font-mono">
-                Authorization: Bearer &lt;API Key&gt;
-              </code>
-              （权限 redeem:api）
-            </p>
-            <p>
-              · 统一响应：{" "}
-              <code className="font-mono">
-                {`{ "success": true, "data": ... }`}
-              </code>{" "}
-              或{" "}
-              <code className="font-mono">
-                {`{ "success": false, "error": { "code", "message" } }`}
-              </code>
-            </p>
-          </section>
 
           <section
             id="admin-create-card"
@@ -349,12 +393,13 @@ export function ApiDocsContent({
         </>
       ) : (
         <section className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-2 text-[11px] text-muted-foreground">
-          以上为兑换端可用的公开接口完整列表。管理端接口请登录后台 →「API
-          文档」查看。
+          以上为<strong className="text-foreground">兑换端</strong>
+          全部接口。管理、安装、运维接口不在此列出 — 请登录后台 →「API
+          文档」。
         </section>
       )}
 
-      {/* —— 兑换详解 —— */}
+      {/* 兑换详解 */}
       <section
         id="redeem-detail"
         className="scroll-mt-20 space-y-2 border-t border-border/60 pt-6"
@@ -377,7 +422,9 @@ export function ApiDocsContent({
             }
           />
           <p className="text-[11px] text-muted-foreground">
-            Header：Authorization: Bearer {"<密钥>"} · 权限 redeem:api
+            Header：Authorization: Bearer {"<密钥>"} · 权限{" "}
+            <code className="font-mono">redeem:api</code>
+            （无法调用管理接口）
           </p>
         </section>
       ) : null}

@@ -290,61 +290,69 @@
   }
 }
 
-/* —— 整页内容可见的圆形主题切换（View Transition + CSS 关键帧）—— */
+/* —— 整页圆形主题切换（View Transition）——
+ * 单一路径：CSS @keyframes + --theme-x/y/r（必须在 startViewTransition 前写入）
+ * 关闭默认交叉淡入，仅保留圆形 clip-path（勿再叠 WAAPI，会抢 clip-path）。
+ */
 html {
   view-transition-name: root;
 }
 
-/* 关闭浏览器默认交叉淡入，改用我们的 clip-path 圆 */
-::view-transition-old(root),
-::view-transition-new(root) {
-  mix-blend-mode: normal;
-  animation-duration: 480ms;
-  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  animation-fill-mode: both;
+::view-transition {
+  pointer-events: none;
 }
 
-/*
- * expand（切到浅色）：新层从点击点圆形展开
- * shrink（切到深色）：旧层向点击点圆形收缩
- * 用 CSS 动画挂在伪元素上，浏览器会等动画结束再拆过渡层（比 ready 后再 WAAPI 更稳）
- */
+::view-transition-group(root) {
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+  height: 100%;
+  width: 100%;
+  /* 避免部分引擎把 snapshot 当 img 时出现非全屏裁切 */
+  object-fit: cover;
+}
+
 @keyframes theme-circle-expand {
   from {
-    clip-path: circle(0px at var(--theme-x, 50%) var(--theme-y, 50%));
+    clip-path: circle(0px at var(--theme-x) var(--theme-y));
   }
   to {
-    clip-path: circle(var(--theme-r, 100vmax) at var(--theme-x, 50%) var(--theme-y, 50%));
+    clip-path: circle(var(--theme-r) at var(--theme-x) var(--theme-y));
   }
 }
 
 @keyframes theme-circle-shrink {
   from {
-    clip-path: circle(var(--theme-r, 100vmax) at var(--theme-x, 50%) var(--theme-y, 50%));
+    clip-path: circle(var(--theme-r) at var(--theme-x) var(--theme-y));
   }
   to {
-    clip-path: circle(0px at var(--theme-x, 50%) var(--theme-y, 50%));
+    clip-path: circle(0px at var(--theme-x) var(--theme-y));
   }
 }
 
+/* expand：新层圆形铺开（浅色 / 非 dark 目标） */
 html[data-theme-circle="expand"]::view-transition-old(root) {
   z-index: 1;
-  animation-name: none;
-  animation-duration: 0.01ms;
+  animation: none;
 }
 html[data-theme-circle="expand"]::view-transition-new(root) {
   z-index: 2147483646;
-  animation-name: theme-circle-expand;
+  animation: theme-circle-expand 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
+/* shrink：旧层圆形收起（深色目标） */
 html[data-theme-circle="shrink"]::view-transition-old(root) {
   z-index: 2147483646;
-  animation-name: theme-circle-shrink;
+  animation: theme-circle-shrink 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 html[data-theme-circle="shrink"]::view-transition-new(root) {
   z-index: 1;
-  animation-name: none;
-  animation-duration: 0.01ms;
+  animation: none;
 }
 
 /* 过渡期间关掉其它 CSS transition，避免和圆形抢 */

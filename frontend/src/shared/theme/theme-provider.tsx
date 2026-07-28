@@ -41,7 +41,6 @@ type VT = {
   finished: Promise<void>;
   ready: Promise<void>;
   skipTransition: () => void;
-  updateCallbackDone: Promise<void>;
 };
 
 type StartViewTransition = (cb: () => void | Promise<void>) => VT;
@@ -77,26 +76,28 @@ function commitTheme(id: ThemeId, setThemeState: (id: ThemeId) => void) {
   persist(id);
 }
 
-/**
- * 在 startViewTransition 回调之前设置圆形参数，
- * 让 CSS @keyframes 挂在 ::view-transition-* 上由浏览器纳入过渡生命周期。
- * （比 ready 后再 WAAPI 更稳，避免 animation:none 导致过渡瞬间结束）
- */
-function prepareCircleVars(
-  x: number,
-  y: number,
-  toDark: boolean,
-) {
-  const root = document.documentElement;
-  const endRadius =
+function circleRadius(x: number, y: number) {
+  return (
     Math.hypot(
       Math.max(x, window.innerWidth - x),
       Math.max(y, window.innerHeight - y),
-    ) + 16;
-  root.style.setProperty("--theme-x", `${x}px`);
-  root.style.setProperty("--theme-y", `${y}px`);
-  root.style.setProperty("--theme-r", `${endRadius}px`);
+    ) + 24
+  );
+}
+
+/**
+ * 圆形参数必须在 startViewTransition 之前写入。
+ * 动画由 index.css 的 @keyframes 驱动（不与 WAAPI 抢同一 clip-path，避免时有时无）。
+ */
+function prepareCircleCssVars(x: number, y: number, toDark: boolean) {
+  const root = document.documentElement;
+  const r = circleRadius(x, y);
+  root.style.setProperty("--theme-x", `${Math.round(x)}px`);
+  root.style.setProperty("--theme-y", `${Math.round(y)}px`);
+  root.style.setProperty("--theme-r", `${Math.round(r)}px`);
   root.dataset.themeCircle = toDark ? "shrink" : "expand";
+  // 强制样式落盘，避免 startViewTransition 前变量未生效
+  void root.offsetWidth;
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -112,9 +113,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const themeRef = useRef(theme);
   themeRef.current = theme;
   const skipRef = useRef<(() => void) | null>(null);
+  const genRef = useRef(0);
+  /** 过渡进行中时跳过 useEffect 二次 apply，避免打断 VT */
+  const transitioningRef = useRef(false);
 
-  // 仅同步 dataset；commitTheme 已写 DOM，这里避免无意义重算
   useEffect(() => {
+    if (transitioningRef.current) return;
     applyTheme(theme);
     persist(theme);
   }, [theme]);
@@ -122,12 +126,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return () => {
       skipRef.current?.();
+      transitioningRef.current = false;
       forceEndThemeTransition();
     };
   }, []);
 
   const setTheme = useCallback((id: ThemeId) => {
     skipRef.current?.();
+    genRef.current += 1;
+    transitioningRef.current = false;
     forceEndThemeTransition();
     commitTheme(id, setThemeState);
   }, []);
@@ -151,11 +158,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         ? event.clientY
         : window.innerHeight / 2;
 
-    // 中止上一次
+    // 取消上一次
     if (skipRef.current) {
       skipRef.current();
       skipRef.current = null;
     }
+    transitioningRef.current = false;
     forceEndThemeTransition();
 
     const doc = document as Document & {
@@ -163,7 +171,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     };
     const startVT = doc.startViewTransition?.bind(document);
 
-    // 无 VT 或减少动态：直接切
     if (!startVT || reduced) {
       commitTheme(target, setThemeState);
       return;
@@ -174,22 +181,28 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // 先写圆参数，再进 VT，CSS 动画能立刻挂上伪元素
-    prepareCircleVars(x, y, toDark);
+    const gen = ++genRef.current;
+    transitioningRef.current = true;
+    // 必须在 startViewTransition 之前写好圆形参数（CSS 主路径）
+    prepareCircleCssVars(x, y, toDark);
 
-    let finished = false;
+    let settled = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
     let transition: VT | undefined;
 
     const finish = () => {
-      if (finished) return;
-      finished = true;
+      if (settled) return;
+      settled = true;
       if (fallbackTimer) clearTimeout(fallbackTimer);
       skipRef.current = null;
-      endThemeTransition();
+      // 仅清理当前代，避免误清下一次
+      if (genRef.current === gen) {
+        transitioningRef.current = false;
+        endThemeTransition();
+      }
     };
 
-    const stop = () => {
+    const abort = () => {
       try {
         transition?.skipTransition();
       } catch {
@@ -197,12 +210,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       }
       finish();
     };
-    skipRef.current = stop;
-    fallbackTimer = setTimeout(stop, THEME_TRANSITION_FALLBACK_MS);
+    skipRef.current = abort;
+    fallbackTimer = setTimeout(abort, THEME_TRANSITION_FALLBACK_MS);
 
     try {
       transition = startVT(() => {
-        // 同步提交：新快照 = 完整界面 + 新主题
         commitTheme(target, setThemeState);
       });
     } catch {
@@ -211,14 +223,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // 等浏览器完成过渡（CSS 圆形动画会被计入）
-    void transition.finished
-      .then(() => {
-        finish();
-      })
-      .catch(() => {
-        finish();
+    void (async () => {
+      try {
+        // 等待 ready：此时伪元素已创建，CSS keyframes 会挂上并延长 VT
+        await transition!.ready;
+      } catch {
+        /* ready 失败：主题已提交，圆形可能跳过 */
+      }
+      try {
+        await transition!.finished;
+      } catch {
+        /* ok */
+      }
+      // 等一帧再清变量，避免最后一帧闪切 / 残留 clip
+      requestAnimationFrame(() => {
+        if (genRef.current === gen) finish();
       });
+    })();
   }, []);
 
   const value = useMemo(

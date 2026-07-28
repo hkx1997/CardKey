@@ -1,4 +1,10 @@
-/** API 接口清单 — 与 backend/internal/server/server.go 保持同步 */
+/** API 接口清单 — 与 backend/internal/server/server.go 保持同步
+ *
+ * 权限边界：
+ * - 兑换端：仅 /public/* 兑换相关（config / stock / redeem）+ 静态资源
+ * - 管理端：/admin/* 全部（Cookie JWT 或 Bearer scope=admin:api）
+ * - 系统兑换密钥仅 redeem:api，无法访问管理接口
+ */
 
 export type ApiEndpoint = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -9,13 +15,45 @@ export type ApiEndpoint = {
   query?: string;
 };
 
-/** 公开 / 无需登录（部分需 API Key） */
-export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
+/**
+ * 兑换端 API（公开文档 /docs 只展示这些）
+ * 鉴权：无，或 REQUIRE_REDEEM_API_KEY 时 Bearer + scope redeem:api
+ */
+export const REDEEM_ENDPOINTS: ApiEndpoint[] = [
+  {
+    method: "GET",
+    path: "{prefix}/public/config",
+    auth: "无",
+    desc: "兑换站配置、启用类别、限流提示等（库存字段可能随轮询接口更新）",
+  },
+  {
+    method: "GET",
+    path: "{prefix}/public/category-stock",
+    auth: "无",
+    desc: "各类别可兑库存快照；支持 ETag / 304；兑换页轮询用",
+  },
+  {
+    method: "POST",
+    path: "{prefix}/public/redeem",
+    auth: "无 或 Bearer redeem:api",
+    desc: "兑换卡密。返回 content；二进制含 contentEncoding=base64、filename、mime、size",
+    body: '{ "category": "slug", "code": "XXX-..." }',
+  },
+  {
+    method: "GET",
+    path: "/uploads/*",
+    auth: "无",
+    desc: "站点 Logo / 图标等静态资源（兑换页展示用）",
+  },
+];
+
+/** 公开运维 / 安装（管理端文档可见；不属于兑换业务 API） */
+export const PUBLIC_OPS_ENDPOINTS: ApiEndpoint[] = [
   {
     method: "GET",
     path: "/healthz",
     auth: "无",
-    desc: "存活检查",
+    desc: "存活检查（含 version）",
   },
   {
     method: "GET",
@@ -26,20 +64,8 @@ export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
   {
     method: "GET",
     path: "/metrics",
-    auth: "无",
+    auth: "METRICS_TOKEN（若已配置）",
     desc: "Prometheus 文本指标",
-  },
-  {
-    method: "GET",
-    path: "{prefix}/public/config",
-    auth: "无",
-    desc: "公开站点配置、类别列表（含 unusedCount 可兑库存）、限流等",
-  },
-  {
-    method: "GET",
-    path: "{prefix}/public/category-stock",
-    auth: "无",
-    desc: "轻量类别库存快照（兑换端轮询）；支持 ETag / If-None-Match 304；data.categories[].unusedCount",
   },
   {
     method: "GET",
@@ -54,19 +80,12 @@ export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
     desc: "完成首次安装：创建管理员",
     body: '{ "username", "password", "confirmPassword?", "siteName?", "seedDemoCategories?" }',
   },
-  {
-    method: "POST",
-    path: "{prefix}/public/redeem",
-    auth: "Bearer（若开启强制 Key）",
-    desc: "兑换卡密（返回 content；二进制另含 contentEncoding=base64、filename、mime、size，前端可下载）",
-    body: '{ "category": "slug", "code": "XXX-..." }',
-  },
-  {
-    method: "GET",
-    path: "/uploads/*",
-    auth: "无",
-    desc: "已上传的图片静态资源",
-  },
+];
+
+/** @deprecated 使用 REDEEM_ENDPOINTS + PUBLIC_OPS_ENDPOINTS；保留别名避免旧引用 */
+export const PUBLIC_ENDPOINTS: ApiEndpoint[] = [
+  ...REDEEM_ENDPOINTS,
+  ...PUBLIC_OPS_ENDPOINTS,
 ];
 
 /** 管理端认证相关 */

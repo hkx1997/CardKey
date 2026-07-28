@@ -45,14 +45,14 @@ export function AdminApiDocsPage() {
   return (
     <PageContainer className="fade-in">
       <PageHeader
-        title="API 文档"
-        description="公开接口 + 管理端认证/业务接口完整列表 · Base URL 与固定兑换密钥"
+        title="管理端 API 文档"
+        description="兑换端 + 安装运维 + 管理认证/业务接口完整列表 · 权限边界 redeem:api / admin:api"
         actions={
           cfg.apiDocsEnabled ? (
             <Button variant="outline" size="sm" asChild>
               <Link to="/docs" target="_blank" rel="noreferrer">
                 <ExternalLink className="size-3.5" />
-                公开文档
+                兑换端公开文档
               </Link>
             </Button>
           ) : null
