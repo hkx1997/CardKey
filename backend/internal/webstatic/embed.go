@@ -162,9 +162,11 @@ func Handler(diskFallback string) http.Handler {
 			}
 		}
 
-		// 资产路径：绝不 SPA 回退（防止 JS/CSS 变成 text/html）
+		// 资产路径：绝不 SPA 回退（防止 JS/CSS 变成 text/html）；404 禁止被 CDN 长缓存
 		if isAsset {
-			http.NotFound(w, r)
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			http.Error(w, "asset not found", http.StatusNotFound)
 			return
 		}
 		// 前端路由：回退 index.html
