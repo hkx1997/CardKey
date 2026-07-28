@@ -20,9 +20,9 @@ export function useUpdateSettings() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (patch: Partial<Settings>) => api.updateSettings(patch),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       toast.success("已保存");
-      inv.settings();
+      await inv.settings();
       // 立刻把 favicon/标题刷到标签栏，不等 public config 回流
       void import("@/shared/lib/document-meta").then(({ applyDocumentMeta }) => {
         applyDocumentMeta({
@@ -32,7 +32,6 @@ export function useUpdateSettings() {
           faviconVersion: data.siteFavicon || String(Date.now()),
         });
       });
-      return data;
     },
     onError: (e) => toastApiError(e, "保存失败"),
   });
@@ -43,10 +42,10 @@ export function useSetPublicRedeemKey() {
   return useMutation({
     mutationFn: (input: { mode: "rotate" | "custom"; customKey?: string }) =>
       api.setPublicRedeemApiKey(input),
-    onSuccess: (data) => {
+    onSuccess: async () => {
       toast.success("密钥已更新");
-      inv.apiKeys();
-      return data;
+      await inv.apiKeys();
+      await inv.settings();
     },
     onError: (e) => toastApiError(e, "更新失败"),
   });

@@ -684,9 +684,17 @@ func (a *App) ApplyUpdate(ctx context.Context, targetVer, actor, ip string) erro
 		return apperr.Validation("无法解析目标版本，请先检测更新")
 	}
 
-	binPath, err := a.currentBinaryPath()
+	preferred, err := a.currentBinaryPath()
 	if err != nil {
 		return apperr.Internal("无法定位当前可执行文件: " + err.Error())
+	}
+	binPath, err := a.pickWritableBinaryPath(preferred)
+	if err != nil {
+		return apperr.Internal("替换二进制失败: " + err.Error() + "。若曾用 root 写入 data/bin，请执行: docker compose exec -u root cardkey chown -R cardkey:cardkey /app/data/bin")
+	}
+	if a.Log != nil && binPath != preferred {
+		a.Log.Warn("update target binary path adjusted for writability",
+			"preferred", preferred, "writable", binPath)
 	}
 
 	a.setUpdateStatus(UpdateStatus{State: "checking", Message: "准备下载 v" + targetVer + "…", Progress: 5})
@@ -1116,26 +1124,111 @@ func verifySHA256(filePath, assetName, checksumsURL, token string) (bool, error)
 	return false, nil
 }
 
+// dirWritable 探测目录是否可写（一键更新写 .tmp 用）
+func dirWritable(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	f, err := os.CreateTemp(dir, ".cardkey-wprobe-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	tmp := dst + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+
+	dir := filepath.Dir(dst)
+	_ = os.MkdirAll(dir, 0o755)
+
+	// 优先同目录临时文件再 rename（原子）；目录只读时退到 os.TempDir 再 copy
+	tmp, err := os.CreateTemp(dir, ".cardkey-copy-*")
+	useRename := true
 	if err != nil {
+		tmp, err = os.CreateTemp("", "cardkey-copy-*")
+		useRename = false
+		if err != nil {
+			return err
+		}
+	}
+	tmpName := tmp.Name()
+	_, copyErr := io.Copy(tmp, in)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpName)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpName)
+		return closeErr
+	}
+	_ = os.Chmod(tmpName, 0o755)
+
+	if useRename {
+		if err := os.Rename(tmpName, dst); err == nil {
+			return nil
+		}
+		// rename 失败（含 Windows 目标被占用）则继续按拷贝覆盖
+	}
+
+	// 直接覆盖目标
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		_ = os.Remove(tmpName)
 		return err
 	}
-	_, err = io.Copy(out, in)
+	in2, err := os.Open(tmpName)
+	if err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	_, err = io.Copy(out, in2)
+	_ = in2.Close()
 	cerr := out.Close()
+	_ = os.Remove(tmpName)
 	if err != nil {
 		return err
 	}
-	if cerr != nil {
-		return cerr
+	return cerr
+}
+
+// pickWritableBinaryPath 选择当前用户可写的替换目标（避免 root 写过的 data/bin 导致 permission denied）
+func (a *App) pickWritableBinaryPath(preferred string) (string, error) {
+	cands := make([]string, 0, 4)
+	if preferred != "" {
+		cands = append(cands, preferred)
 	}
-	return os.Rename(tmp, dst)
+	if p := a.persistentBinaryPath(); p != "" {
+		cands = append(cands, p)
+	}
+	// 镜像内路径：Dockerfile 已 chown 给 cardkey
+	cands = append(cands, "/app/cardkey")
+	if exe, err := os.Executable(); err == nil {
+		cands = append(cands, exe)
+	}
+
+	seen := map[string]bool{}
+	for _, p := range cands {
+		p = filepath.Clean(strings.TrimSpace(p))
+		if p == "" || p == "." || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if dirWritable(filepath.Dir(p)) {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("没有可写的二进制路径（请 chown cardkey /app/data/bin）")
 }
 
 func normalizeVer(v string) string {

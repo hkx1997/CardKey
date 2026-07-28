@@ -22,18 +22,27 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// maybeExecPersistentBinary 若 DATA_DIR/bin/cardkey 存在且不是当前进程文件，则切换过去。
-// 解决：compose recreate 后镜像仍是旧 ENTRYPOINT/旧 exe，一键更新写在数据卷上却跑不起来。
+// maybeExecPersistentBinary 若 DATA_DIR/bin/cardkey 存在且目录可写，则切换过去。
+// 目录不可写（常见：曾用 root 装过二进制）则跳过，避免进程跑在只读路径上导致一键更新失败。
 func maybeExecPersistentBinary() {
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = "/app/data"
 	}
-	persist := filepath.Join(dataDir, "bin", "cardkey")
+	binDir := filepath.Join(dataDir, "bin")
+	persist := filepath.Join(binDir, "cardkey")
 	st, err := os.Stat(persist)
 	if err != nil || st.IsDir() || st.Size() < 1_000_000 {
 		return
 	}
+	// 探测 bin 目录是否可写；root 遗留权限时不 re-exec
+	probe, err := os.CreateTemp(binDir, ".cardkey-wprobe-*")
+	if err != nil {
+		return
+	}
+	_ = probe.Close()
+	_ = os.Remove(probe.Name())
+
 	exe, err := os.Executable()
 	if err != nil {
 		return
@@ -47,10 +56,8 @@ func maybeExecPersistentBinary() {
 	if filepath.Clean(exe) == filepath.Clean(persist) {
 		return
 	}
-	// 已经是数据卷二进制则不再切换
 	args := append([]string{persist}, os.Args[1:]...)
 	_ = syscall.Exec(persist, args, os.Environ())
-	// Exec 失败则继续用当前二进制
 }
 
 func main() {

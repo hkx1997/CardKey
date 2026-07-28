@@ -22,9 +22,9 @@ export function useCreateApiKey() {
       scopes: ApiScope[];
       rateLimitRpm?: number;
     }) => api.createApiKey(input),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("密钥已创建");
-      inv.apiKeys();
+      await inv.apiKeys();
     },
     onError: (e) => toastApiError(e, "创建失败"),
   });
@@ -34,9 +34,9 @@ export function useRevokeApiKey() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.revokeApiKey(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("已吊销");
-      inv.apiKeys();
+      await inv.apiKeys();
     },
     onError: (e) => toastApiError(e, "吊销失败"),
   });
@@ -46,9 +46,9 @@ export function useDeleteApiKey() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.deleteApiKey(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("密钥已删除");
-      inv.apiKeys();
+      await inv.apiKeys();
     },
     onError: (e) => toastApiError(e, "删除失败"),
   });
@@ -58,9 +58,9 @@ export function useRotateApiKey() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.rotateApiKey(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("已轮换，请复制新密钥");
-      inv.apiKeys();
+      await inv.apiKeys();
     },
     onError: (e) => toastApiError(e, "轮换失败"),
   });

@@ -24,9 +24,9 @@ export function useCreateCategory() {
       description: string;
       icon: CategoryIcon;
     }) => api.createCategory(input),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("类别已创建");
-      inv.categories();
+      await inv.categories();
     },
     onError: (e) => toastApiError(e, "创建失败"),
   });
@@ -45,9 +45,9 @@ export function useUpdateCategory() {
       icon?: CategoryIcon;
       enabled?: boolean;
     }) => api.updateCategory(id, patch),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("已保存");
-      inv.categories();
+      await inv.categories();
     },
     onError: (e) => toastApiError(e, "保存失败"),
   });
@@ -57,11 +57,9 @@ export function useDeleteCategory() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.deleteCategory(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("类别已删除");
-      inv.categories();
-      inv.cards();
-      inv.batches();
+      await inv.categories();
     },
     onError: (e) => toastApiError(e, "删除失败"),
   });

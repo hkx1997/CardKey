@@ -43,8 +43,14 @@ export function useRedeemMutation() {
   return useMutation({
     mutationFn: (input: { category: string; code: string }) =>
       api.redeem(input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.publicCategoryStock });
+    onSuccess: async () => {
+      await qc.invalidateQueries({
+        queryKey: queryKeys.publicCategoryStock,
+      });
+      await qc.refetchQueries({
+        queryKey: queryKeys.publicCategoryStock,
+        type: "active",
+      });
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "兑换失败");
@@ -84,8 +90,14 @@ export function useBatchRedeemMutation() {
       }
       return items;
     },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.publicCategoryStock });
+    onSettled: async () => {
+      await qc.invalidateQueries({
+        queryKey: queryKeys.publicCategoryStock,
+      });
+      await qc.refetchQueries({
+        queryKey: queryKeys.publicCategoryStock,
+        type: "active",
+      });
     },
   });
 }

@@ -39,7 +39,7 @@ export function useBatchCardAction() {
       ids: string[];
       action: "disable" | "enable" | "delete";
     }) => api.batchAction(ids, action),
-    onSuccess: (n, v) => {
+    onSuccess: async (n, v) => {
       const label =
         v.action === "disable"
           ? "禁用"
@@ -47,7 +47,9 @@ export function useBatchCardAction() {
             ? "启用"
             : "删除";
       toast.success(`已${label} ${n} 条`);
-      inv.cards();
+      await inv.cards();
+      // 详情弹窗若打开，同步刷掉
+      await Promise.all(v.ids.map((id) => inv.card(id)));
     },
     onError: (e) => toastApiError(e),
   });
@@ -65,9 +67,9 @@ export function useCreateCard() {
       filename?: string;
       mime?: string;
     }) => api.createCard(input),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("创建成功");
-      inv.cards();
+      await inv.cards();
     },
     onError: (e) => toastApiError(e, "创建失败"),
   });
@@ -83,9 +85,10 @@ export function useImportCards() {
       batchName: string;
       note?: string;
     }) => api.importCards(input),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       toast.success(`成功导入 ${res.total} 条到「${res.category.name}」`);
-      inv.cards();
+      await inv.cards();
+      await inv.batches();
     },
     onError: (e) => toastApiError(e, "导入失败"),
   });

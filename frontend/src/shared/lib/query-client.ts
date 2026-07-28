@@ -11,9 +11,11 @@ export function createAppQueryClient() {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 15_000,
+        // 较短 stale，配合 invalidate+refetch 保证增删改后列表即时更新
+        staleTime: 5_000,
         retry: 1,
-        refetchOnWindowFocus: false,
+        refetchOnWindowFocus: true,
+        refetchOnReconnect: true,
       },
       mutations: {
         retry: 0,

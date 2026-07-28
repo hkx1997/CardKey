@@ -20,6 +20,8 @@ import { ApiError, type ApiEnvelope } from "@/entities/types";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "include",
+    // 管理端列表在 mutation 后必须拿到最新数据，禁止浏览器 HTTP 缓存
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),

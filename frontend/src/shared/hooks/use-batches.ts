@@ -17,9 +17,9 @@ export function useDeleteBatch() {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => api.deleteBatch(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("批次已删除");
-      inv.batches();
+      await inv.batches();
     },
     onError: (e) => toastApiError(e, "删除失败"),
   });
