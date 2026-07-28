@@ -79,10 +79,38 @@ echo "==> 构建前端（嵌入二进制，一键更新可刷新 UI）"
   fi
 )
 rm -rf backend/internal/webstatic/dist
-mkdir -p backend/internal/webstatic/dist
-cp -a frontend/dist/. backend/internal/webstatic/dist/
-# 确保 embed 有 index
+# Windows Git Bash 上 cp -a dist/. 可能拷不全；Python shutil 更稳
+python - <<'PY'
+import re
+import shutil
+from pathlib import Path
+
+src = Path("frontend/dist")
+dst = Path("backend/internal/webstatic/dist")
+if not (src / "index.html").is_file():
+    raise SystemExit("frontend/dist/index.html missing")
+if dst.exists():
+    shutil.rmtree(dst)
+shutil.copytree(src, dst)
+assets = list((dst / "assets").glob("*")) if (dst / "assets").is_dir() else []
+nfiles = sum(1 for p in dst.rglob("*") if p.is_file())
+print(f"webstatic embed: files={nfiles} assets={len(assets)}")
+if len(assets) < 5:
+    raise SystemExit(f"embed assets too few ({len(assets)}); refuse broken SPA package")
+index = (dst / "index.html").read_text(encoding="utf-8")
+refs = re.findall(r"/assets/(index-[^\"']+\.(?:js|css))", index)
+print("index asset refs:", refs)
+if len(refs) < 2:
+    raise SystemExit("index.html missing js/css asset refs")
+PY
+
 test -f backend/internal/webstatic/dist/index.html || { echo "frontend dist 缺少 index.html" >&2; exit 1; }
+test -d backend/internal/webstatic/dist/assets || { echo "frontend dist 缺少 assets/" >&2; exit 1; }
+# 主 CSS/JS 路径，用于校验已编入二进制
+CSS_FILE=$(ls backend/internal/webstatic/dist/assets/index-*.css 2>/dev/null | head -1)
+JS_FILE=$(ls backend/internal/webstatic/dist/assets/index-*.js 2>/dev/null | head -1)
+test -n "$CSS_FILE" && test -n "$JS_FILE" || { echo "缺少 index-*.css/js" >&2; exit 1; }
+echo "embed markers: CSS=$CSS_FILE JS=$JS_FILE"
 
 echo "==> 构建 linux-amd64 / linux-arm64（含嵌入 SPA + migrations）"
 (
@@ -90,6 +118,41 @@ echo "==> 构建 linux-amd64 / linux-arm64（含嵌入 SPA + migrations）"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$DIST/cardkey-linux-amd64" ./cmd/cardkey
   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o "$DIST/cardkey-linux-arm64" ./cmd/cardkey
 )
+
+echo "==> 校验二进制已嵌入 SPA（防止发空壳 exe）"
+verify_bin() {
+  local bin="$1"
+  local sz
+  sz=$(wc -c <"$bin" | tr -d ' ')
+  # 无 SPA 的 exe 约 11–12MB；含完整 SPA 通常 >13MB
+  if [[ "${sz:-0}" -lt 13000000 ]]; then
+    echo "FAIL: $bin 过小 (${sz} bytes)，疑似未嵌入前端 assets" >&2
+    return 1
+  fi
+  python - "$bin" "$CSS_FILE" "$JS_FILE" <<'PY'
+import sys
+from pathlib import Path
+bin_path, css_path, js_path = sys.argv[1], sys.argv[2], sys.argv[3]
+data = Path(bin_path).read_bytes()
+css = Path(css_path).read_bytes()[:120]
+js = Path(js_path).read_bytes()[:120]
+ok = True
+if css not in data:
+    print("FAIL: CSS payload missing in", bin_path, file=sys.stderr)
+    ok = False
+if js not in data:
+    print("FAIL: JS payload missing in", bin_path, file=sys.stderr)
+    ok = False
+if b"index-" not in data:
+    print("FAIL: no index- asset name in", bin_path, file=sys.stderr)
+    ok = False
+if not ok:
+    sys.exit(1)
+print("OK embed:", bin_path, "size", len(data))
+PY
+}
+verify_bin "$DIST/cardkey-linux-amd64"
+verify_bin "$DIST/cardkey-linux-arm64"
 
 echo "==> checksums"
 (
