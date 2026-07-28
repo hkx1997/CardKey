@@ -31,3 +31,6 @@ scripts/_check_css.py
 # 本机数据与误生成文件
 /data/
 cookies*.txt
+# 本地发版临时脚本
+scripts/do_release.bat
+scripts/_run_release*
