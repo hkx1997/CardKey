@@ -64,9 +64,10 @@ export async function waitForRestartAndReload(opts?: {
   let sawDown = false;
   let attempt = 0;
 
-  const report = (partial: Omit<RestartWaitState, "attempt"> & { attempt?: number }) => {
+  const report = (
+    partial: Omit<RestartWaitState, "attempt"> & { attempt?: number },
+  ) => {
     opts?.onStatus?.({
-      attempt,
       ...partial,
       attempt: partial.attempt ?? attempt,
     });
