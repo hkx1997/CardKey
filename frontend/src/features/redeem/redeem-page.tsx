@@ -363,8 +363,7 @@ export function RedeemPage() {
                           )}
                         >
                           <span className="inline-flex min-w-0 items-center gap-2">
-                            {/* 图标本身 20px，无额外大底托 */}
-                            <CategoryIconView icon={c.icon} size={20} />
+                            <CategoryIconView icon={c.icon} size={26} fit="contain" />
                             <span className="truncate">{c.name}</span>
                           </span>
                           <StockBadge
@@ -632,7 +631,7 @@ export function RedeemPage() {
             className="fade-in fade-in-delay-2 redeem-card w-full rounded-2xl p-6 sm:p-8"
           >
             <div className="mb-3 flex items-center gap-2.5 border-b border-border/50 pb-3">
-              <CategoryIconView icon={selected.icon} size={24} />
+              <CategoryIconView icon={selected.icon} size={32} fit="contain" />
               <h2 className="min-w-0 truncate text-sm font-medium">
                 {selected.name}
                 <span className="ml-1.5 font-normal text-muted-foreground">
@@ -771,14 +770,15 @@ function CategoryTab({
   onClick: () => void;
   stagger?: number;
 }) {
+  // 线上实测：自定义品牌图在 20px 下发糊；图标本身 28px，Tab 仅略增高容纳
+  const iconSize = 28;
   return (
     <button
       type="button"
       onClick={onClick}
       style={{ "--stagger": stagger } as CSSProperties}
       className={cn(
-        // 高度/内边距与原先接近，只把图标从 16 提到 20，避免整颗 Tab 被撑宽
-        "stagger-in tab-pill interactive-press inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm sm:px-3.5",
+        "stagger-in tab-pill interactive-press inline-flex h-11 items-center gap-2 rounded-full px-2.5 text-sm sm:px-3",
         active
           ? "is-active bg-primary text-primary-foreground shadow-sm"
           : "bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -786,10 +786,11 @@ function CategoryTab({
     >
       <CategoryIconView
         icon={cat.icon}
-        size={20}
+        size={iconSize}
+        fit="contain"
         className="shrink-0"
       />
-      <span className="max-w-[5.5rem] truncate sm:max-w-[6.5rem]">{cat.name}</span>
+      <span className="max-w-[5rem] truncate sm:max-w-[6rem]">{cat.name}</span>
       <StockBadge count={stock} active={active} />
     </button>
   );

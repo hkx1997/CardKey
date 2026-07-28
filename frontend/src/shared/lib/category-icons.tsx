@@ -38,15 +38,21 @@ export function CategoryIconView({
   icon,
   className,
   size = 16,
+  /**
+   * 图片适配：contain 适合品牌 Logo（完整可见、更清晰）；
+   * cover 适合方形头像裁切。兑换端自定义图默认 contain。
+   */
+  fit = "contain",
 }: {
   icon?: CategoryIcon | null;
   className?: string;
   size?: number;
+  fit?: "contain" | "cover";
 }) {
   // 兼容 icon 缺失 / 自定义图 value 被截断为空 → 回退默认 lucide
-  // 注意：size 必须作用在图标/img 本身，不要只靠父级盒子放大
+  // size 必须作用在图标/img 本身
   const radius =
-    size >= 24 ? "rounded-md" : size >= 18 ? "rounded" : "rounded-sm";
+    size >= 28 ? "rounded-lg" : size >= 22 ? "rounded-md" : "rounded";
   if (icon?.kind === "image" && icon.value) {
     return (
       <img
@@ -54,8 +60,20 @@ export function CategoryIconView({
         alt=""
         width={size}
         height={size}
-        className={cn("shrink-0 object-cover", radius, className)}
-        style={{ width: size, height: size, minWidth: size, minHeight: size }}
+        className={cn(
+          "shrink-0 bg-background/40",
+          fit === "cover" ? "object-cover" : "object-contain",
+          radius,
+          className,
+        )}
+        style={{
+          width: size,
+          height: size,
+          minWidth: size,
+          minHeight: size,
+          // 小尺寸缩放位图时尽量保持锐利
+          imageRendering: size <= 32 ? "auto" : "auto",
+        }}
         draggable={false}
       />
     );
@@ -69,7 +87,7 @@ export function CategoryIconView({
       size={size}
       width={size}
       height={size}
-      strokeWidth={size >= 20 ? 1.75 : 1.8}
+      strokeWidth={size >= 24 ? 1.65 : size >= 20 ? 1.75 : 1.8}
       style={{ width: size, height: size, minWidth: size, minHeight: size }}
     />
   );
