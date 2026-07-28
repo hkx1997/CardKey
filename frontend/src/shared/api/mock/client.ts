@@ -300,11 +300,12 @@ export const mockClient = {
     await delay(50);
     return {
       id,
-      status: "success",
+      status: "success" as const,
       totalLines: 1,
       doneLines: 1,
       successCount: 1,
       errorCount: 0,
+      errorReport: "" as string | undefined,
     };
   },
 

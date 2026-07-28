@@ -123,7 +123,11 @@ export function ImportPage() {
             if (st.status === "success") {
               toast.success(`异步导入完成 · ${st.successCount} 条`);
             } else {
-              toast.error(st.errorReport || "异步导入失败");
+              toast.error(
+                "errorReport" in st && st.errorReport
+                  ? String(st.errorReport)
+                  : "异步导入失败",
+              );
             }
             break;
           }
