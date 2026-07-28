@@ -762,7 +762,7 @@ export const mockClient = {
 
   async createApiKey(input: {
     name: string;
-    scopes: Array<"redeem:api" | "admin:api">;
+    scopes: Array<"redeem:api" | "admin:api" | "system:update">;
     rateLimitRpm?: number | null;
   }): Promise<{ key: ApiKeyMeta; plaintext: string }> {
     await delay();

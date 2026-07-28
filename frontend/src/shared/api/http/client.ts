@@ -355,7 +355,7 @@ export const httpClient = {
 
   createApiKey: (input: {
     name: string;
-    scopes: Array<"redeem:api" | "admin:api">;
+    scopes: Array<"redeem:api" | "admin:api" | "system:update">;
     rateLimitRpm?: number | null;
   }) =>
     request<{ key: ApiKeyMeta; plaintext: string }>("/api/v1/admin/api-keys", {
