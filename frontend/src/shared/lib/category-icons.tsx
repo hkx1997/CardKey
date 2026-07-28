@@ -71,8 +71,6 @@ export function CategoryIconView({
           height: size,
           minWidth: size,
           minHeight: size,
-          // 小尺寸缩放位图时尽量保持锐利
-          imageRendering: size <= 32 ? "auto" : "auto",
         }}
         draggable={false}
       />
