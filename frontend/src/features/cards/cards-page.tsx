@@ -93,9 +93,23 @@ export function CardsPage() {
   const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const batchFromUrl = searchParams.get("batch") || undefined;
+  const statusFromUrl = searchParams.get("status");
+  const categoryFromUrl = searchParams.get("category");
   const { pageSize, setPageSize, options: pageSizeOptions } = usePageSize();
-  const [status, setStatus] = useState<CardStatus | "all">("all");
-  const [categorySlug, setCategorySlug] = useState(ALL);
+  const [status, setStatus] = useState<CardStatus | "all">(() => {
+    if (
+      statusFromUrl === "unused" ||
+      statusFromUrl === "used" ||
+      statusFromUrl === "disabled" ||
+      statusFromUrl === "expired"
+    ) {
+      return statusFromUrl;
+    }
+    return "all";
+  });
+  const [categorySlug, setCategorySlug] = useState(
+    () => categoryFromUrl?.trim() || ALL,
+  );
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
