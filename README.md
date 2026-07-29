@@ -9,7 +9,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**在线演示：** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API 文档](https://cardkey.ai-service.top/docs) · [管理端](https://cardkey.ai-service.top/admin)
+**在线站点：** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API 文档](https://cardkey.ai-service.top/docs) · [管理端](https://cardkey.ai-service.top/admin)
 
 ## 界面预览
 

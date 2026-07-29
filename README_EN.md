@@ -9,7 +9,7 @@ Self-hosted high-concurrency card-key (gift code) redeem platform: public redeem
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Live demo:** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API docs](https://cardkey.ai-service.top/docs) · [Admin](https://cardkey.ai-service.top/admin)
+**Live site:** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API docs](https://cardkey.ai-service.top/docs) · [Admin](https://cardkey.ai-service.top/admin)
 
 ## Screenshots
 
