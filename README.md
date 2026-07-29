@@ -2,71 +2,93 @@
 
 **语言 / Language:** [中文](README.md) · [English](README_EN.md)
 
-自托管高并发卡密兑换平台：公开兑换端 + 管理端 + HTTP API。
+自托管卡密兑换系统：面向高并发场景，提供公开兑换页、管理控制台与统一 HTTP API。
 
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8)](https://go.dev/)
 [![React](https://img.shields.io/badge/React-19-61DAFB)](https://react.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**在线站点：** [cardkey.ai-service.top](https://cardkey.ai-service.top/) · [API 文档](https://cardkey.ai-service.top/docs) · [管理端](https://cardkey.ai-service.top/admin)
+| | |
+|---|---|
+| **官方站点** | [cardkey.ai-service.top](https://cardkey.ai-service.top/) |
+| **公开 API 文档** | [cardkey.ai-service.top/docs](https://cardkey.ai-service.top/docs) |
+| **管理端** | [cardkey.ai-service.top/admin](https://cardkey.ai-service.top/admin) |
+
+---
 
 ## 界面预览
 
-### 公开兑换端
+### 公开兑换
 
 | 单码兑换 | 批量兑换 |
 |:---:|:---:|
 | ![公开兑换](docs/screenshots/redeem.png) | ![批量兑换](docs/screenshots/redeem-batch.png) |
 
-按类别切换、输入卡密一键兑换；批量模式支持多码与结果导出。
+按类别组织库存；支持单码与批量兑换，结果可导出。
 
-### 兑换端 API 文档
+### API 文档
 
-| 文档首页（Base URL） | 接口总表 |
+| 概览 | 接口列表 |
 |:---:|:---:|
 | ![API 文档](docs/screenshots/api-docs.png) | ![接口列表](docs/screenshots/api-docs-endpoints.png) |
 
-公开路径 `/docs`：接口总表 + 多语言请求示例；Base URL 为站点 origin，路径自带 `/api/v1` 前缀。管理端另有完整「管理 API」文档。
+公开路径 `/docs`：接口说明与多语言请求示例。Base URL 为站点 origin，路径前缀为 `/api/v1`。管理端另提供完整管理 API 文档。
 
 ### 管理端
 
 ![管理端登录](docs/screenshots/admin-login.png)
 
-安装完成后访问 `/admin` 登录控制台：类别 / 卡密 / 批次 / 密钥 / 设置 / 审计 / 在线更新等。
+完成安装后访问 `/admin`：类别、卡密、批次、API 密钥、站点设置、审计日志与在线更新等。
 
-## 功能概览
+---
 
-- **公开兑换**：按类别 Tab、单码/批量兑换、结果 ZIP 导出
-- **卡密管理**：创建、批量导入、启用/禁用/删除、批次
-- **类别隔离**：独立编码前缀；无交易可删，有记录仅停用
-- **API 密钥**：固定兑换密钥 + 自定义 Key（吊销/删除/轮换）
-- **API 文档**：公开 `/docs` + 管理端「API 文档」；Base URL 可配置并动态展示
-- **品牌资源**：Logo / Favicon 支持上传
-- **首次安装向导**：Web 端创建管理员账号与站点名称
-- **运维**：健康检查、受保护指标、**默认启用在线更新**（Docker 检测 / 可选 Token 防 GitHub 限流）
-- **安全**：生产密钥校验、CSRF 同源、安装 advisory lock、默认不暴露兑换密钥、禁止 SVG 上传
-- **发版**：改 `VERSION` → `bash scripts/release.sh`（tag + Release + **Linux amd64/arm64** 供一键更新；不含 Win/mac）
-- **在线更新含 DB 迁移**：`backend/migrations/*.sql` 嵌入二进制，一键更新重启后自动执行未应用 SQL（不删库）
+## 功能
+
+### 业务
+
+- **公开兑换**：类别导航、单码 / 批量兑换、结果 ZIP 导出
+- **库存管理**：创建、批量导入、启用 / 禁用 / 删除，支持批次
+- **类别隔离**：独立编码前缀；无兑换记录可删除，已有记录仅允许停用
+- **API 密钥**：系统兑换密钥与自定义密钥（吊销、删除、轮换；权限范围控制）
+
+### 平台
+
+- **安装向导**：首次部署时创建管理员与站点名称（不写入示例业务数据）
+- **品牌与文案**：Logo / Favicon 上传，兑换页与站点文案可配置
+- **API 文档**：公开 `/docs` 与管理端文档；可配置对外 Base URL
+- **可观测性**：`/healthz`、`/readyz`、受保护的 Prometheus `/metrics`
+
+### 安全与运维
+
+- 生产环境密钥强度校验、Cookie 会话 CSRF 同源校验
+- 安装过程 advisory lock，降低并发初始化风险
+- 卡密内容 AES-GCM 加密存储；默认不在公开配置中暴露兑换密钥
+- 禁止 SVG 等风险格式作为上传资源
+- **在线更新**（Docker / 二进制）：自 GitHub Release 拉取 **Linux amd64/arm64** 完整包（后端 + 嵌入前端 SPA + 数据库迁移），重启后自动执行未应用迁移，**不删除数据卷**
+
+---
 
 ## 技术栈
 
-| 层 | 技术 |
-|---|---|
-| 前端 | React 19 · Vite · Tailwind 4 · TanStack Query |
-| 后端 | Go · chi · pgx · Redis |
+| 层级 | 技术 |
+|------|------|
+| 前端 | React 19 · Vite · Tailwind CSS 4 · TanStack Query |
+| 后端 | Go · chi · pgx |
 | 数据 | PostgreSQL 16 · Redis 7 |
-| 部署 | Docker Compose 一键 |
+| 部署 | Docker Compose |
 
-## 一键部署（推荐）
+---
 
-### 前置
+## 部署
+
+### 环境要求
 
 - Docker 20+ / Docker Compose v2
-- Linux / macOS / Windows（Docker Desktop）
-- `git`、`bash`（Windows 可用 Git Bash）
+- Linux、macOS 或 Windows（Docker Desktop）
+- `git`、`bash`（Windows 建议使用 Git Bash）
 
-### 方式 A：克隆后交互安装（推荐）
+### 方式 A：交互式安装（推荐）
 
 ```bash
 git clone https://github.com/hkx1997/CardKey.git
@@ -74,102 +96,109 @@ cd CardKey
 bash deploy/docker-deploy.sh
 ```
 
-安装过程中会**交互询问**（直接回车=默认）：
+安装程序将引导配置端口与数据库密码，并检测宿主机端口占用：
 
-| 项 | 默认 | 说明 |
-|----|------|------|
-| 应用端口 `APP_PORT` | 18080 | 管理端 / 兑换页 |
-| Postgres 端口 | 5432 | 宿主机映射 |
-| Redis 端口 | 6379 | 宿主机映射 |
-| 数据库用户/库名 | cardkey | |
-| 数据库密码 | 随机 | 也可自定义 |
-
-并会**检测端口是否被占用**；冲突时提示更换（非交互模式自动选空闲端口）。
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `APP_PORT` | `18080` | 应用对外端口（兑换页与管理端） |
+| PostgreSQL 端口 | `5432` | 宿主机映射 |
+| Redis 端口 | `6379` | 宿主机映射 |
+| 数据库用户 / 库名 | `cardkey` | |
+| 数据库密码 | 随机生成 | 可自定义 |
 
 ```bash
-# 非交互（CI / 无人值守，可用环境变量覆盖）
+# 非交互（CI / 自动化；可用环境变量覆盖）
 APP_PORT=19000 bash deploy/docker-deploy.sh --yes
 
-# 强制重新配置 .env
+# 重新生成 / 覆盖 .env
 bash deploy/docker-deploy.sh --reconfig
 ```
 
-### 方式 B：在线一键（Linux/macOS）
+### 方式 B：在线安装（Linux / macOS）
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hkx1997/CardKey/main/deploy/install-online.sh | bash
 ```
 
-默认安装到 `~/cardkey`。自定义目录：
+默认安装目录为 `~/cardkey`。自定义路径：
 
 ```bash
 CARDKEY_DIR=/opt/cardkey bash -c \
   'curl -fsSL https://raw.githubusercontent.com/hkx1997/CardKey/main/deploy/install-online.sh | bash'
 ```
 
-> 通过管道安装时通常**没有交互终端**，会走默认端口；若冲突会自动顺延。需要交互配置请用方式 A。
+通过管道安装时通常无交互终端，将使用默认端口；若冲突则自动顺延。需要交互配置时请使用方式 A。
 
-### 方式 C：纯手动
+### 方式 C：手动部署
 
 ```bash
 cp .env.example .env
-# 编辑 APP_PORT、POSTGRES_PASSWORD、JWT_SECRET、CONTENT_KEY 等
+# 配置 APP_PORT、POSTGRES_PASSWORD、JWT_SECRET、CONTENT_KEY 等
 docker compose up -d --build
 ```
 
-### 访问
+### 访问地址
 
-- 兑换页：`http://服务器IP:APP_PORT/`（默认 **18080**）
-- 管理端：`http://服务器IP:APP_PORT/admin`
+| 入口 | URL |
+|------|-----|
+| 兑换页 | `http://<主机>:<APP_PORT>/`（默认端口 `18080`） |
+| 管理端 | `http://<主机>:<APP_PORT>/admin` |
 
-### 首次安装
+### 首次初始化
 
 1. 打开管理端  
-2. 若尚无管理员 → 自动进入 **`/admin/setup` 安装向导**  
-3. 设置管理员用户名/密码、站点名称  
+2. 若系统中尚无管理员，将进入 **`/admin/setup`**  
+3. 设置管理员用户名、密码与站点名称  
 4. 完成后自动登录  
 
-> 也可在 `.env` 设置 `BOOTSTRAP_ADMIN_PASS` 启动时自动建号（适合脚本，不推荐生产裸奔）。
+也可通过环境变量 `BOOTSTRAP_ADMIN_PASS` 在进程启动时创建管理员（适用于自动化脚本；生产环境建议使用强密码并完成首次改密）。
 
-### 可配置项（`.env`）
+### 主要环境变量
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `APP_PORT` | 18080 | 应用对外端口 |
-| `POSTGRES_PORT` | 5432 | PostgreSQL 宿主机端口 |
-| `REDIS_PORT` | 6379 | Redis 宿主机端口 |
-| `POSTGRES_USER` / `POSTGRES_DB` | cardkey | 数据库用户/库名 |
-| `POSTGRES_PASSWORD` | — | **生产务必改强密码** |
-| `JWT_SECRET` | — | ≥32 字符随机串 |
-| `CONTENT_KEY` | — | 64 hex（`openssl rand -hex 32`），卡密加密 |
-| `BOOTSTRAP_ADMIN_PASS` | 空 | 空=走安装向导 |
+| `APP_PORT` | `18080` | 应用对外端口 |
+| `POSTGRES_PORT` | `5432` | PostgreSQL 宿主机端口 |
+| `REDIS_PORT` | `6379` | Redis 宿主机端口 |
+| `POSTGRES_USER` / `POSTGRES_DB` | `cardkey` | 数据库用户 / 库名 |
+| `POSTGRES_PASSWORD` | — | 生产环境请使用高强度密码 |
+| `JWT_SECRET` | — | 随机字符串，长度 ≥ 32 |
+| `CONTENT_KEY` | — | 64 位十六进制（`openssl rand -hex 32`），用于卡密内容加密 |
+| `BOOTSTRAP_ADMIN_PASS` | 空 | 为空时使用 Web 安装向导 |
 
-### 常用命令
+完整示例见 [`.env.example`](.env.example)。
+
+### 运维命令
 
 ```bash
 docker compose ps
 docker compose logs -f cardkey
-docker compose down          # 停服务（保留数据卷）
-# 切勿：docker compose down -v  （删除数据库）
-bash scripts/upgrade.sh          # 推荐升级：只重建 cardkey，不动 postgres 卷
-bash scripts/recover-volume.sh   # 若像「被重置」：挂回旧 Postgres 卷
-# 数据说明见 deploy/DATA_SAFETY.md（挂错空卷 ≠ 删库）
+docker compose down                 # 停止服务，保留数据卷
+bash scripts/upgrade.sh             # 推荐升级：仅重建应用，不触碰数据库卷
+bash scripts/recover-volume.sh      # 疑似挂载空卷时，协助找回既有 Postgres 数据
 ```
 
-### 生产建议
+**请勿**执行 `docker compose down -v` 或对 Postgres 卷进行 `docker volume rm` / `prune`，否则将删除业务数据。数据安全说明见 [`deploy/DATA_SAFETY.md`](deploy/DATA_SAFETY.md)。
 
-1. 修改全部默认密钥与数据库密码  
-2. 前置 Nginx/Caddy HTTPS，并设 `SECURE_COOKIE=true`  
-3. 定期 `pg_dump` 备份 `postgres` 卷  
-4. 防火墙只暴露 `APP_PORT`（或仅 443）
+### 生产环境建议
 
-## 开发
+1. 使用高强度 `POSTGRES_PASSWORD`、`JWT_SECRET`、`CONTENT_KEY`，避免示例或弱默认值  
+2. 前置 HTTPS 反向代理（Nginx / Caddy 等），并设置 `SECURE_COOKIE=true`  
+3. 定期对 PostgreSQL 执行 `pg_dump` 备份  
+4. 防火墙仅开放必要端口（应用端口或 443）  
+5. 升级优先使用 `scripts/upgrade.sh` 或管理端在线更新，避免误删数据卷  
+
+维护者发版流程见 [`AGENTS.md`](AGENTS.md) 与 `scripts/release.sh`（产物为内嵌 SPA 与迁移的 Linux 二进制）。
+
+---
+
+## 本地开发
 
 ```bash
-# 前端 Mock
+# 前端（Mock 或代理，见 frontend 环境变量）
 cd frontend && pnpm install && pnpm dev
 
-# 后端（需本机 PG + Redis）
+# 后端（需本机 PostgreSQL 与 Redis，并配置环境变量）
 cd backend && go run ./cmd/cardkey
 
 # 测试
@@ -177,23 +206,33 @@ cd frontend && pnpm test
 cd backend && go test ./...
 ```
 
-## API 摘要
+---
 
-统一响应：
+## API 概要
+
+统一响应信封：
 
 ```json
 { "success": true, "data": {} }
 ```
 
+```json
+{ "success": false, "error": { "code": "...", "message": "..." } }
+```
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/v1/public/config` | 公开配置 |
-| GET | `/api/v1/public/setup-status` | 是否需安装向导 |
+| GET | `/api/v1/public/config` | 公开站点配置 |
+| GET | `/api/v1/public/setup-status` | 是否需要安装向导 |
 | POST | `/api/v1/public/setup` | 完成首次安装 |
 | POST | `/api/v1/public/redeem` | 兑换 |
-| POST | `/api/v1/admin/auth/login` | 登录 |
-| GET | `/healthz` / `/readyz` | 健康检查 |
-| GET | `/metrics` | Prometheus 文本指标 |
+| POST | `/api/v1/admin/auth/login` | 管理员登录 |
+| GET | `/healthz` · `/readyz` | 存活 / 就绪探针 |
+| GET | `/metrics` | Prometheus 指标（生产建议配置访问令牌） |
+
+完整接口说明以部署实例的 `/docs` 与管理端 API 文档为准。
+
+---
 
 ## 许可
 
