@@ -120,22 +120,17 @@ func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResul
 		return finalizeUpdateResult(cached, cur, mode, true), nil
 	}
 
-	// 多源探测后取 semver 最高者（避免 raw/atom/旧缓存指到比当前更旧的版本却仍提示更新）
+	// 仅认「真实 GitHub Release」（atom / latest 跳转 / API）。
+	// 不再用仓库 VERSION 文件当「最新版」：历史重置后 VERSION 或 CDN 残留会
+	// 把已删除的 v0.1.66 等标成可更新，与 Release 列表不一致。
 	type cand struct {
 		ver, url, src string
+		body          string
+		publishedAt   string
 	}
 	var cands []cand
 	var lastErr error
 
-	if ver, err := a.fetchVersionFromRaw(ctx); err == nil && ver != "" {
-		cands = append(cands, cand{
-			ver: normalizeVer(ver),
-			url: fmt.Sprintf("https://github.com/%s/%s/releases", a.UpdateGitHubOwner, a.UpdateGitHubRepo),
-			src: "raw",
-		})
-	} else if err != nil {
-		lastErr = err
-	}
 	if tag, url, err := a.fetchLatestTagFromAtom(ctx); err == nil && tag != "" {
 		cands = append(cands, cand{ver: normalizeVer(tag), url: url, src: "atom"})
 	} else if err != nil {
@@ -148,29 +143,59 @@ func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResul
 	}
 	// 公开/带 Token 均可尝试 API（用于版本号 + Release 正文「更新内容」）
 	if rel, err := a.fetchLatestRelease(ctx); err == nil && rel != nil {
-		c := cand{ver: normalizeVer(rel.TagName), url: rel.HTMLURL, src: "api"}
-		cands = append(cands, c)
-		out.Body = rel.Body
+		c := cand{ver: normalizeVer(rel.TagName), url: rel.HTMLURL, src: "api", body: rel.Body}
 		if !rel.PublishedAt.IsZero() {
-			out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+			c.publishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
 		}
+		cands = append(cands, c)
 	} else if err != nil {
 		lastErr = err
 	}
 
-	var latest, htmlURL, src string
+	var latest, htmlURL, src, body, publishedAt string
 	for _, c := range cands {
 		if c.ver == "" {
 			continue
 		}
-		if latest == "" || semverGreater(c.ver, latest) || (!semverGreater(latest, c.ver) && c.ver == latest && htmlURL == "") {
-			if latest == "" || semverGreater(c.ver, latest) {
-				latest, htmlURL, src = c.ver, c.url, c.src
-			} else if c.url != "" && htmlURL == "" {
+		if latest == "" || semverGreater(c.ver, latest) {
+			latest, htmlURL, src = c.ver, c.url, c.src
+			body, publishedAt = c.body, c.publishedAt
+		} else if c.ver == latest {
+			if htmlURL == "" && c.url != "" {
 				htmlURL = c.url
+			}
+			if body == "" && c.body != "" {
+				body = c.body
+			}
+			if publishedAt == "" && c.publishedAt != "" {
+				publishedAt = c.publishedAt
 			}
 		}
 	}
+	// 二次确认：最高候选必须仍有 Release（防止 atom/CDN 短暂残留已删 tag）
+	if latest != "" {
+		if rel, err := a.fetchReleaseByTag(ctx, latest); err == nil && rel != nil {
+			latest = normalizeVer(rel.TagName)
+			if rel.HTMLURL != "" {
+				htmlURL = rel.HTMLURL
+			}
+			if strings.TrimSpace(rel.Body) != "" {
+				body = rel.Body
+			}
+			if !rel.PublishedAt.IsZero() {
+				publishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
+			}
+		} else if err != nil {
+			// 该 tag 已无 Release：丢弃，避免提示更新到不存在的版本
+			if a.Log != nil {
+				a.Log.Warn("drop latest candidate without release", "ver", latest, "err", err.Error())
+			}
+			lastErr = err
+			latest, htmlURL, src, body, publishedAt = "", "", "", "", ""
+		}
+	}
+	out.Body = body
+	out.PublishedAt = publishedAt
 
 	if latest == "" {
 		if cached, ok := a.getUpdateCheckCacheStale(cur, mode); ok {
@@ -191,18 +216,6 @@ func (a *App) CheckUpdatesOpt(ctx context.Context, force bool) (UpdateCheckResul
 
 	out.Latest = latest
 	out.ReleaseURL = htmlURL
-	// 若最高版本来自非 API 源，补拉该 tag 的 Release 正文
-	if strings.TrimSpace(out.Body) == "" {
-		if rel, err := a.fetchReleaseByTag(ctx, latest); err == nil && rel != nil {
-			out.Body = rel.Body
-			if out.ReleaseURL == "" {
-				out.ReleaseURL = rel.HTMLURL
-			}
-			if out.PublishedAt == "" && !rel.PublishedAt.IsZero() {
-				out.PublishedAt = rel.PublishedAt.UTC().Format(time.RFC3339)
-			}
-		}
-	}
 	out = finalizeUpdateResult(out, cur, mode, false)
 	if src != "" && a.Log != nil {
 		a.Log.Info("update check ok", "source", src, "latest", latest, "current", cur, "hasUpdate", out.HasUpdate)
@@ -505,102 +518,67 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 	cur := normalizeVer(version.Version)
 	byVer := map[string]*UpdateHistoryItem{}
 
-	// 1) 本机归档（DATA_DIR/releases 等）
-	dir := a.writableReleasesDir()
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			var ver, p, mt string
-			if e.IsDir() {
-				ver = normalizeVer(name)
-				p = filepath.Join(dir, name, "cardkey")
-				if _, err := os.Stat(p); err != nil {
-					continue
-				}
-			} else if strings.HasPrefix(name, "cardkey-") {
-				ver = normalizeVer(strings.TrimPrefix(name, "cardkey-"))
-				p = filepath.Join(dir, name)
-			} else {
-				continue
-			}
-			if ver == "" {
-				continue
-			}
-			if info, err := e.Info(); err == nil && info != nil {
-				mt = info.ModTime().UTC().Format(time.RFC3339)
-			}
-			byVer[ver] = &UpdateHistoryItem{
-				Version:    ver,
-				Path:       p,
-				ModTime:    mt,
-				IsCurrent:  ver == cur,
-				Source:     "local",
-				CanInstall: true,
-			}
-		}
-	}
+	// 仅列出「当前运行版本 + 仍存在的 GitHub Release」。
+	// 不再扫描 DATA_DIR/releases 里的旧包：历史 tag/Release 清理后，
+	// 卷内 cardkey-0.1.66 等归档会继续出现在回滚列表并误导用户。
+	// 本机 .bak 回滚仍走独立接口，不依赖此列表。
+	localPaths := a.localReleasePathsByVersion()
 
-	// 2) GitHub Release：仅「严格低于当前版本」可作为远程回滚目标
-	// 更高版本走「检测更新 / 一键更新」，不出现在回滚列表
 	if a.UpdateEnabled && a.UpdateGitHubOwner != "" && a.UpdateGitHubRepo != "" {
-		if rels, err := a.fetchReleasesList(ctx, 30); err == nil {
+		if rels, err := a.fetchReleasesList(ctx, 50); err == nil {
 			for _, rel := range rels {
 				ver := normalizeVer(rel.TagName)
-				if ver == "" || ver == cur {
+				if ver == "" {
 					continue
 				}
-				// 远程仅展示更旧版本；本机已有更新归档仍保留在步骤 1
-				if semverGreater(ver, cur) {
-					continue
-				}
-				// 仅列出含当前架构 linux 资产的版本（或无资产列表时仍展示 tag）
+				// 仅列出含 linux 资产的版本
 				hasLinux := false
 				for _, asset := range rel.Assets {
 					n := strings.ToLower(asset.Name)
-					if strings.Contains(n, "linux") && (strings.Contains(n, runtime.GOARCH) || strings.Contains(n, "amd64") || strings.Contains(n, "arm64")) {
+					if strings.Contains(n, "cardkey-linux") ||
+						(strings.Contains(n, "linux") && (strings.Contains(n, runtime.GOARCH) || strings.Contains(n, "amd64") || strings.Contains(n, "arm64"))) {
 						hasLinux = true
 						break
 					}
 				}
 				if len(rel.Assets) > 0 && !hasLinux {
-					for _, asset := range rel.Assets {
-						if strings.Contains(strings.ToLower(asset.Name), "cardkey-linux") {
-							hasLinux = true
-							break
-						}
-					}
-					if !hasLinux {
-						continue
-					}
+					continue
 				}
 				pub := ""
 				if !rel.PublishedAt.IsZero() {
 					pub = rel.PublishedAt.UTC().Format(time.RFC3339)
 				}
-				if it, ok := byVer[ver]; ok {
-					it.Source = "both"
-					it.CanInstall = true
-					if it.ModTime == "" {
-						it.ModTime = pub
-					}
-				} else {
-					byVer[ver] = &UpdateHistoryItem{
-						Version:    ver,
-						ModTime:    pub,
-						IsCurrent:  false,
-						Source:     "remote",
-						CanInstall: true,
-					}
+				src := "remote"
+				p := ""
+				if lp, ok := localPaths[ver]; ok {
+					src = "both"
+					p = lp
+				}
+				can := ver != cur
+				byVer[ver] = &UpdateHistoryItem{
+					Version:    ver,
+					Path:       p,
+					ModTime:    pub,
+					IsCurrent:  ver == cur,
+					Source:     src,
+					CanInstall: can,
 				}
 			}
 		}
 	}
 
 	if _, ok := byVer[cur]; !ok {
+		src := "local"
+		p := ""
+		if lp, ok := localPaths[cur]; ok {
+			p = lp
+			src = "both"
+		}
 		byVer[cur] = &UpdateHistoryItem{
 			Version:    cur,
+			Path:       p,
 			IsCurrent:  true,
-			Source:     "local",
+			Source:     src,
 			CanInstall: false,
 		}
 	} else {
@@ -608,13 +586,8 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 		byVer[cur].CanInstall = false
 	}
 
-	// 本机若有「高于当前」的归档：可切换，但不叫远程回滚目标
 	items := make([]UpdateHistoryItem, 0, len(byVer))
 	for _, it := range byVer {
-		// 过滤：纯远程且不比当前旧的不应出现（双保险）
-		if it.Source == "remote" && (it.Version == cur || semverGreater(it.Version, cur)) {
-			continue
-		}
 		if it.IsCurrent {
 			it.CanInstall = false
 		}
@@ -624,6 +597,36 @@ func (a *App) ListUpdateHistory(ctx context.Context) ([]UpdateHistoryItem, error
 		return semverGreater(items[i].Version, items[j].Version)
 	})
 	return items, nil
+}
+
+// localReleasePathsByVersion 扫描本机归档路径（供历史项标注 both，不单独展示已删版本）。
+func (a *App) localReleasePathsByVersion() map[string]string {
+	out := map[string]string{}
+	dir := a.writableReleasesDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		name := e.Name()
+		var ver, p string
+		if e.IsDir() {
+			ver = normalizeVer(name)
+			p = filepath.Join(dir, name, "cardkey")
+			if _, err := os.Stat(p); err != nil {
+				continue
+			}
+		} else if strings.HasPrefix(name, "cardkey-") {
+			ver = normalizeVer(strings.TrimPrefix(name, "cardkey-"))
+			p = filepath.Join(dir, name)
+		} else {
+			continue
+		}
+		if ver != "" {
+			out[ver] = p
+		}
+	}
+	return out
 }
 
 // fetchReleasesList 列出仓库 Release（供历史/回滚选版本）
