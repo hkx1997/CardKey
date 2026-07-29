@@ -120,6 +120,7 @@ func New(a *app.App, corsOrigins []string, staticDir string) http.Handler {
 					r.Use(middleware.RequirePasswordChanged(a))
 
 					r.Get("/dashboard/stats", h.Dashboard)
+					r.Get("/dashboard/trend", h.DashboardTrend)
 					r.Get("/dashboard/runtime", h.RuntimeMetrics)
 					// 运维：手动触发库存物化对账
 					r.Post("/ops/reconcile-stock", h.ReconcileStock)

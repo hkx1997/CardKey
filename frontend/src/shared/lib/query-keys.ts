@@ -4,6 +4,7 @@ export const queryKeys = {
   publicCategoryStock: ["public-category-stock"] as const,
   settings: ["settings"] as const,
   dashboard: ["dashboard"] as const,
+  dashboardTrend: (range: string) => ["dashboard-trend", range] as const,
   runtimeMetrics: ["runtime-metrics"] as const,
   categories: ["categories"] as const,
   cards: (params?: unknown) =>

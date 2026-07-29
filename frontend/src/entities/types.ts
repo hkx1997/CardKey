@@ -174,6 +174,21 @@ export interface AuditLog {
   createdAt: string;
 }
 
+export interface TrendPoint {
+  date: string;
+  label?: string;
+  count: number;
+}
+
+export type DashboardTrendRange = "today" | "24h" | "7d" | "14d" | "30d";
+
+export interface DashboardTrend {
+  range: DashboardTrendRange | string;
+  bucket: "hour" | "day" | string;
+  total: number;
+  points: TrendPoint[];
+}
+
 export interface DashboardStats {
   totalCards: number;
   unusedCards: number;
@@ -188,7 +203,7 @@ export interface DashboardStats {
   totalCategories: number;
   enabledCategories: number;
   activeApiKeys: number;
-  trend: { date: string; count: number }[];
+  trend: TrendPoint[];
   byCategory: {
     slug: string;
     name: string;

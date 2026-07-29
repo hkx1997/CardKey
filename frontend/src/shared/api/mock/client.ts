@@ -370,7 +370,8 @@ export const mockClient = {
     const trend = Array.from({ length: 14 }, (_, i) => {
       const key = dayKey(13 - i);
       return {
-        date: key.slice(5),
+        date: key,
+        label: key.slice(5),
         count: redeems.filter((r) => r.createdAt.startsWith(key)).length,
       };
     });
@@ -1119,6 +1120,46 @@ export const mockClient = {
     };
   },
 
+  async dashboardTrend(range: string = "14d") {
+    await delay(40);
+    mockStore.requireSession();
+    const redeems = mockStore.getDb().redeems;
+    const now = new Date();
+    const points: { date: string; label: string; count: number }[] = [];
+    let total = 0;
+    if (range === "today" || range === "24h") {
+      const hours = range === "today" ? now.getHours() + 1 : 24;
+      for (let i = hours - 1; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 3600_000);
+        d.setMinutes(0, 0, 0);
+        const key = `${d.toISOString().slice(0, 13)}:00`;
+        const label = `${String(d.getHours()).padStart(2, "0")}:00`;
+        const count = redeems.filter((r) => {
+          const t = new Date(r.createdAt);
+          return (
+            t.getFullYear() === d.getFullYear() &&
+            t.getMonth() === d.getMonth() &&
+            t.getDate() === d.getDate() &&
+            t.getHours() === d.getHours()
+          );
+        }).length;
+        total += count;
+        points.push({ date: key, label, count });
+      }
+      return { range, bucket: "hour", total, points };
+    }
+    const days = range === "7d" ? 7 : range === "30d" ? 30 : 14;
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const count = redeems.filter((r) => r.createdAt.startsWith(key)).length;
+      total += count;
+      points.push({ date: key, label: key.slice(5), count });
+    }
+    return { range, bucket: "day", total, points };
+  },
+
   async runtimeMetrics() {
     await delay(40);
     mockStore.requireSession();
@@ -1127,8 +1168,8 @@ export const mockClient = {
       requestsTotal: 1280,
       requests1m: 24,
       errors4xx: 3,
-      errors5xx: 0,
-      errorRatePct: 0.23,
+      errors5xx: 1,
+      errorRatePct: 0.31,
       latencyP50Ms: 12.5,
       latencyP95Ms: 48.2,
       latencyP99Ms: 96.0,
@@ -1146,6 +1187,29 @@ export const mockClient = {
       version: "0.1.0-mock",
       updateMode: "docker",
       checkedAt: new Date().toISOString(),
+      recentErrors: [
+        {
+          method: "POST",
+          path: "/api/v1/public/redeem",
+          status: 429,
+          latencyMs: 2.1,
+          at: new Date(Date.now() - 12_000).toISOString(),
+        },
+        {
+          method: "GET",
+          path: "/api/v1/admin/cards",
+          status: 401,
+          latencyMs: 1.4,
+          at: new Date(Date.now() - 45_000).toISOString(),
+        },
+        {
+          method: "POST",
+          path: "/api/v1/admin/auth/login",
+          status: 401,
+          latencyMs: 18.2,
+          at: new Date(Date.now() - 90_000).toISOString(),
+        },
+      ],
     };
   },
 

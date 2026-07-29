@@ -12,6 +12,7 @@ import (
 	"github.com/cardkey/cardkey/internal/domain"
 	"github.com/cardkey/cardkey/internal/pkg/apperr"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -119,23 +120,14 @@ func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, erro
 		return nil
 	})
 	g.Go(func() error {
-		trows, err := a.Pool.Query(ctx, `
-			SELECT to_char(date_trunc('day', created_at), 'MM-DD') AS d, COUNT(*)
-			FROM redeem_records
-			WHERE created_at >= CURRENT_DATE - 13
-			GROUP BY date_trunc('day', created_at)
-			ORDER BY date_trunc('day', created_at)`)
+		// 统一用 timestamptz 边界 + YYYY-MM-DD 键，避免 to_char/本地时区与 Go Format 错位导致趋势全 0
+		tr, err := a.buildRedeemTrend(ctx, "14d")
 		if err != nil {
-			return nil
+			return err
 		}
-		defer trows.Close()
 		local := map[string]int{}
-		for trows.Next() {
-			var d string
-			var c int
-			if trows.Scan(&d, &c) == nil {
-				local[d] = c
-			}
+		for _, p := range tr.Points {
+			local[p.Date] = p.Count
 		}
 		counts = local
 		return nil
@@ -210,17 +202,18 @@ func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, erro
 			RedeemRate int                 `json:"redeemRate"`
 		}{Slug: bc.Slug, Name: bc.Name, Icon: bc.Icon, Unused: bc.Unused, Used: bc.Used, Total: bc.Total, RedeemRate: bc.RedeemRate})
 	}
-	s.Trend = make([]struct {
-		Date  string `json:"date"`
-		Count int    `json:"count"`
-	}, 0, 14)
-	for d := 13; d >= 0; d-- {
-		day := time.Now().AddDate(0, 0, -d)
-		key := day.Format("01-02")
-		s.Trend = append(s.Trend, struct {
-			Date  string `json:"date"`
-			Count int    `json:"count"`
-		}{Date: key, Count: counts[key]})
+	// 默认嵌入 14 日趋势（与 /dashboard/trend?range=14d 一致）
+	if tr, err := a.buildRedeemTrend(ctx, "14d"); err == nil {
+		s.Trend = tr.Points
+	} else {
+		s.Trend = []domain.TrendPoint{}
+		for d := 13; d >= 0; d-- {
+			day := time.Now().In(time.Local).AddDate(0, 0, -d)
+			key := day.Format("2006-01-02")
+			s.Trend = append(s.Trend, domain.TrendPoint{
+				Date: key, Label: day.Format("01-02"), Count: counts[key],
+			})
+		}
 	}
 	if s.RecentRedeems == nil {
 		s.RecentRedeems = []domain.RedeemRecord{}
@@ -235,6 +228,135 @@ func (a *App) dashboardCompute(ctx context.Context) (domain.DashboardStats, erro
 		{Status: domain.StatusExpired, Count: s.ExpiredCards},
 	}
 	return s, nil
+}
+
+// DashboardTrend 可切换范围的兑换趋势（today/24h/7d/14d/30d）。
+func (a *App) DashboardTrend(ctx context.Context, rangeKey string) (domain.DashboardTrend, error) {
+	return a.buildRedeemTrend(ctx, rangeKey)
+}
+
+func normalizeTrendRange(rangeKey string) string {
+	switch strings.ToLower(strings.TrimSpace(rangeKey)) {
+	case "today", "24h", "7d", "14d", "30d":
+		return strings.ToLower(strings.TrimSpace(rangeKey))
+	default:
+		return "14d"
+	}
+}
+
+func trendWindow(rangeKey string) (start, end time.Time, bucket string) {
+	now := time.Now().In(time.Local)
+	end = now
+	switch normalizeTrendRange(rangeKey) {
+	case "today":
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		bucket = "hour"
+	case "24h":
+		start = now.Add(-24 * time.Hour).Truncate(time.Hour)
+		bucket = "hour"
+	case "7d":
+		day0 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		start = day0.AddDate(0, 0, -6)
+		bucket = "day"
+	case "30d":
+		day0 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		start = day0.AddDate(0, 0, -29)
+		bucket = "day"
+	default: // 14d
+		day0 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		start = day0.AddDate(0, 0, -13)
+		bucket = "day"
+	}
+	return start, end, bucket
+}
+
+func (a *App) buildRedeemTrend(ctx context.Context, rangeKey string) (domain.DashboardTrend, error) {
+	rangeKey = normalizeTrendRange(rangeKey)
+	start, end, bucket := trendWindow(rangeKey)
+	out := domain.DashboardTrend{
+		Range:  rangeKey,
+		Bucket: bucket,
+		Points: []domain.TrendPoint{},
+	}
+	if a.Pool == nil {
+		return out, nil
+	}
+
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if bucket == "hour" {
+		rows, err = a.Pool.Query(ctx, `
+			SELECT date_trunc('hour', created_at), COUNT(*)::int
+			FROM redeem_records
+			WHERE created_at >= $1 AND created_at < $2
+			GROUP BY 1 ORDER BY 1`, start, end)
+	} else {
+		rows, err = a.Pool.Query(ctx, `
+			SELECT date_trunc('day', created_at), COUNT(*)::int
+			FROM redeem_records
+			WHERE created_at >= $1 AND created_at < $2
+			GROUP BY 1 ORDER BY 1`, start, end)
+	}
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	got := map[string]int{}
+	for rows.Next() {
+		var ts time.Time
+		var n int
+		if rows.Scan(&ts, &n) != nil {
+			continue
+		}
+		// 归一到本地墙钟，与 trendWindow 填桶一致
+		ts = ts.In(start.Location())
+		got[trendBucketKey(ts, bucket)] = n
+	}
+
+	loc := start.Location()
+	total := 0
+	if bucket == "hour" {
+		cur := start.Truncate(time.Hour)
+		for !cur.After(end) {
+			key := trendBucketKey(cur, bucket)
+			c := got[key]
+			total += c
+			out.Points = append(out.Points, domain.TrendPoint{
+				Date: key, Label: cur.Format("15:04"), Count: c,
+			})
+			cur = cur.Add(time.Hour)
+			if len(out.Points) > 48 {
+				break
+			}
+		}
+	} else {
+		cur := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
+		today := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, loc)
+		for !cur.After(today) {
+			key := trendBucketKey(cur, bucket)
+			c := got[key]
+			total += c
+			out.Points = append(out.Points, domain.TrendPoint{
+				Date: key, Label: cur.Format("01-02"), Count: c,
+			})
+			cur = cur.AddDate(0, 0, 1)
+			if len(out.Points) > 60 {
+				break
+			}
+		}
+	}
+	out.Total = total
+	return out, nil
+}
+
+func trendBucketKey(ts time.Time, bucket string) string {
+	if bucket == "hour" {
+		return ts.Format("2006-01-02 15:00")
+	}
+	return ts.Format("2006-01-02")
 }
 
 // listRecentRedeems 仅最近 N 条，跳过 COUNT 全表。

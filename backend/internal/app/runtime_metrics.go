@@ -107,8 +107,65 @@ func (w *minuteWindow) Count1m() int {
 	return len(w.ts)
 }
 
-// RecordHTTP 由中间件调用
-func RecordHTTP(status int, d time.Duration) {
+// RecentHTTPError 进程内最近错误采样（仪表盘穿透，对齐 sub2api 运维错误明细思路）
+type RecentHTTPError struct {
+	Method    string  `json:"method"`
+	Path      string  `json:"path"`
+	Status    int     `json:"status"`
+	LatencyMs float64 `json:"latencyMs"`
+	At        string  `json:"at"`
+}
+
+const recentHTTPErrorCap = 40
+
+type recentHTTPErrorRing struct {
+	mu   sync.Mutex
+	buf  []RecentHTTPError
+	pos  int
+	full bool
+}
+
+var recentHTTPErrors = &recentHTTPErrorRing{
+	buf: make([]RecentHTTPError, recentHTTPErrorCap),
+}
+
+func (r *recentHTTPErrorRing) Push(e RecentHTTPError) {
+	r.mu.Lock()
+	r.buf[r.pos] = e
+	r.pos = (r.pos + 1) % len(r.buf)
+	if r.pos == 0 {
+		r.full = true
+	}
+	r.mu.Unlock()
+}
+
+func (r *recentHTTPErrorRing) Snapshot() []RecentHTTPError {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := r.pos
+	if r.full {
+		n = len(r.buf)
+	}
+	if n == 0 {
+		return []RecentHTTPError{}
+	}
+	out := make([]RecentHTTPError, 0, n)
+	// 最新在前
+	if !r.full {
+		for i := r.pos - 1; i >= 0; i-- {
+			out = append(out, r.buf[i])
+		}
+		return out
+	}
+	for i := 0; i < len(r.buf); i++ {
+		idx := (r.pos - 1 - i + len(r.buf)) % len(r.buf)
+		out = append(out, r.buf[idx])
+	}
+	return out
+}
+
+// RecordHTTP 由中间件调用（method/path 用于错误采样）
+func RecordHTTP(status int, d time.Duration, method, path string) {
 	httpTotal.Add(1)
 	reqWindow.Hit()
 	latSamples.Add(d)
@@ -116,6 +173,22 @@ func RecordHTTP(status int, d time.Duration) {
 		httpErrors5xx.Add(1)
 	} else if status >= 400 {
 		httpErrors4xx.Add(1)
+	}
+	if status >= 400 {
+		p := path
+		if len(p) > 160 {
+			p = p[:160]
+		}
+		if method == "" {
+			method = "?"
+		}
+		recentHTTPErrors.Push(RecentHTTPError{
+			Method:    method,
+			Path:      p,
+			Status:    status,
+			LatencyMs: float64(d.Microseconds()) / 1000.0,
+			At:        time.Now().UTC().Format(time.RFC3339),
+		})
 	}
 }
 
@@ -125,29 +198,31 @@ func TrackInFlight(delta int64) {
 
 // RuntimeMetrics 仪表盘实时监控
 type RuntimeMetrics struct {
-	InFlight       int64   `json:"inFlight"`
-	RequestsTotal  int64   `json:"requestsTotal"`
-	Requests1m     int     `json:"requests1m"`
-	Errors4xx      int64   `json:"errors4xx"`
-	Errors5xx      int64   `json:"errors5xx"`
-	ErrorRatePct   float64 `json:"errorRatePct"`
-	LatencyP50Ms   float64 `json:"latencyP50Ms"`
-	LatencyP95Ms   float64 `json:"latencyP95Ms"`
-	LatencyP99Ms   float64 `json:"latencyP99Ms"`
-	RedeemsTotal   int64   `json:"redeemsTotal"`
-	RedeemErrors   int64   `json:"redeemErrors"`
-	LoginsTotal    int64   `json:"loginsTotal"`
-	DBPoolAcquired int32   `json:"dbPoolAcquired"`
-	DBPoolIdle     int32   `json:"dbPoolIdle"`
-	DBPoolTotal    int32   `json:"dbPoolTotal"`
-	DBPoolMax      int32   `json:"dbPoolMax"`
-	RedisOK        bool    `json:"redisOk"`
-	UptimeSec      int64   `json:"uptimeSec"`
-	GoRoutines     int     `json:"goRoutines"`
-	MemAllocMB     float64 `json:"memAllocMB"`
-	Version        string  `json:"version"`
-	UpdateMode     string  `json:"updateMode"`
-	CheckedAt      string  `json:"checkedAt"`
+	InFlight       int64             `json:"inFlight"`
+	RequestsTotal  int64             `json:"requestsTotal"`
+	Requests1m     int               `json:"requests1m"`
+	Errors4xx      int64             `json:"errors4xx"`
+	Errors5xx      int64             `json:"errors5xx"`
+	ErrorRatePct   float64           `json:"errorRatePct"`
+	LatencyP50Ms   float64           `json:"latencyP50Ms"`
+	LatencyP95Ms   float64           `json:"latencyP95Ms"`
+	LatencyP99Ms   float64           `json:"latencyP99Ms"`
+	RedeemsTotal   int64             `json:"redeemsTotal"`
+	RedeemErrors   int64             `json:"redeemErrors"`
+	LoginsTotal    int64             `json:"loginsTotal"`
+	DBPoolAcquired int32             `json:"dbPoolAcquired"`
+	DBPoolIdle     int32             `json:"dbPoolIdle"`
+	DBPoolTotal    int32             `json:"dbPoolTotal"`
+	DBPoolMax      int32             `json:"dbPoolMax"`
+	RedisOK        bool              `json:"redisOk"`
+	UptimeSec      int64             `json:"uptimeSec"`
+	GoRoutines     int               `json:"goRoutines"`
+	MemAllocMB     float64           `json:"memAllocMB"`
+	Version        string            `json:"version"`
+	UpdateMode     string            `json:"updateMode"`
+	CheckedAt      string            `json:"checkedAt"`
+	// RecentErrors 进程内最近 4xx/5xx 采样（最多 40 条，重启清空）
+	RecentErrors []RecentHTTPError `json:"recentErrors"`
 }
 
 func (a *App) RuntimeMetrics(ctx context.Context) RuntimeMetrics {
@@ -195,5 +270,6 @@ func (a *App) RuntimeMetrics(ctx context.Context) RuntimeMetrics {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	m.MemAllocMB = float64(ms.Alloc) / (1024 * 1024)
+	m.RecentErrors = recentHTTPErrors.Snapshot()
 	return m
 }

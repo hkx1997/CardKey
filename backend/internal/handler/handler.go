@@ -335,10 +335,26 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, err)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	response.OK(w, s)
 }
 
+func (h *Handler) DashboardTrend(w http.ResponseWriter, r *http.Request) {
+	rangeKey := r.URL.Query().Get("range")
+	if rangeKey == "" {
+		rangeKey = r.URL.Query().Get("r")
+	}
+	tr, err := h.App.DashboardTrend(r.Context(), rangeKey)
+	if err != nil {
+		response.Fail(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	response.OK(w, tr)
+}
+
 func (h *Handler) RuntimeMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	response.OK(w, h.App.RuntimeMetrics(r.Context()))
 }
 

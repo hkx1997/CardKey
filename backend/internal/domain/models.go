@@ -278,6 +278,23 @@ type PageResult[T any] struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+// TrendPoint 兑换趋势点（日或小时）
+type TrendPoint struct {
+	// Date 兼容旧前端字段：日=YYYY-MM-DD，小时=YYYY-MM-DD HH:00
+	Date string `json:"date"`
+	// Label 图表短标签（如 07-29 或 14:00）
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// DashboardTrend 可切换范围的兑换趋势
+type DashboardTrend struct {
+	Range  string       `json:"range"`  // today|24h|7d|14d|30d
+	Bucket string       `json:"bucket"` // hour|day
+	Total  int          `json:"total"`
+	Points []TrendPoint `json:"points"`
+}
+
 type DashboardStats struct {
 	TotalCards         int `json:"totalCards"`
 	UnusedCards        int `json:"unusedCards"`
@@ -292,10 +309,8 @@ type DashboardStats struct {
 	TotalCategories    int `json:"totalCategories"`
 	EnabledCategories  int `json:"enabledCategories"`
 	ActiveApiKeys      int `json:"activeApiKeys"`
-	Trend              []struct {
-		Date  string `json:"date"`
-		Count int    `json:"count"`
-	} `json:"trend"`
+	// Trend 默认近 14 日（日粒度）；更丰富范围见 /dashboard/trend
+	Trend      []TrendPoint `json:"trend"`
 	ByCategory []struct {
 		Slug       string       `json:"slug"`
 		Name       string       `json:"name"`

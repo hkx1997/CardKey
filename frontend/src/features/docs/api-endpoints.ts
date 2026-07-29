@@ -130,14 +130,21 @@ export const ADMIN_API_ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "{prefix}/admin/dashboard/stats",
     auth: "JWT / admin:api",
-    desc: "仪表盘统计",
+    desc: "仪表盘统计（含默认 14 日趋势）",
     query: "category?",
+  },
+  {
+    method: "GET",
+    path: "{prefix}/admin/dashboard/trend",
+    auth: "JWT / admin:api",
+    desc: "兑换趋势 range=today|24h|7d|14d|30d（补齐空桶）",
+    query: "range?",
   },
   {
     method: "GET",
     path: "{prefix}/admin/dashboard/runtime",
     auth: "JWT / admin:api",
-    desc: "运行时流量/并发/延迟/连接池（短轮询）",
+    desc: "运行时流量/并发/延迟/连接池/最近错误采样",
   },
   {
     method: "GET",

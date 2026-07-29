@@ -8,6 +8,7 @@ import type {
   CardType,
   Category,
   DashboardStats,
+  DashboardTrend,
   PageResult,
   PublicConfig,
   PublicStock,
@@ -203,6 +204,12 @@ export const httpClient = {
     );
   },
 
+  dashboardTrend: (range: string = "14d") => {
+    const sp = new URLSearchParams();
+    sp.set("range", range);
+    return request<DashboardTrend>(`/api/v1/admin/dashboard/trend?${sp}`);
+  },
+
   runtimeMetrics: () =>
     request<{
       inFlight: number;
@@ -228,6 +235,13 @@ export const httpClient = {
       version: string;
       updateMode: string;
       checkedAt: string;
+      recentErrors?: {
+        method: string;
+        path: string;
+        status: number;
+        latencyMs: number;
+        at: string;
+      }[];
     }>("/api/v1/admin/dashboard/runtime"),
 
   listCategories: (opts?: { light?: boolean }) => {

@@ -8,6 +8,7 @@ import {
   Gauge,
   KeyRound,
   Percent,
+  RefreshCw,
   Server,
   Ticket,
   Timer,
@@ -35,22 +36,45 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { CardStatus, DashboardStats, RedeemRecord } from "@/entities/types";
+import type {
+  CardStatus,
+  DashboardStats,
+  DashboardTrendRange,
+  RedeemRecord,
+} from "@/entities/types";
 import { CountTo } from "@/shared/components/count-to";
 import {
   DataTable,
   type DataTableColumn,
 } from "@/shared/components/data-table";
+import {
+  AreaTrendChart,
+  DonutStatusChart,
+  HBarCategoryChart,
+  RangePills,
+} from "@/shared/components/mini-charts";
 import { PageContainer } from "@/shared/components/page-container";
 import { PageHeader } from "@/shared/components/page-header";
 import {
   useDashboardQuery,
+  useDashboardRefresh,
+  useDashboardTrendQuery,
   useRuntimeMetricsQuery,
 } from "@/shared/hooks/use-dashboard";
-import { CategoryIconView } from "@/shared/lib/category-icons";
 import { cn } from "@/shared/lib/cn";
 import { formatDateTime, formatRelative } from "@/shared/lib/format";
-import { CardStatusBadge } from "@/shared/lib/status";
+
+const TREND_RANGES: { id: DashboardTrendRange; label: string }[] = [
+  { id: "today", label: "今天" },
+  { id: "24h", label: "近 24 小时" },
+  { id: "7d", label: "近 7 天" },
+  { id: "14d", label: "近 14 天" },
+  { id: "30d", label: "近 30 天" },
+];
+
+type RuntimeMetrics = NonNullable<
+  ReturnType<typeof useRuntimeMetricsQuery>["data"]
+>;
 
 type DrillKind =
   | { type: "totalCards" }
@@ -63,24 +87,57 @@ type DrillKind =
   | { type: "apiKeys" }
   | { type: "stock" }
   | { type: "trendDay"; date: string; count: number }
-  | { type: "recent" };
+  | { type: "recent" }
+  // 运行时 / 运维（对齐 sub2api：错误、请求、延迟、依赖均可点开）
+  | { type: "rtInFlight" }
+  | { type: "rtRequests" }
+  | { type: "rtLatency" }
+  | { type: "rtErrors" }
+  | { type: "rtDB" }
+  | { type: "rtGo" }
+  | { type: "rtRedeems" }
+  | { type: "rtLogins" }
+  | { type: "rtRedis" };
 
 export function DashboardPage() {
   const q = useDashboardQuery();
   const [rtReady, setRtReady] = useState(false);
   useEffect(() => {
-    const t = window.setTimeout(() => setRtReady(true), 1200);
+    const t = window.setTimeout(() => setRtReady(true), 800);
     return () => window.clearTimeout(t);
   }, []);
   const rtQ = useRuntimeMetricsQuery(rtReady);
+
+  const [trendRange, setTrendRange] = useState<DashboardTrendRange>("14d");
+  const trendQ = useDashboardTrendQuery(trendRange);
+  const refreshAll = useDashboardRefresh(trendRange);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [drill, setDrill] = useState<DrillKind | null>(null);
 
   const stats = q.data;
   const rt = rtQ.data;
-  const maxTrend = Math.max(1, ...(stats?.trend.map((t) => t.count) ?? [1]));
+  const trendPoints = useMemo(() => {
+    const pts = trendQ.data?.points?.length
+      ? trendQ.data.points
+      : (stats?.trend ?? []);
+    return pts.map((p) => ({
+      date: p.date,
+      label: p.label || p.date.slice(-5),
+      count: p.count,
+    }));
+  }, [trendQ.data, stats?.trend]);
   const delta =
     stats != null ? stats.todayRedeems - stats.yesterdayRedeems : 0;
+
+  async function onRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshAll();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const recentCols = useMemo<DataTableColumn<RedeemRecord>[]>(
     () => [
@@ -114,7 +171,25 @@ export function DashboardPage() {
     <PageContainer className="space-y-8 fade-in">
       <PageHeader
         title="仪表盘"
-        description="库存、兑换与类别健康度一览 · 点击卡片可查看明细"
+        description="库存、兑换、趋势与运行时一览"
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={refreshing || q.isFetching}
+            onClick={() => void onRefresh()}
+          >
+            <RefreshCw
+              className={cn(
+                "size-3.5",
+                (refreshing || q.isFetching || trendQ.isFetching) &&
+                  "animate-spin",
+              )}
+            />
+            刷新
+          </Button>
+        }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -194,6 +269,7 @@ export function DashboardPage() {
               loading={rtQ.isLoading && !rt}
               value={rt?.inFlight}
               hint="处理中的 HTTP 请求"
+              onClick={() => setDrill({ type: "rtInFlight" })}
             />
             <MetricTile
               label="近 1 分钟请求"
@@ -201,6 +277,7 @@ export function DashboardPage() {
               loading={rtQ.isLoading && !rt}
               value={rt?.requests1m}
               hint={`累计 ${rt?.requestsTotal ?? 0}`}
+              onClick={() => setDrill({ type: "rtRequests" })}
             />
             <MetricTile
               label="P95 延迟"
@@ -210,6 +287,7 @@ export function DashboardPage() {
               decimals={1}
               suffix="ms"
               hint={`P50 ${rt?.latencyP50Ms?.toFixed(1) ?? "—"} · P99 ${rt?.latencyP99Ms?.toFixed(1) ?? "—"}`}
+              onClick={() => setDrill({ type: "rtLatency" })}
             />
             <MetricTile
               label="错误率"
@@ -219,6 +297,7 @@ export function DashboardPage() {
               decimals={2}
               suffix="%"
               hint={`4xx ${rt?.errors4xx ?? 0} · 5xx ${rt?.errors5xx ?? 0}`}
+              onClick={() => setDrill({ type: "rtErrors" })}
             />
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -232,6 +311,7 @@ export function DashboardPage() {
                   ? `使用 ${rt.dbPoolAcquired}/${rt.dbPoolMax} · 空闲 ${rt.dbPoolIdle}`
                   : "—"
               }
+              onClick={() => setDrill({ type: "rtDB" })}
             />
             <ServicePill
               icon={Cpu}
@@ -243,6 +323,7 @@ export function DashboardPage() {
                   ? `协程 ${rt.goRoutines} · 内存 ${rt.memAllocMB.toFixed(1)} MB`
                   : "—"
               }
+              onClick={() => setDrill({ type: "rtGo" })}
             />
             <ServicePill
               icon={Ticket}
@@ -254,6 +335,7 @@ export function DashboardPage() {
                   ? `成功 ${rt.redeemsTotal} · 失败 ${rt.redeemErrors}`
                   : "—"
               }
+              onClick={() => setDrill({ type: "rtRedeems" })}
             />
             <ServicePill
               icon={KeyRound}
@@ -261,8 +343,29 @@ export function DashboardPage() {
               loading={rtQ.isLoading && !rt}
               ok
               detail={rt ? `累计 ${rt.loginsTotal} 次` : "—"}
+              onClick={() => setDrill({ type: "rtLogins" })}
             />
           </div>
+          {rt ? (
+            <button
+              type="button"
+              className="mt-3 flex w-full items-center justify-between rounded-lg border border-border/60 bg-secondary/20 px-3 py-2 text-left text-xs transition-colors hover:bg-secondary/40"
+              onClick={() => setDrill({ type: "rtRedis" })}
+            >
+              <span className="text-muted-foreground">
+                Redis · 版本 {rt.version} · 运行 {formatUptime(rt.uptimeSec)}
+              </span>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-[10px]",
+                  rt.redisOk ? "text-emerald-600" : "text-destructive",
+                )}
+              >
+                {rt.redisOk ? "正常 · 点开明细" : "异常 · 点开明细"}
+              </Badge>
+            </button>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -295,45 +398,38 @@ export function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">近 14 日兑换趋势</CardTitle>
-            <CardDescription className="text-xs">
-              按日统计 · 点击柱状可看当日明细
-            </CardDescription>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <CardTitle className="text-sm">兑换趋势</CardTitle>
+                <CardDescription className="text-xs">
+                  合计 {trendQ.data?.total ?? trendPoints.reduce((s, p) => s + p.count, 0)} 次
+                  {trendQ.data?.bucket === "hour" ? " · 按小时" : " · 按日"}
+                </CardDescription>
+              </div>
+              <RangePills
+                value={trendRange}
+                options={TREND_RANGES}
+                onChange={setTrendRange}
+              />
+            </div>
           </CardHeader>
           <CardContent>
-            {q.isLoading ? (
-              <Skeleton className="h-44 w-full" />
+            {trendQ.isLoading && !trendPoints.length ? (
+              <Skeleton className="h-48 w-full" />
             ) : (
-              <div className="flex h-44 items-end gap-1">
-                {stats?.trend.map((t) => (
-                  <button
-                    key={t.date}
-                    type="button"
-                    className="group flex flex-1 flex-col items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    title={`${t.date}: ${t.count}（点击明细）`}
-                    onClick={() =>
-                      setDrill({
-                        type: "trendDay",
-                        date: t.date,
-                        count: t.count,
-                      })
-                    }
-                  >
-                    <span className="text-[9px] tabular-nums text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-                      {t.count}
-                    </span>
-                    <div
-                      className="w-full max-w-6 rounded-t-sm bg-primary/75 transition-all duration-300 group-hover:bg-primary group-hover:shadow-sm"
-                      style={{
-                        height: `${Math.max(6, (t.count / maxTrend) * 100)}%`,
-                      }}
-                    />
-                    <span className="text-[9px] text-muted-foreground">
-                      {t.date.slice(5)}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <AreaTrendChart
+                points={trendPoints}
+                height={200}
+                onSelect={(i) => {
+                  const p = trendPoints[i];
+                  if (!p) return;
+                  setDrill({
+                    type: "trendDay",
+                    date: p.date,
+                    count: p.count,
+                  });
+                }}
+              />
             )}
           </CardContent>
         </Card>
@@ -342,47 +438,44 @@ export function DashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">状态分布</CardTitle>
             <CardDescription className="text-xs">
-              点击状态可穿透到卡密列表
+              环形占比 · 点选穿透
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent>
             {q.isLoading ? (
-              <Skeleton className="h-36 w-full" />
+              <Skeleton className="h-40 w-full" />
             ) : (
-              stats?.statusBreakdown.map((row) => {
-                const pct = stats.totalCards
-                  ? Math.round((row.count / stats.totalCards) * 100)
-                  : 0;
-                return (
-                  <button
-                    key={row.status}
-                    type="button"
-                    className="block w-full space-y-1 rounded-md text-left outline-none transition-colors hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() =>
-                      setDrill({ type: "status", status: row.status })
-                    }
-                  >
-                    <div className="flex items-center justify-between px-1 text-xs">
-                      <CardStatusBadge status={row.status} />
-                      <span className="tabular-nums text-muted-foreground">
-                        {row.count} · {pct}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
-                      <div
-                        className={cn(
-                          "h-full rounded-full transition-all duration-500",
-                          row.status === "unused" && "bg-emerald-500/80",
-                          row.status === "used" && "bg-foreground/40",
-                          row.status === "disabled" && "bg-destructive/70",
-                          row.status === "expired" && "bg-amber-500/70",
-                        )}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </button>
-                );
-              })
+              <DonutStatusChart
+                items={[
+                  {
+                    key: "unused",
+                    label: "未使用",
+                    count: stats?.unusedCards ?? 0,
+                    color: "rgb(16 185 129 / 0.85)",
+                  },
+                  {
+                    key: "used",
+                    label: "已兑换",
+                    count: stats?.usedCards ?? 0,
+                    color: "rgb(100 116 139 / 0.75)",
+                  },
+                  {
+                    key: "disabled",
+                    label: "已禁用",
+                    count: stats?.disabledCards ?? 0,
+                    color: "rgb(239 68 68 / 0.75)",
+                  },
+                  {
+                    key: "expired",
+                    label: "已过期",
+                    count: stats?.expiredCards ?? 0,
+                    color: "rgb(245 158 11 / 0.8)",
+                  },
+                ]}
+                onSelect={(key) =>
+                  setDrill({ type: "status", status: key as CardStatus })
+                }
+              />
             )}
           </CardContent>
         </Card>
@@ -391,49 +484,24 @@ export function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">类别库存</CardTitle>
+            <CardTitle className="text-sm">类别库存对比</CardTitle>
             <CardDescription className="text-xs">
-              点击类别查看明细并可跳转卡密
+              已兑 / 未用堆叠 · 点选穿透
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2.5">
+          <CardContent>
             {q.isLoading ? (
               <Skeleton className="h-40 w-full" />
             ) : (
-              stats?.byCategory.map((c) => (
-                <button
-                  key={c.slug}
-                  type="button"
-                  className="flex w-full items-center gap-3 rounded-lg bg-secondary/40 px-3 py-2.5 text-left transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => setDrill({ type: "category", slug: c.slug })}
-                >
-                  <div className="flex size-8 items-center justify-center rounded-md bg-background">
-                    <CategoryIconView icon={c.icon} size={16} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs font-medium">
-                        {c.name}
-                      </span>
-                      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                        {c.unused}/{c.total}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-background">
-                      <div
-                        className="h-full rounded-full bg-primary/70 transition-all duration-500"
-                        style={{ width: `${c.redeemRate}%` }}
-                      />
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="shrink-0 tabular-nums">
-                    {c.redeemRate}%
-                  </Badge>
-                </button>
-              ))
-            )}
-            {!q.isLoading && (stats?.byCategory.length ?? 0) === 0 && (
-              <p className="text-xs text-muted-foreground">暂无类别数据</p>
+              <HBarCategoryChart
+                items={(stats?.byCategory ?? []).map((c) => ({
+                  key: c.slug,
+                  label: c.name,
+                  unused: c.unused,
+                  total: c.total,
+                }))}
+                onSelect={(slug) => setDrill({ type: "category", slug })}
+              />
             )}
           </CardContent>
         </Card>
@@ -491,6 +559,7 @@ export function DashboardPage() {
       <DashboardDrillDialog
         drill={drill}
         stats={stats}
+        rt={rt}
         delta={delta}
         onClose={() => setDrill(null)}
       />
@@ -501,16 +570,18 @@ export function DashboardPage() {
 function DashboardDrillDialog({
   drill,
   stats,
+  rt,
   delta,
   onClose,
 }: {
   drill: DrillKind | null;
   stats?: DashboardStats;
+  rt?: RuntimeMetrics;
   delta: number;
   onClose: () => void;
 }) {
   const open = !!drill;
-  const meta = drill ? drillMeta(drill, stats, delta) : null;
+  const meta = drill ? drillMeta(drill, stats, rt, delta) : null;
 
   return (
     <Dialog
@@ -599,6 +670,7 @@ function DashboardDrillDialog({
 function drillMeta(
   drill: DrillKind,
   stats: DashboardStats | undefined,
+  rt: RuntimeMetrics | undefined,
   delta: number,
 ): {
   title: string;
@@ -613,6 +685,10 @@ function drillMeta(
   links?: { to: string; label: string }[];
   empty?: string;
 } {
+  // 运行时类不依赖 stats
+  const rtMeta = runtimeDrillMeta(drill, rt);
+  if (rtMeta) return rtMeta;
+
   if (!stats) {
     return { title: "加载中", empty: "暂无数据" };
   }
@@ -819,6 +895,165 @@ function drillMeta(
   }
 }
 
+function runtimeDrillMeta(
+  drill: DrillKind,
+  rt: RuntimeMetrics | undefined,
+): ReturnType<typeof drillMeta> | null {
+  const isRt =
+    drill.type === "rtInFlight" ||
+    drill.type === "rtRequests" ||
+    drill.type === "rtLatency" ||
+    drill.type === "rtErrors" ||
+    drill.type === "rtDB" ||
+    drill.type === "rtGo" ||
+    drill.type === "rtRedeems" ||
+    drill.type === "rtLogins" ||
+    drill.type === "rtRedis";
+  if (!isRt) return null;
+  if (!rt) {
+    return { title: "运行时指标", empty: "运行时数据加载中，请稍候再点" };
+  }
+
+  const okTotal = Math.max(0, rt.requestsTotal - rt.errors4xx - rt.errors5xx);
+  const errTotal = rt.errors4xx + rt.errors5xx;
+  const redeemAll = rt.redeemsTotal + rt.redeemErrors;
+  const redeemOkRate =
+    redeemAll > 0
+      ? ((rt.redeemsTotal / redeemAll) * 100).toFixed(2)
+      : "—";
+  const poolUtil =
+    rt.dbPoolMax > 0
+      ? ((rt.dbPoolAcquired / rt.dbPoolMax) * 100).toFixed(1)
+      : "—";
+  const qps =
+    rt.uptimeSec > 0 ? (rt.requestsTotal / rt.uptimeSec).toFixed(2) : "—";
+
+  switch (drill.type) {
+    case "rtInFlight":
+      return {
+        title: "当前并发",
+        description: "此刻正在处理的 HTTP 请求数（不含健康检查）",
+        rows: [
+          { label: "当前并发", value: String(rt.inFlight) },
+          { label: "近 1 分钟请求", value: String(rt.requests1m) },
+          { label: "进程累计请求", value: String(rt.requestsTotal) },
+          { label: "运行时长", value: formatUptime(rt.uptimeSec) },
+        ],
+      };
+    case "rtRequests":
+      return {
+        title: "请求量明细",
+        description: "进程内计数 · 重启后清零",
+        rows: [
+          { label: "近 1 分钟", value: String(rt.requests1m) },
+          { label: "累计请求", value: String(rt.requestsTotal) },
+          { label: "成功约计", value: String(okTotal) },
+          { label: "4xx + 5xx", value: String(errTotal) },
+          { label: "平均 QPS（累计/运行秒）", value: String(qps) },
+          { label: "采样时间", value: formatDateTime(rt.checkedAt) },
+        ],
+      };
+    case "rtLatency":
+      return {
+        title: "延迟分位",
+        description: "最近最多 512 次请求的滑动采样",
+        rows: [
+          { label: "P50", value: `${rt.latencyP50Ms.toFixed(2)} ms` },
+          { label: "P95", value: `${rt.latencyP95Ms.toFixed(2)} ms` },
+          { label: "P99", value: `${rt.latencyP99Ms.toFixed(2)} ms` },
+          { label: "近 1 分钟请求", value: String(rt.requests1m) },
+          { label: "累计请求", value: String(rt.requestsTotal) },
+        ],
+      };
+    case "rtErrors": {
+      const errs = rt.recentErrors ?? [];
+      return {
+        title: "请求错误明细",
+        description:
+          "进程内最近 4xx/5xx 采样（最多 40 条，重启清空）· 对齐 sub2api 运维错误穿透",
+        rows: [
+          { label: "错误率", value: `${rt.errorRatePct.toFixed(2)}%` },
+          { label: "4xx 累计", value: String(rt.errors4xx) },
+          { label: "5xx 累计", value: String(rt.errors5xx) },
+          { label: "错误合计", value: String(errTotal) },
+          { label: "请求合计", value: String(rt.requestsTotal) },
+          { label: "成功约计", value: String(okTotal) },
+        ],
+        list: errs.map((e, i) => ({
+          id: `${e.at}-${e.path}-${i}`,
+          title: `${e.status} ${e.method}`,
+          sub: e.path,
+          right: `${e.latencyMs.toFixed(1)}ms · ${formatRelative(e.at)}`,
+        })),
+        empty: errs.length ? undefined : "暂无错误采样（或进程刚启动）",
+        links: [{ to: "/admin/audit", label: "打开审计日志" }],
+      };
+    }
+    case "rtDB":
+      return {
+        title: "PostgreSQL 连接池",
+        description: "pgx 连接池实时状态",
+        rows: [
+          { label: "已占用", value: String(rt.dbPoolAcquired) },
+          { label: "空闲", value: String(rt.dbPoolIdle) },
+          { label: "当前连接", value: String(rt.dbPoolTotal) },
+          { label: "上限 Max", value: String(rt.dbPoolMax) },
+          { label: "占用率", value: `${poolUtil}%` },
+        ],
+      };
+    case "rtGo":
+      return {
+        title: "Go 运行时",
+        description: `版本 ${rt.version} · 模式 ${rt.updateMode}`,
+        rows: [
+          { label: "协程数", value: String(rt.goRoutines) },
+          { label: "堆分配", value: `${rt.memAllocMB.toFixed(2)} MB` },
+          { label: "运行时长", value: formatUptime(rt.uptimeSec) },
+          { label: "采样时间", value: formatDateTime(rt.checkedAt) },
+        ],
+        links: [{ to: "/admin/settings", label: "系统设置 / 版本" }],
+      };
+    case "rtRedeems":
+      return {
+        title: "兑换吞吐",
+        description: "进程内兑换成功 / 失败计数",
+        rows: [
+          { label: "成功", value: String(rt.redeemsTotal) },
+          { label: "失败", value: String(rt.redeemErrors) },
+          { label: "合计", value: String(redeemAll) },
+          { label: "成功率", value: redeemOkRate === "—" ? "—" : `${redeemOkRate}%` },
+        ],
+        links: [{ to: "/admin/redeems", label: "打开兑换记录" }],
+      };
+    case "rtLogins":
+      return {
+        title: "管理登录",
+        description: "进程内累计登录次数（重启清零）",
+        rows: [
+          { label: "累计登录", value: String(rt.loginsTotal) },
+          { label: "运行时长", value: formatUptime(rt.uptimeSec) },
+        ],
+        links: [{ to: "/admin/audit", label: "打开审计日志" }],
+      };
+    case "rtRedis":
+      return {
+        title: "Redis / 进程概况",
+        description: "依赖健康与版本信息",
+        rows: [
+          { label: "Redis", value: rt.redisOk ? "正常" : "异常 / 未连接" },
+          { label: "版本", value: rt.version },
+          { label: "更新模式", value: rt.updateMode },
+          { label: "运行时长", value: formatUptime(rt.uptimeSec) },
+          { label: "协程", value: String(rt.goRoutines) },
+          { label: "内存", value: `${rt.memAllocMB.toFixed(2)} MB` },
+          { label: "采样时间", value: formatDateTime(rt.checkedAt) },
+        ],
+      };
+    default:
+      return null;
+  }
+}
+
 function StatCard({
   title,
   value,
@@ -884,9 +1119,6 @@ function StatCard({
               {hint}
             </p>
           ) : null}
-          {interactive ? (
-            <p className="mt-1 text-[10px] text-primary/80">点击查看明细</p>
-          ) : null}
         </div>
         <div className="rounded-lg bg-secondary/70 p-2 text-muted-foreground">
           <Icon className="size-4" strokeWidth={1.8} />
@@ -911,6 +1143,7 @@ function MetricTile({
   icon: Icon,
   loading,
   hint,
+  onClick,
 }: {
   label: string;
   value?: number;
@@ -919,9 +1152,31 @@ function MetricTile({
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   loading?: boolean;
   hint?: string;
+  onClick?: () => void;
 }) {
+  const interactive = !!onClick && !loading;
   return (
-    <div className="rounded-xl border border-border/60 bg-secondary/25 px-3 py-3 transition-colors hover:bg-secondary/40">
+    <div
+      className={cn(
+        "rounded-xl border border-border/60 bg-secondary/25 px-3 py-3 transition-colors",
+        interactive
+          ? "cursor-pointer hover:border-primary/30 hover:bg-secondary/45"
+          : "hover:bg-secondary/40",
+      )}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? onClick : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+    >
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">{label}</p>
         <Icon className="size-3.5 text-muted-foreground" strokeWidth={1.8} />
@@ -951,15 +1206,36 @@ function ServicePill({
   detail,
   ok,
   loading,
+  onClick,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   name: string;
   detail: string;
   ok?: boolean;
   loading?: boolean;
+  onClick?: () => void;
 }) {
+  const interactive = !!onClick && !loading;
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-border/50 bg-background/60 px-3 py-2.5">
+    <div
+      className={cn(
+        "flex items-start gap-2.5 rounded-lg border border-border/50 bg-background/60 px-3 py-2.5 transition-colors",
+        interactive && "cursor-pointer hover:border-primary/30 hover:bg-secondary/30",
+      )}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? onClick : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+    >
       <div
         className={cn(
           "mt-0.5 rounded-md p-1.5",

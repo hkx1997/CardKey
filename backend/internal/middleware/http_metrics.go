@@ -20,7 +20,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		rw := &statusWriter{ResponseWriter: w, status: 200}
 		defer func() {
 			app.TrackInFlight(-1)
-			app.RecordHTTP(rw.status, time.Since(start))
+			app.RecordHTTP(rw.status, time.Since(start), r.Method, path)
 		}()
 		next.ServeHTTP(rw, r)
 	})
