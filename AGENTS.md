@@ -152,7 +152,7 @@ features/*-page  →  shared/hooks  →  shared/api (mock | http)
 
 - 卡密内容：AES-GCM，密钥来自 `CONTENT_KEY`（64 hex）；类型 text/txt/json/account 与 image/zip/pdf/file（≤5MB，二进制以 base64 下发并可下载）。
 - API Key：仅存 hash；创建/轮换时返回一次明文。
-- 演示数据：**仅**安装向导显式勾选时写入；启动 Bootstrap **不会**自动灌 VIP/CDK。
+- 演示数据：**不**在 Bootstrap / 安装向导中写入；类别与卡密由管理员在后台创建。
 
 ### Docker 卷（数据安全）
 
@@ -495,7 +495,7 @@ docker compose exec -T postgres \
 ## 10. 给 AI Agent 的硬约束
 
 1. **数据安全优先**：不写/不建议会删卷的命令；升级只用 `upgrade.sh` 或 `up -d --no-deps cardkey`。  
-2. **演示数据**：禁止在 `Bootstrap` 里自动 `seedDemo`；仅 setup 显式开关。  
+2. **演示数据**：禁止在 `Bootstrap` / 安装向导里自动种 VIP/CDK 等示例数据。  
 3. **鉴权**：管理 API 变更须同时考虑 Cookie JWT 与 `admin:api` Bearer。  
 4. **发版一体包（强制）**：用户可升级的改动必须走 `scripts/release.sh`，保证 **后端 + 前端 dist + 迁移 SQL** 同进 Linux 二进制；禁止只改 Go 发版、只改前端不发版、只加 SQL 不发版。  
 5. **Release 体积（强制）**：`cardkey-linux-amd64/arm64` 本地与 **GitHub 远程**均须 **≥ 13MB**（完整包约 14MB）。**11～12MB = 空壳/截断，禁止当正式包发布或让用户安装。** 上传用 `scripts/_upload_assets.py`；发版后用 API/`ls -lh` 复核远程 size。  

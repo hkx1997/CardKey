@@ -30,8 +30,6 @@ type SetupInput struct {
 	ConfirmPassword    string `json:"confirmPassword"`
 	SiteName           string `json:"siteName"`
 	PublicRedeemAPIKey string `json:"publicRedeemApiKey"`
-	// nil 时默认 true（安装演示类别）
-	SeedDemoCategories *bool `json:"seedDemoCategories"`
 }
 
 // NeedsSetup 是否尚未创建任何管理员（首次安装向导）。
@@ -182,18 +180,7 @@ func (a *App) CompleteSetup(ctx context.Context, in SetupInput, ip string) (doma
 	a.settingsAt = time.Now()
 	a.settingsMu.Unlock()
 
-	// 演示类别：仅当安装向导显式勾选（seedDemoCategories=true）时写入；默认不种，避免生产误装示例
-	seed := false
-	if in.SeedDemoCategories != nil {
-		seed = *in.SeedDemoCategories
-	}
-	if seed {
-		var cn int
-		_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM categories`).Scan(&cn)
-		if cn == 0 {
-			_ = a.seedDemo(ctx)
-		}
-	}
+	// 不写入任何演示类别/卡密；管理员在后台自行创建。
 
 	a.Audit(ctx, "admin", user, "setup_complete", "system", "完成首次安装", ip)
 	token, err := a.issueJWT(id, user)

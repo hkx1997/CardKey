@@ -12,14 +12,7 @@ pnpm dev
 - 兑换端：http://127.0.0.1:5173/ （先选类别再兑）
 - 管理端：http://127.0.0.1:5173/admin · Mock `admin` / `admin123`
 
-演示码：
-
-| 类别 | 编码 |
-|---|---|
-| 会员卡 VIP | `VIP-DEMO-7K3M-9P2X-W4QH` |
-| 激活码 CDK | `CDK-DEMO-A2B3-C4D5-E6F7` |
-
-`VITE_API_MODE=mock|http` 切换数据源。
+`VITE_API_MODE=mock|http` 切换数据源。Mock 模式自带示例类别与卡密，仅供本地 UI 演示。
 
 ## 共享层
 

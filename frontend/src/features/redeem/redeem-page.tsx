@@ -439,28 +439,6 @@ export function RedeemPage() {
                 />
               </div>
             ) : null}
-            {(selected?.slug === "vip" || selected?.slug === "cdk") && (
-              <p className="text-center text-[11px] text-muted-foreground">
-                <button
-                  type="button"
-                  className="font-mono underline-offset-2 hover:underline"
-                  disabled={busy}
-                  onClick={() => {
-                    const demo =
-                      selected.slug === "vip"
-                        ? "VIP-DEMO-7K3M-9P2X-W4QH"
-                        : "CDK-DEMO-A2B3-C4D5-E6F7";
-                    setRaw((prev) =>
-                      prev.trim() ? `${prev.trim()}\n${demo}` : demo,
-                    );
-                  }}
-                >
-                  {selected.slug === "vip"
-                    ? "VIP-DEMO-7K3M-9P2X-W4QH"
-                    : "CDK-DEMO-A2B3-C4D5-E6F7"}
-                </button>
-              </p>
-            )}
             <Button
               type="submit"
               size="lg"

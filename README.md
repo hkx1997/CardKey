@@ -13,8 +13,6 @@
 
 ## 界面预览
 
-截图来自演示站 [cardkey.ai-service.top](https://cardkey.ai-service.top/)（随版本迭代 UI 可能略有差异）。
-
 ### 公开兑换端
 
 | 单码兑换 | 批量兑换 |
@@ -45,7 +43,7 @@
 - **API 密钥**：固定兑换密钥 + 自定义 Key（吊销/删除/轮换）
 - **API 文档**：公开 `/docs` + 管理端「API 文档」；Base URL 可配置并动态展示
 - **品牌资源**：Logo / Favicon 支持上传
-- **首次安装向导**：对齐 sub2api，Web 端创建管理员
+- **首次安装向导**：Web 端创建管理员账号与站点名称
 - **运维**：健康检查、受保护指标、**默认启用在线更新**（Docker 检测 / 可选 Token 防 GitHub 限流）
 - **安全**：生产密钥校验、CSRF 同源、安装 advisory lock、默认不暴露兑换密钥、禁止 SVG 上传
 - **发版**：改 `VERSION` → `bash scripts/release.sh`（tag + Release + **Linux amd64/arm64** 供一键更新；不含 Win/mac）
@@ -128,7 +126,7 @@ docker compose up -d --build
 
 1. 打开管理端  
 2. 若尚无管理员 → 自动进入 **`/admin/setup` 安装向导**  
-3. 设置管理员用户名/密码、站点名、是否安装演示数据  
+3. 设置管理员用户名/密码、站点名称  
 4. 完成后自动登录  
 
 > 也可在 `.env` 设置 `BOOTSTRAP_ADMIN_PASS` 启动时自动建号（适合脚本，不推荐生产裸奔）。
@@ -155,7 +153,7 @@ docker compose down          # 停服务（保留数据卷）
 # 切勿：docker compose down -v  （删除数据库）
 bash scripts/upgrade.sh          # 推荐升级：只重建 cardkey，不动 postgres 卷
 bash scripts/recover-volume.sh   # 若像「被重置」：挂回旧 Postgres 卷
-# 数据说明见 deploy/DATA_SAFETY.md（挂错空卷 + 安装向导演示数据 ≠ 删库）
+# 数据说明见 deploy/DATA_SAFETY.md（挂错空卷 ≠ 删库）
 ```
 
 ### 生产建议
@@ -164,15 +162,6 @@ bash scripts/recover-volume.sh   # 若像「被重置」：挂回旧 Postgres �
 2. 前置 Nginx/Caddy HTTPS，并设 `SECURE_COOKIE=true`  
 3. 定期 `pg_dump` 备份 `postgres` 卷  
 4. 防火墙只暴露 `APP_PORT`（或仅 443）
-
-## 演示数据
-
-向导勾选「演示数据」后可用：
-
-| 类别 | 示例编码 |
-|------|----------|
-| VIP | `VIP-DEMO-7K3M-9P2X-W4QH` |
-| CDK | `CDK-DEMO-A2B3-C4D5-E6F7` |
 
 ## 开发
 

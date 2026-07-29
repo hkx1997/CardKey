@@ -52,7 +52,6 @@ export const mockClient = {
     confirmPassword?: string;
     siteName?: string;
     publicRedeemApiKey?: string;
-    seedDemoCategories?: boolean;
   }): Promise<AdminUser> {
     await delay();
     err(409, "CONFLICT", "Mock 模式已初始化，请使用 admin / admin123 登录");

@@ -10,8 +10,9 @@ import (
 )
 
 // Bootstrap 初始化 settings、系统密钥、可选管理员。
-// 若 pass 为空且尚无管理员：不创建管理员，留给 Web 首次安装向导（对齐 sub2api）。
+// 若 pass 为空且尚无管理员：不创建管理员，留给 Web 首次安装向导。
 // 若 pass 非空：创建管理员并打印凭证（自动化/脚本安装）。
+// 绝不自动写入演示类别/卡密。
 func (a *App) Bootstrap(ctx context.Context, user, pass, publicRedeemKey string) (adminUser, adminPass string, err error) {
 	var n int
 	if err := a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admins`).Scan(&n); err != nil {
@@ -85,9 +86,7 @@ func (a *App) Bootstrap(ctx context.Context, user, pass, publicRedeemKey string)
 		}
 	}
 
-	// 绝不在启动时自动写入演示数据。
-	// 演示类别/卡密仅在 Web 安装向导勾选 seedDemoCategories 时写入，
-	// 避免「挂上新空卷 / 类别表为空」后每次重启又出现示例数据，看起来像被重置。
+	// 绝不写入演示类别/卡密（安装向导与 Bootstrap 均不种示例数据）。
 	var cn, an int
 	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM categories`).Scan(&cn)
 	_ = a.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admins`).Scan(&an)
@@ -101,39 +100,4 @@ func (a *App) Bootstrap(ctx context.Context, user, pass, publicRedeemKey string)
 		}
 	}
 	return adminUser, adminPass, nil
-}
-
-func (a *App) seedDemo(ctx context.Context) error {
-	type seedCat struct {
-		name, slug, prefix, desc, icon string
-	}
-	cats := []seedCat{
-		{"会员卡", "vip", "VIP", "<p>会员权益兑换</p>", "ticket"},
-		{"激活码", "cdk", "CDK", "<p>软件激活码</p>", "key-round"},
-	}
-	for i, c := range cats {
-		var id string
-		err := a.Pool.QueryRow(ctx, `
-			INSERT INTO categories(name, slug, code_prefix, description, enabled, sort_order, icon_kind, icon_value)
-			VALUES($1,$2,$3,$4,true,$5,'lucide',$6) RETURNING id`,
-			c.name, c.slug, c.prefix, c.desc, i+1, c.icon).Scan(&id)
-		if err != nil {
-			return err
-		}
-		code := c.prefix + "-DEMO-7K3M-9P2X-W4QH"
-		if c.slug == "cdk" {
-			code = "CDK-DEMO-A2B3-C4D5-E6F7"
-		}
-		enc, nonce, err := a.EncryptContent("演示卡密内容 · " + c.name)
-		if err != nil {
-			return err
-		}
-		_, err = a.Pool.Exec(ctx, `
-			INSERT INTO cards(category_id, code, content_enc, content_nonce, type, status, note)
-			VALUES($1,$2,$3,$4,'text','unused','demo')`, id, code, enc, nonce)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }

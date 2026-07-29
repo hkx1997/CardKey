@@ -11,7 +11,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/shared/auth/auth-context";
 import { FormField } from "@/shared/components/form-field";
 import { api } from "@/shared/api/client";
@@ -29,7 +28,6 @@ export function SetupPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [siteName, setSiteName] = useState("CardKey");
-  const [seedDemo, setSeedDemo] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState(0);
@@ -88,7 +86,6 @@ export function SetupPage() {
         password,
         confirmPassword: confirm,
         siteName: siteName.trim() || "CardKey",
-        seedDemoCategories: seedDemo,
       });
       toast.success("安装完成，欢迎使用 CardKey");
       await refresh();
@@ -106,7 +103,7 @@ export function SetupPage() {
         <CardHeader className="text-center space-y-1">
           <CardTitle className="text-lg">CardKey 首次安装</CardTitle>
           <CardDescription className="text-xs">
-            类似 sub2api：创建管理员账号后即可使用管理后台
+            创建管理员账号后即可使用管理后台
           </CardDescription>
           {!ready ? (
             <p className="text-xs text-destructive">
@@ -181,15 +178,6 @@ export function SetupPage() {
                   placeholder="CardKey"
                 />
               </FormField>
-              <div className="flex items-center justify-between rounded-lg border border-border/70 px-3 py-2.5">
-                <div className="pr-3">
-                  <p className="text-xs font-medium">安装演示类别与卡密（可选）</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    默认关闭。勾选后写入 VIP / CDK 示例；生产请保持关闭
-                  </p>
-                </div>
-                <Switch checked={seedDemo} onCheckedChange={setSeedDemo} />
-              </div>
               <div className="flex gap-2">
                 <Button
                   type="button"
@@ -221,13 +209,9 @@ export function SetupPage() {
                   <span className="text-muted-foreground">站点</span>{" "}
                   {siteName || "CardKey"}
                 </p>
-                <p>
-                  <span className="text-muted-foreground">演示数据</span>{" "}
-                  {seedDemo ? "是" : "否"}
-                </p>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                完成后将自动登录并进入仪表盘。数据库与 Redis
+                完成后将自动登录并进入仪表盘。不会写入任何示例类别或卡密；请在后台自行创建。数据库与 Redis
                 端口/密码在部署时的 .env 中配置。
               </p>
               <div className="flex gap-2">

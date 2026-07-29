@@ -91,7 +91,6 @@ export const httpClient = {
     confirmPassword?: string;
     siteName?: string;
     publicRedeemApiKey?: string;
-    seedDemoCategories?: boolean;
   }) =>
     request<AdminUser>("/api/v1/public/setup", {
       method: "POST",

@@ -13,8 +13,6 @@ Self-hosted high-concurrency card-key (gift code) redeem platform: public redeem
 
 ## Screenshots
 
-Captured from the demo at [cardkey.ai-service.top](https://cardkey.ai-service.top/) (UI may change slightly across versions).
-
 ### Public redeem
 
 | Single code | Batch |
@@ -45,7 +43,7 @@ After setup, open `/admin` for categories, cards, batches, API keys, settings, a
 - **API keys**: system redeem key + custom keys (revoke/delete/rotate)
 - **API docs**: public `/docs` + admin **API Docs** page; configurable Base URL shown dynamically
 - **Branding**: Logo / Favicon upload
-- **Setup wizard**: first-run admin creation (sub2api-style)
+- **Setup wizard**: first-run admin account and site name
 - **Ops**: health checks, protected metrics, **online updates** (Docker check + optional GitHub token)
 - **Security**: production secret denylist, strict CSRF, setup advisory lock, no public redeem key by default, no SVG uploads
 
@@ -108,7 +106,7 @@ docker compose up -d --build
 
 1. Open admin  
 2. If no admin exists → **Setup wizard** at `/admin/setup`  
-3. Set admin user/password, site name, optional demo data  
+3. Set admin user/password and site name  
 4. Auto login after finish  
 
 Or set `BOOTSTRAP_ADMIN_PASS` in `.env` to create admin on boot (scripts only).
@@ -140,13 +138,6 @@ docker compose down -v   # wipe data — careful
 2. Put HTTPS reverse proxy in front; set `SECURE_COOKIE=true`  
 3. Backup Postgres volume regularly  
 4. Expose only `APP_PORT` or 443  
-
-## Demo codes (if demo data enabled)
-
-| Category | Sample code |
-|----------|-------------|
-| VIP | `VIP-DEMO-7K3M-9P2X-W4QH` |
-| CDK | `CDK-DEMO-A2B3-C4D5-E6F7` |
 
 ## Development
 

@@ -78,7 +78,7 @@ export const PUBLIC_OPS_ENDPOINTS: ApiEndpoint[] = [
     path: "{prefix}/public/setup",
     auth: "无（仅无管理员时）",
     desc: "完成首次安装：创建管理员",
-    body: '{ "username", "password", "confirmPassword?", "siteName?", "seedDemoCategories?" }',
+    body: '{ "username", "password", "confirmPassword?", "siteName?" }',
   },
 ];
 
